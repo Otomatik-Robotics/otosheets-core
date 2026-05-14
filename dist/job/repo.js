@@ -1,0 +1,78 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.JobRepo = void 0;
+const tables_1 = require("../tables");
+const keys_1 = require("../keys");
+class JobRepo {
+    ddb;
+    constructor(ddb) {
+        this.ddb = ddb;
+    }
+    async getJob(orgId, userId, jobId) {
+        const { Item } = await this.ddb.getItem(tables_1.Tables.JOBS, { orgId, sk: (0, keys_1.sk)(userId, jobId) });
+        return Item ?? null;
+    }
+    async listUserJobs(orgId, userId) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.JOBS,
+            KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': `${userId}#` },
+        });
+        return Items ?? [];
+    }
+    async listAllOrgJobs(orgId) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.JOBS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+        });
+        return Items ?? [];
+    }
+    async listJobsByDate(orgId, from, to) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.JOBS,
+            IndexName: 'DateIndex',
+            KeyConditionExpression: 'orgId = :orgId AND scheduledDateSk BETWEEN :from AND :to',
+            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿` },
+        });
+        return Items ?? [];
+    }
+    async createJob(orgId, userId, jobId, data) {
+        const now = new Date().toISOString();
+        await this.ddb.put(tables_1.Tables.JOBS, {
+            orgId,
+            sk: (0, keys_1.sk)(userId, jobId),
+            jobId,
+            createdBy: userId,
+            materials: [],
+            photos: [],
+            ...data,
+            scheduledDateSk: data.scheduledDate ? (0, keys_1.dateSk)(data.scheduledDate, jobId) : undefined,
+            createdAt: now,
+            updatedAt: now,
+        });
+    }
+    async updateJob(orgId, userId, jobId, updates) {
+        const sets = ['#updatedAt = :updatedAt'];
+        const names = { '#updatedAt': 'updatedAt' };
+        const values = { ':updatedAt': new Date().toISOString() };
+        if (updates.scheduledDate) {
+            updates.scheduledDateSk = (0, keys_1.dateSk)(updates.scheduledDate, jobId);
+        }
+        for (const [key, val] of Object.entries(updates)) {
+            sets.push(`#${key} = :${key}`);
+            names[`#${key}`] = key;
+            values[`:${key}`] = val;
+        }
+        await this.ddb.update(tables_1.Tables.JOBS, { orgId, sk: (0, keys_1.sk)(userId, jobId) }, {
+            UpdateExpression: `SET ${sets.join(', ')}`,
+            ExpressionAttributeNames: names,
+            ExpressionAttributeValues: values,
+        });
+    }
+    async deleteJob(orgId, userId, jobId) {
+        await this.ddb.delete(tables_1.Tables.JOBS, { orgId, sk: (0, keys_1.sk)(userId, jobId) });
+    }
+}
+exports.JobRepo = JobRepo;
+//# sourceMappingURL=repo.js.map

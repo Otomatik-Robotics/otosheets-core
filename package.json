@@ -1,0 +1,32 @@
+{
+  "name": "@otosheets/data",
+  "version": "1.0.0",
+  "description": "Shared DynamoDB data layer for the Otosheets platform — repos, schemas, adapters",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tinago95/otosheets-data.git"
+  },
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.750.0",
+    "@aws-sdk/lib-dynamodb": "^3.750.0",
+    "@types/node": "^25.7.0",
+    "typescript": "^5.7.0",
+    "zod": "^3.24.0"
+  }
+}

@@ -1,0 +1,9 @@
+export declare const sk: (userId: string, entityId: string) => string;
+export declare const invoicePaymentSk: (invoiceId: string, paymentId: string) => string;
+export declare const statementSk: (fy: string, statementId: string) => string;
+export declare const compliancePlaybookSk: () => string;
+export declare const complianceTaskSk: (userId: string, taskId: string) => string;
+export declare const dueDateSk: (dueDate: string, invoiceId: string) => string;
+export declare const dateSk: (date: string, entityId: string) => string;
+export declare const orgStageKey: (orgId: string, stage: string) => string;
+//# sourceMappingURL=keys.d.ts.map

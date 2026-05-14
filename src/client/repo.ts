@@ -1,0 +1,54 @@
+import { IDdb } from '../ddbPort';
+import { Tables } from '../tables';
+import { Client } from './schema';
+
+export class ClientRepo {
+    constructor(private ddb: IDdb) {}
+
+    async getClient(orgId: string, clientId: string): Promise<Client | null> {
+        const { Item } = await this.ddb.getItem(Tables.CLIENTS, { orgId, clientId });
+        return (Item as Client) ?? null;
+    }
+
+    async listClients(orgId: string): Promise<Client[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.CLIENTS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+        });
+        return (Items as Client[]) ?? [];
+    }
+
+    async createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void> {
+        const now = new Date().toISOString();
+        await this.ddb.put(Tables.CLIENTS, {
+            orgId,
+            clientId,
+            ...data,
+            createdAt: now,
+            updatedAt: now,
+        });
+    }
+
+    async updateClient(orgId: string, clientId: string, updates: Record<string, any>): Promise<void> {
+        const sets: string[] = ['#updatedAt = :updatedAt'];
+        const names: Record<string, string> = { '#updatedAt': 'updatedAt' };
+        const values: Record<string, any> = { ':updatedAt': new Date().toISOString() };
+
+        for (const [key, val] of Object.entries(updates)) {
+            sets.push(`#${key} = :${key}`);
+            names[`#${key}`] = key;
+            values[`:${key}`] = val;
+        }
+
+        await this.ddb.update(Tables.CLIENTS, { orgId, clientId }, {
+            UpdateExpression: `SET ${sets.join(', ')}`,
+            ExpressionAttributeNames: names,
+            ExpressionAttributeValues: values,
+        });
+    }
+
+    async deleteClient(orgId: string, clientId: string): Promise<void> {
+        await this.ddb.delete(Tables.CLIENTS, { orgId, clientId });
+    }
+}

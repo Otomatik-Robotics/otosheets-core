@@ -1,0 +1,13 @@
+import { IDdb } from '../ddbPort';
+import { Booking } from './schema';
+export declare class BookingRepo {
+    private ddb;
+    constructor(ddb: IDdb);
+    getBooking(orgId: string, userId: string, bookingId: string): Promise<Booking | null>;
+    listAllOrgBookings(orgId: string): Promise<Booking[]>;
+    deleteBooking(orgId: string, userId: string, bookingId: string): Promise<void>;
+    listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]>;
+    createBooking(orgId: string, userId: string, bookingId: string, data: Record<string, any>): Promise<void>;
+    updateBooking(orgId: string, userId: string, bookingId: string, updates: Record<string, any>): Promise<void>;
+}
+//# sourceMappingURL=repo.d.ts.map
