@@ -1,9 +1,7 @@
 import { z } from 'zod';
 
-export const NotificationStoredSchema = z.object({
-    userId: z.string(),
+export const NotificationBaseSchema = z.object({
     notificationId: z.string(),
-    organizationId: z.string().nullish(),
     type: z.string(),
     title: z.string(),
     body: z.string(),
@@ -11,8 +9,14 @@ export const NotificationStoredSchema = z.object({
     link: z.string().nullish(),
     priority: z.string().nullish(),
     meta: z.any().nullish(),
-    ttl: z.number().nullish(),
     createdAt: z.string(),
+});
+export type NotificationBase = z.infer<typeof NotificationBaseSchema>;
+
+export const NotificationStoredSchema = NotificationBaseSchema.extend({
+    userId: z.string(),
+    organizationId: z.string().nullish(),
+    ttl: z.number().nullish(),
 });
 export type Notification = z.infer<typeof NotificationStoredSchema>;
 

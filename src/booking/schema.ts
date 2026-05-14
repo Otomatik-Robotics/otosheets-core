@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-export const BookingStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const BookingBaseSchema = z.object({
     bookingId: z.string(),
-    createdBy: z.string(),
     date: z.string(),
     startTime: z.string(),
     endTime: z.string(),
@@ -17,9 +14,16 @@ export const BookingStoredSchema = z.object({
     status: z.string().default('CONFIRMED'),
     source: z.string(),
     sourceName: z.string().nullish(),
-    dateSk: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type BookingBase = z.infer<typeof BookingBaseSchema>;
+
+export const BookingStoredSchema = BookingBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
+    dateSk: z.string().nullish(),
 });
 export type Booking = z.infer<typeof BookingStoredSchema>;
 

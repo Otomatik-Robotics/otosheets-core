@@ -8,11 +8,8 @@ export const StageHistoryEntrySchema = z.object({
 });
 export type StageHistoryEntry = z.infer<typeof StageHistoryEntrySchema>;
 
-export const LeadStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const LeadBaseSchema = z.object({
     leadId: z.string(),
-    createdBy: z.string(),
     source: z.string(),
     pipelineId: z.string().nullish(),
     adId: z.string().nullish(),
@@ -40,6 +37,13 @@ export const LeadStoredSchema = z.object({
     orgStage: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type LeadBase = z.infer<typeof LeadBaseSchema>;
+
+export const LeadStoredSchema = LeadBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
 });
 export type Lead = z.infer<typeof LeadStoredSchema>;
 

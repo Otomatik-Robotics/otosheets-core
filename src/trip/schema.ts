@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-export const TripStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const TripBaseSchema = z.object({
     tripId: z.string(),
-    createdBy: z.string(),
     startTime: z.string().nullish(),
     endTime: z.string().nullish(),
     startAddress: z.string().nullish(),
@@ -15,8 +12,15 @@ export const TripStoredSchema = z.object({
     coordinates: z.any().nullish(),
     date: z.string(),
     jobId: z.string().nullish(),
-    dateSk: z.string().nullish(),
     createdAt: z.string(),
+});
+export type TripBase = z.infer<typeof TripBaseSchema>;
+
+export const TripStoredSchema = TripBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
+    dateSk: z.string().nullish(),
 });
 export type Trip = z.infer<typeof TripStoredSchema>;
 

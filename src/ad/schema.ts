@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-export const AdStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const AdBaseSchema = z.object({
     adId: z.string(),
-    createdBy: z.string(),
     status: z.string().default('DRAFT'),
     mediaKeys: z.array(z.string()).nullish(),
     mediaAnalyses: z.any().nullish(),
@@ -22,6 +19,13 @@ export const AdStoredSchema = z.object({
     callToAction: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type AdBase = z.infer<typeof AdBaseSchema>;
+
+export const AdStoredSchema = AdBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
 });
 export type Ad = z.infer<typeof AdStoredSchema>;
 

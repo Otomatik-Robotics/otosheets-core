@@ -16,11 +16,8 @@ export const JobPhotoSchema = z.object({
 });
 export type JobPhoto = z.infer<typeof JobPhotoSchema>;
 
-export const JobStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const JobBaseSchema = z.object({
     jobId: z.string(),
-    createdBy: z.string(),
     clientId: z.string().nullish(),
     title: z.string(),
     description: z.string().nullish(),
@@ -45,9 +42,16 @@ export const JobStoredSchema = z.object({
     handoverNotes: z.string().nullish(),
     handoverToken: z.string().nullish(),
     locationPings: z.any().nullish(),
-    scheduledDateSk: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type JobBase = z.infer<typeof JobBaseSchema>;
+
+export const JobStoredSchema = JobBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
+    scheduledDateSk: z.string().nullish(),
 });
 export type Job = z.infer<typeof JobStoredSchema>;
 

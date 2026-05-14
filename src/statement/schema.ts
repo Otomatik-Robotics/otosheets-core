@@ -1,15 +1,19 @@
 import { z } from 'zod';
 
-export const StatementStoredSchema = z.object({
-    userId: z.string(),
-    sk: z.string(),
+export const StatementBaseSchema = z.object({
     statementId: z.string(),
-    organizationId: z.string().nullish(),
     fy: z.string(),
     fileName: z.string(),
     fileType: z.string().nullish(),
     s3Key: z.string(),
     createdAt: z.string(),
+});
+export type StatementBase = z.infer<typeof StatementBaseSchema>;
+
+export const StatementStoredSchema = StatementBaseSchema.extend({
+    userId: z.string(),
+    sk: z.string(),
+    organizationId: z.string().nullish(),
 });
 export type Statement = z.infer<typeof StatementStoredSchema>;
 

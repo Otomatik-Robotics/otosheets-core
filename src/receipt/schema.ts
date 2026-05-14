@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-export const ReceiptStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const ReceiptBaseSchema = z.object({
     receiptId: z.string(),
-    createdBy: z.string(),
     s3Key: z.string().nullish(),
     contentHash: z.string().nullish(),
     status: z.string().default('PROCESSED'),
@@ -25,8 +22,15 @@ export const ReceiptStoredSchema = z.object({
     ruleApplied: z.boolean().default(false),
     duplicateOf: z.string().nullish(),
     possibleDuplicateOf: z.string().nullish(),
-    dateSk: z.string().nullish(),
     createdAt: z.string(),
+});
+export type ReceiptBase = z.infer<typeof ReceiptBaseSchema>;
+
+export const ReceiptStoredSchema = ReceiptBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
+    dateSk: z.string().nullish(),
 });
 export type Receipt = z.infer<typeof ReceiptStoredSchema>;
 

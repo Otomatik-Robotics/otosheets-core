@@ -9,10 +9,8 @@ export const PipelineSourceSchema = z.object({
 });
 export type PipelineSource = z.infer<typeof PipelineSourceSchema>;
 
-export const PipelineStoredSchema = z.object({
-    orgId: z.string(),
+export const PipelineBaseSchema = z.object({
     pipelineId: z.string(),
-    createdBy: z.string(),
     name: z.string(),
     description: z.string().nullish(),
     stages: z.array(z.string()),
@@ -20,6 +18,12 @@ export const PipelineStoredSchema = z.object({
     sources: z.array(PipelineSourceSchema).default([]),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type PipelineBase = z.infer<typeof PipelineBaseSchema>;
+
+export const PipelineStoredSchema = PipelineBaseSchema.extend({
+    orgId: z.string(),
+    createdBy: z.string(),
 });
 export type Pipeline = z.infer<typeof PipelineStoredSchema>;
 

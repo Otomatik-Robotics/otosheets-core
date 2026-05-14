@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-export const TimeEntryStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const TimeEntryBaseSchema = z.object({
     timeEntryId: z.string(),
-    createdBy: z.string(),
     clientId: z.string().nullish(),
     jobId: z.string().nullish(),
     date: z.string(),
@@ -18,6 +15,13 @@ export const TimeEntryStoredSchema = z.object({
     invoiceId: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type TimeEntryBase = z.infer<typeof TimeEntryBaseSchema>;
+
+export const TimeEntryStoredSchema = TimeEntryBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
 });
 export type TimeEntry = z.infer<typeof TimeEntryStoredSchema>;
 

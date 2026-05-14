@@ -10,11 +10,8 @@ export const LineItemSchema = z.object({
 });
 export type LineItem = z.infer<typeof LineItemSchema>;
 
-export const InvoiceStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(),
+export const InvoiceBaseSchema = z.object({
     invoiceId: z.string(),
-    createdBy: z.string(),
     invoiceNumber: z.string(),
     clientId: z.string().nullish(),
     clientSnapshot: z.any(),
@@ -34,9 +31,16 @@ export const InvoiceStoredSchema = z.object({
     isPaymentLink: z.boolean().default(false),
     fromTimeEntries: z.any().nullish(),
     followUpSequenceId: z.string().nullish(),
-    dueDateSk: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
+});
+export type InvoiceBase = z.infer<typeof InvoiceBaseSchema>;
+
+export const InvoiceStoredSchema = InvoiceBaseSchema.extend({
+    orgId: z.string(),
+    sk: z.string(),
+    createdBy: z.string(),
+    dueDateSk: z.string().nullish(),
 });
 export type Invoice = z.infer<typeof InvoiceStoredSchema>;
 
