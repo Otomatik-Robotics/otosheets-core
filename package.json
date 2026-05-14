@@ -4,6 +4,16 @@
   "description": "Shared DynamoDB data layer for the Otosheets platform — repos, schemas, adapters",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "default": "./dist/schemas.js"
+    }
+  },
   "files": [
     "dist"
   ],
