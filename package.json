@@ -1,5 +1,5 @@
 {
-  "name": "@otosheets/data",
+  "name": "@otosheets/core",
   "version": "1.0.0",
   "description": "Shared DynamoDB data layer for the Otosheets platform — repos, schemas, adapters",
   "main": "dist/index.js",
@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tinago95/otosheets-data.git"
+    "url": "git+https://github.com/Tinago95/otosheets-core.git"
   },
   "license": "UNLICENSED",
   "peerDependencies": {
