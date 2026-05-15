@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import { CalendarConnectionSchema } from '../settings/calendarConnection';
+import { AvailabilitySettingsSchema } from '../settings/availabilitySettings';
+import { TradeSettingsSchema } from '../settings/tradeSettings';
+import { FollowUpSequenceSchema } from '../settings/followUpSequence';
+
+const UserTradeSettingsSchema = TradeSettingsSchema.extend({
+    followUpSequence: FollowUpSequenceSchema.nullish(),
+}).passthrough();
 
 export const UserStoredSchema = z.object({
     userId: z.string(),
@@ -20,11 +28,11 @@ export const UserStoredSchema = z.object({
     stripeCustomerId: z.string().nullish(),
     subscriptionTier: z.string().nullish(),
     subscriptionStatus: z.string().nullish(),
-    categoryRules: z.record(z.string(), z.string()).nullish(),
-    bookingSettings: z.any().nullish(),
-    calendarConnections: z.any().nullish(),
+    categoryRules: z.record(z.string(), z.unknown()).nullish(),
+    bookingSettings: AvailabilitySettingsSchema.nullish(),
+    calendarConnections: z.record(z.string(), CalendarConnectionSchema).nullish(),
     metaPages: z.any().nullish(),
-    tradeSettings: z.any().nullish(),
+    tradeSettings: UserTradeSettingsSchema.nullish(),
     emailConnections: z.any().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),

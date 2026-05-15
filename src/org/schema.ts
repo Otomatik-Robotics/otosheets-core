@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import { AvailabilitySettingsSchema } from '../settings/availabilitySettings';
+import { BusinessProfileSchema } from '../settings/businessProfile';
+import { TradeSettingsSchema } from '../settings/tradeSettings';
+
+const OrgBookingSettingsSchema = AvailabilitySettingsSchema.extend({
+    businessProfile: BusinessProfileSchema.nullish(),
+}).passthrough();
 
 export const OrgStoredSchema = z.object({
     orgId: z.string(),
@@ -14,8 +21,8 @@ export const OrgStoredSchema = z.object({
     brandColor: z.string().nullish(),
     tagline: z.string().nullish(),
     emailSignature: z.string().nullish(),
-    bookingSettings: z.any().nullish(),
-    tradeSettings: z.any().nullish(),
+    bookingSettings: OrgBookingSettingsSchema.nullish(),
+    tradeSettings: TradeSettingsSchema.nullish(),
     stripeAccountId: z.string().nullish(),
     encryptedDek: z.string().nullish(),
     dekVersion: z.number().nullish(),

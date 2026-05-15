@@ -22,4 +22,6 @@ export const Tables = {
     get COMPLIANCE() { return process.env.COMPLIANCE_TABLE!; },
     get INBOX_CACHE() { return process.env.INBOX_CACHE_TABLE!; },
     get META_PAGE_MAPPINGS() { return process.env.META_PAGE_MAPPINGS_TABLE!; },
+    get SHARE_TOKENS() { return process.env.SHARE_TOKENS_TABLE!; },
+    get MESSAGES() { return process.env.MESSAGES_TABLE!; },
 } as const;

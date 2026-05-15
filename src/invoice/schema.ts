@@ -10,6 +10,18 @@ export const LineItemSchema = z.object({
 });
 export type LineItem = z.infer<typeof LineItemSchema>;
 
+export const RecurringConfigSchema = z.object({
+    frequency: z.string(),
+    dayOfMonth: z.number().nullish(),
+    nextRunDate: z.string().nullish(),
+    endDate: z.string().nullish(),
+    autoSend: z.boolean().default(true),
+    paymentTermsDays: z.number().default(30),
+    invoiceCount: z.number().default(0),
+    lastGeneratedAt: z.string().nullish(),
+}).passthrough();
+export type RecurringConfig = z.infer<typeof RecurringConfigSchema>;
+
 export const InvoiceBaseSchema = z.object({
     invoiceId: z.string(),
     invoiceNumber: z.string(),
@@ -26,7 +38,7 @@ export const InvoiceBaseSchema = z.object({
     notes: z.string().nullish(),
     items: z.array(LineItemSchema).default([]),
     isRecurring: z.boolean().default(false),
-    recurringConfig: z.any().nullish(),
+    recurringConfig: RecurringConfigSchema.nullish(),
     isQuote: z.boolean().default(false),
     isPaymentLink: z.boolean().default(false),
     fromTimeEntries: z.any().nullish(),
@@ -58,10 +70,14 @@ export const InvoiceCreateRequestSchema = z.object({
     notes: z.string().nullish(),
     items: z.array(LineItemSchema).default([]),
     isRecurring: z.boolean().optional(),
-    recurringConfig: z.any().nullish(),
+    recurringConfig: RecurringConfigSchema.nullish(),
     isQuote: z.boolean().optional(),
     isPaymentLink: z.boolean().optional(),
     fromTimeEntries: z.any().nullish(),
     followUpSequenceId: z.string().nullish(),
 });
 export type InvoiceCreateRequest = z.infer<typeof InvoiceCreateRequestSchema>;
+
+export type QuoteInvoice = Invoice & { isQuote: true };
+export type RecurringInvoice = Invoice & { isRecurring: true; recurringConfig: RecurringConfig };
+export type PaymentLinkInvoice = Invoice & { isPaymentLink: true };

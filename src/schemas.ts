@@ -4,7 +4,7 @@ export { MembershipStoredSchema, MembershipCreateRequestSchema, type Membership,
 export { TeamStoredSchema, TeamCreateRequestSchema, type Team, type TeamCreateRequest } from './team/schema';
 export { IntegrationStoredSchema, type Integration } from './integration/schema';
 export { ClientBaseSchema, ClientStoredSchema, ClientCreateRequestSchema, type ClientBase, type Client, type ClientCreateRequest } from './client/schema';
-export { LineItemSchema, InvoiceBaseSchema, InvoiceStoredSchema, InvoiceCreateRequestSchema, type LineItem, type InvoiceBase, type Invoice, type InvoiceCreateRequest } from './invoice/schema';
+export { RecurringConfigSchema, LineItemSchema, InvoiceBaseSchema, InvoiceStoredSchema, InvoiceCreateRequestSchema, type RecurringConfig, type LineItem, type InvoiceBase, type Invoice, type InvoiceCreateRequest, type QuoteInvoice, type RecurringInvoice, type PaymentLinkInvoice } from './invoice/schema';
 export { InvoicePaymentBaseSchema, InvoicePaymentStoredSchema, type InvoicePaymentBase, type InvoicePayment } from './invoicePayment/schema';
 export { JobMaterialSchema, JobPhotoSchema, JobBaseSchema, JobStoredSchema, JobCreateRequestSchema, type JobMaterial, type JobPhoto, type JobBase, type Job, type JobCreateRequest } from './job/schema';
 export { BookingBaseSchema, BookingStoredSchema, BookingCreateRequestSchema, type BookingBase, type Booking, type BookingCreateRequest } from './booking/schema';
@@ -19,3 +19,18 @@ export { ConversationBaseSchema, ConversationStoredSchema, ConversationCreateReq
 export { CompliancePlaybookStoredSchema, ComplianceTaskStoredSchema, type CompliancePlaybook, type ComplianceTask } from './compliance/schema';
 export { NotificationBaseSchema, NotificationStoredSchema, NotificationCreateRequestSchema, type NotificationBase, type Notification, type NotificationCreateRequest } from './notification/schema';
 export { OrgChannelStoredSchema, OrgChannelCreateRequestSchema, type OrgChannel, type OrgChannelCreateRequest } from './orgChannel/schema';
+
+// New entity schemas
+export { ShareTokenStoredSchema, ShareTokenCreateRequestSchema, type ShareToken, type ShareTokenCreateRequest } from './shareToken/schema';
+export { ChatAttachmentSchema, ChatMessageStoredSchema, ChatMessageCreateRequestSchema, type ChatAttachment, type ChatMessage, type ChatMessageCreateRequest } from './chatMessage/schema';
+export { InboxCacheStoredSchema, InboxCacheCreateRequestSchema, type InboxCache, type InboxCacheCreateRequest } from './inboxCache/schema';
+
+// Settings sub-schemas
+export { BrandingSchema, type Branding } from './settings/branding';
+export { GeofenceSettingsSchema, type GeofenceSettings } from './settings/geofenceSettings';
+export { ComplianceCertSchema, TradeSettingsSchema, type ComplianceCert, type TradeSettings } from './settings/tradeSettings';
+export { CommonQuestionSchema, BusinessProfileSchema, type CommonQuestion, type BusinessProfile } from './settings/businessProfile';
+export { AvailabilitySettingsSchema, type AvailabilitySettings } from './settings/availabilitySettings';
+export { CalendarConnectionSchema, type CalendarConnection } from './settings/calendarConnection';
+export { ExpenseRuleSchema, type ExpenseRule } from './settings/expenseRule';
+export { FollowUpStepSchema, FollowUpSequenceSchema, type FollowUpStep, type FollowUpSequence } from './settings/followUpSequence';

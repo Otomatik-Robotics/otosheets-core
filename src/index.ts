@@ -30,3 +30,7 @@ export * from './conversation';
 export * from './compliance';
 export * from './notification';
 export * from './orgChannel';
+export * from './shareToken';
+export * from './chatMessage';
+export * from './inboxCache';
+export * from './settings';
