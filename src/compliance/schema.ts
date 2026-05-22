@@ -18,7 +18,8 @@ export const ComplianceTaskStoredSchema = z.object({
     templateTaskId: z.string().nullish(),
     title: z.string(),
     category: z.string().nullish(),
-    taskType: z.string(),
+    taskType: z.string(), // DOCUMENT_UPLOAD | FORM_FILL | ACKNOWLEDGEMENT | GENERAL_TASK
+    isComplianceTask: z.boolean().default(true),
     description: z.string().nullish(),
     required: z.boolean().default(true),
     dueDate: z.string().nullish(),

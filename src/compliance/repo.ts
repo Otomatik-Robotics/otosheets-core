@@ -7,12 +7,12 @@ export class ComplianceRepo {
     constructor(private ddb: IDdb) {}
 
     async getPlaybook(orgId: string): Promise<CompliancePlaybook | null> {
-        const { Item } = await this.ddb.getItem(Tables.COMPLIANCE, { orgId, sk: compliancePlaybookSk() });
+        const { Item } = await this.ddb.getItem(Tables.ONBOARDING, { orgId, sk: compliancePlaybookSk() });
         return (Item as CompliancePlaybook) ?? null;
     }
 
     async putPlaybook(orgId: string, tasks: any, updatedBy?: string): Promise<void> {
-        await this.ddb.put(Tables.COMPLIANCE, {
+        await this.ddb.put(Tables.ONBOARDING, {
             orgId,
             sk: compliancePlaybookSk(),
             tasks,
@@ -24,7 +24,7 @@ export class ComplianceRepo {
     async listTasks(orgId: string, userId?: string): Promise<ComplianceTask[]> {
         const prefix = userId ? `TASK#${userId}#` : 'TASK#';
         const { Items } = await this.ddb.query({
-            TableName: Tables.COMPLIANCE,
+            TableName: Tables.ONBOARDING,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
             ExpressionAttributeValues: { ':orgId': orgId, ':prefix': prefix },
         });
@@ -33,7 +33,7 @@ export class ComplianceRepo {
 
     async createTask(orgId: string, userId: string, taskId: string, data: Record<string, any>): Promise<void> {
         const now = new Date().toISOString();
-        await this.ddb.put(Tables.COMPLIANCE, {
+        await this.ddb.put(Tables.ONBOARDING, {
             orgId,
             sk: complianceTaskSk(userId, taskId),
             taskId,
@@ -55,7 +55,7 @@ export class ComplianceRepo {
             values[`:${key}`] = val;
         }
 
-        await this.ddb.update(Tables.COMPLIANCE, { orgId, sk: complianceTaskSk(userId, taskId) }, {
+        await this.ddb.update(Tables.ONBOARDING, { orgId, sk: complianceTaskSk(userId, taskId) }, {
             UpdateExpression: `SET ${sets.join(', ')}`,
             ExpressionAttributeNames: names,
             ExpressionAttributeValues: values,

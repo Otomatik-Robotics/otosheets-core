@@ -19,7 +19,7 @@ export const Tables = {
     get CONVERSATIONS() { return process.env.CONVERSATIONS_TABLE!; },
     get NOTIFICATIONS() { return process.env.NOTIFICATIONS_TABLE!; },
     get ORG_CHANNELS() { return process.env.ORG_CHANNELS_TABLE!; },
-    get COMPLIANCE() { return process.env.COMPLIANCE_TABLE!; },
+    get ONBOARDING() { return process.env.ONBOARDING_TABLE!; },
     get INBOX_CACHE() { return process.env.INBOX_CACHE_TABLE!; },
     get META_PAGE_MAPPINGS() { return process.env.META_PAGE_MAPPINGS_TABLE!; },
 } as const;
