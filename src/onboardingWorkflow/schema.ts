@@ -24,9 +24,10 @@ const WorkflowNodeDataSchema = z.object({
         'CREATE_TASK',
         'SEND_INVITE_LINK',
         'ADD_TO_TEAM',
-        'ONBOARD_TO_SYSTEM',
+        'EXTERNAL_SYSTEM',
         'WAIT',
         'NOTIFY_ADMIN',
+        'AGENT',
     ]),
 
     // TRIGGER fields
@@ -37,8 +38,14 @@ const WorkflowNodeDataSchema = z.object({
 
     // CONDITION fields
     conditionField: z.string().optional(),
-    conditionSource: z.enum(['context', 'payload']).optional(),
-    conditionOperator: z.enum(['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'contains', 'in']).optional(),
+    conditionSource: z.enum(['context', 'payload', 'variable']).optional(),
+    conditionOperator: z.enum([
+        'eq', 'neq', 'gt', 'lt', 'gte', 'lte',
+        'contains', 'in',
+        'starts_with', 'ends_with',
+        'is_empty', 'is_not_empty',
+        'regex_match', 'between',
+    ]).optional(),
     conditionValue: z.string().optional(),
 
     // SEND_WELCOME_EMAIL (legacy)
@@ -48,6 +55,9 @@ const WorkflowNodeDataSchema = z.object({
     emailTemplateId: z.string().optional(),
     recipientType: z.enum(['trigger_user', 'org_admins', 'custom']).optional(),
     customRecipientEmail: z.string().optional(),
+    emailSubject: z.string().optional(),
+    emailBody: z.string().optional(),
+    emailCc: z.string().optional(),
 
     // SEND_SMS fields
     smsBody: z.string().optional(),
@@ -61,6 +71,9 @@ const WorkflowNodeDataSchema = z.object({
 
     // WAIT
     waitDays: z.number().optional(),
+
+    // NOTIFY_ADMIN fields
+    notificationMessage: z.string().optional(),
 
     // SEND_INVITE_LINK
     inviteLinks: z.array(z.object({
@@ -83,6 +96,20 @@ const WorkflowNodeDataSchema = z.object({
         required: z.boolean(),
     })).optional(),
     acknowledgementText: z.string().optional(),
+
+    // Variable capture
+    outputVariables: z.array(z.object({
+        name: z.string(),
+        key: z.string(),
+    })).optional(),
+
+    // AGENT fields
+    agentMode: z.enum(['simple', 'standard']).optional(),
+    promptTemplate: z.string().optional(),
+    systemPrompt: z.string().optional(),
+    modelId: z.string().optional(),
+    maxTokens: z.number().optional(),
+    outputKey: z.string().optional(),
 });
 
 const WorkflowNodeSchema = z.object({
