@@ -9,6 +9,7 @@ export const complianceTaskSk = (userId: string, taskId: string) => `TASK#${user
 export const onboardingWorkflowSk = (workflowId: string) => `WORKFLOW#${workflowId}`;
 export const welcomeEmailSk = (templateId: string) => `WELCOME_EMAIL#${templateId}`;
 export const onboardingRunSk = (membershipId: string) => `ONBOARDING#${membershipId}`;
+export const workflowRunSk = (runId: string) => `RUN#${runId}`;
 
 // GSI key builders
 export const dueDateSk = (dueDate: string, invoiceId: string) => `${dueDate}#${invoiceId}`;

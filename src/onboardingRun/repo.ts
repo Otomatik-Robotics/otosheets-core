@@ -1,6 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
-import { onboardingRunSk } from '../keys';
+import { onboardingRunSk, workflowRunSk } from '../keys';
 import { OnboardingRun } from './schema';
 
 export class OnboardingRunRepo {
@@ -24,11 +24,19 @@ export class OnboardingRunRepo {
     }
 
     async put(orgId: string, run: Omit<OnboardingRun, 'orgId' | 'sk'>): Promise<void> {
-        await this.ddb.put(Tables.ONBOARDING, {
-            orgId,
-            sk: onboardingRunSk(run.membershipId),
-            ...run,
+        const sk = run.membershipId
+            ? onboardingRunSk(run.membershipId)
+            : workflowRunSk(run.runId!);
+        await this.ddb.put(Tables.ONBOARDING, { orgId, sk, ...run });
+    }
+
+    async listRuns(orgId: string): Promise<OnboardingRun[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.ONBOARDING,
+            KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'RUN#' },
         });
+        return (Items as OnboardingRun[]) ?? [];
     }
 
     async update(orgId: string, membershipId: string, updates: Record<string, any>): Promise<void> {
@@ -49,3 +57,5 @@ export class OnboardingRunRepo {
         });
     }
 }
+
+export { OnboardingRunRepo as WorkflowRunRepo };

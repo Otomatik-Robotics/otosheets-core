@@ -5,33 +5,70 @@ const WorkflowNodePositionSchema = z.object({
     y: z.number(),
 });
 
+const EventFilterSchema = z.object({
+    field: z.string(),
+    operator: z.enum(['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'contains', 'in']),
+    value: z.union([z.string(), z.number(), z.array(z.string())]),
+});
+
 const WorkflowNodeDataSchema = z.object({
     label: z.string(),
     nodeType: z.enum([
         'TRIGGER',
         'CONDITION',
         'SEND_WELCOME_EMAIL',
+        'SEND_EMAIL',
+        'SEND_SMS',
         'ASSIGN_COMPLIANCE',
         'ASSIGN_GENERAL_TASK',
+        'CREATE_TASK',
         'SEND_INVITE_LINK',
         'ADD_TO_TEAM',
         'ONBOARD_TO_SYSTEM',
         'WAIT',
         'NOTIFY_ADMIN',
     ]),
+
+    // TRIGGER fields
+    eventType: z.string().optional(),
+    eventFilters: z.array(EventFilterSchema).optional(),
     roleFilters: z.array(z.string()).optional(),
     teamFilters: z.array(z.string()).optional(),
+
+    // CONDITION fields
+    conditionField: z.string().optional(),
+    conditionSource: z.enum(['context', 'payload']).optional(),
+    conditionOperator: z.enum(['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'contains', 'in']).optional(),
+    conditionValue: z.string().optional(),
+
+    // SEND_WELCOME_EMAIL (legacy)
     welcomeEmailTemplateId: z.string().optional(),
+
+    // SEND_EMAIL fields
+    emailTemplateId: z.string().optional(),
+    recipientType: z.enum(['trigger_user', 'org_admins', 'custom']).optional(),
+    customRecipientEmail: z.string().optional(),
+
+    // SEND_SMS fields
+    smsBody: z.string().optional(),
+    smsRecipientType: z.enum(['trigger_user', 'org_admins', 'custom']).optional(),
+    customRecipientPhone: z.string().optional(),
+
+    // Team / system fields
     teamId: z.string().optional(),
+    systemId: z.string().optional(),
+    systemCapabilityIds: z.array(z.string()).optional(),
+
+    // WAIT
     waitDays: z.number().optional(),
+
+    // SEND_INVITE_LINK
     inviteLinks: z.array(z.object({
         name: z.string(),
         url: z.string(),
     })).optional(),
-    conditionField: z.enum(['role', 'team']).optional(),
-    conditionValue: z.string().optional(),
-    systemId: z.string().optional(),
-    systemCapabilityIds: z.array(z.string()).optional(),
+
+    // Task fields (ASSIGN_COMPLIANCE, ASSIGN_GENERAL_TASK, CREATE_TASK)
     taskType: z.enum(['DOCUMENT_UPLOAD', 'FORM_FILL', 'ACKNOWLEDGEMENT', 'GENERAL_TASK']).optional(),
     taskTitle: z.string().optional(),
     taskDescription: z.string().optional(),

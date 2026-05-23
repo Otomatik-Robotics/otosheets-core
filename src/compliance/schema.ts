@@ -32,6 +32,7 @@ export const ComplianceTaskStoredSchema = z.object({
     reviewedAt: z.string().nullish(),
     reviewedBy: z.string().nullish(),
     reviewNote: z.string().nullish(),
+    lastReminderAt: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });
