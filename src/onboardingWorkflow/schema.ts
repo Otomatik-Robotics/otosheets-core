@@ -30,6 +30,7 @@ const WorkflowNodeDataSchema = z.object({
         'AGENT',
         'GENERATE_DOCUMENT',
         'HTTP_REQUEST',
+        'MCP_TOOL',
         'APPROVAL',
         'REMOVE_FROM_TEAM',
         'REVOKE_ACCESS',
@@ -136,6 +137,8 @@ const WorkflowNodeDataSchema = z.object({
     httpAuthType: z.enum(['none', 'bearer', 'basic', 'api_key']).optional(),
     httpAuthValue: z.string().optional(),
     httpAuthHeaderName: z.string().optional(),
+    /** Reference to a stored secret (workflowSecretsTable) for auth — preferred over raw httpAuthValue */
+    httpAuthSecretId: z.string().optional(),
     httpTimeout: z.number().optional(),
     httpRetryCount: z.number().optional(),
     continueOnError: z.boolean().optional(),
@@ -144,6 +147,16 @@ const WorkflowNodeDataSchema = z.object({
     approverIds: z.array(z.string()).optional(),
     approvalMode: z.enum(['any', 'all']).optional(),
     approvalTimeoutDays: z.number().optional(),
+
+    // MCP_TOOL fields — call a tool on a remote MCP server
+    mcpServerUrl: z.string().optional(),
+    mcpToolName: z.string().optional(),
+    mcpToolArguments: z.string().optional(), // JSON template with {{var}} interpolation
+    mcpAuthType: z.enum(['none', 'bearer', 'api_key', 'custom_header']).optional(),
+    mcpAuthValue: z.string().optional(),
+    mcpAuthHeaderName: z.string().optional(),
+    mcpAuthSecretId: z.string().optional(),
+    mcpTimeout: z.number().optional(),
 
     // Offboarding fields (REMOVE_FROM_TEAM, REVOKE_ACCESS, ARCHIVE_DATA)
     removeFromAllTeams: z.boolean().optional(),
