@@ -28,6 +28,12 @@ const WorkflowNodeDataSchema = z.object({
         'WAIT',
         'NOTIFY_ADMIN',
         'AGENT',
+        'GENERATE_DOCUMENT',
+        'HTTP_REQUEST',
+        'APPROVAL',
+        'REMOVE_FROM_TEAM',
+        'REVOKE_ACCESS',
+        'ARCHIVE_DATA',
     ]),
 
     // TRIGGER fields
@@ -52,12 +58,14 @@ const WorkflowNodeDataSchema = z.object({
     welcomeEmailTemplateId: z.string().optional(),
 
     // SEND_EMAIL fields
+    emailMode: z.enum(['scratch', 'template']).optional(),
     emailTemplateId: z.string().optional(),
     recipientType: z.enum(['trigger_user', 'org_admins', 'custom']).optional(),
     customRecipientEmail: z.string().optional(),
     emailSubject: z.string().optional(),
     emailBody: z.string().optional(),
     emailCc: z.string().optional(),
+    attachmentIds: z.array(z.string()).optional(),
 
     // SEND_SMS fields
     smsBody: z.string().optional(),
@@ -110,6 +118,37 @@ const WorkflowNodeDataSchema = z.object({
     modelId: z.string().optional(),
     maxTokens: z.number().optional(),
     outputKey: z.string().optional(),
+
+    // GENERATE_DOCUMENT fields
+    templateDocumentId: z.string().optional(),
+    templateFileName: z.string().optional(),
+    outputFileName: z.string().optional(),
+    outputFormat: z.enum(['docx', 'pdf']).optional(),
+
+    // HTTP_REQUEST fields
+    httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
+    httpUrl: z.string().optional(),
+    httpHeaders: z.array(z.object({
+        key: z.string(),
+        value: z.string(),
+    })).optional(),
+    httpBody: z.string().optional(),
+    httpAuthType: z.enum(['none', 'bearer', 'basic', 'api_key']).optional(),
+    httpAuthValue: z.string().optional(),
+    httpAuthHeaderName: z.string().optional(),
+    httpTimeout: z.number().optional(),
+    httpRetryCount: z.number().optional(),
+    continueOnError: z.boolean().optional(),
+
+    // APPROVAL fields
+    approverIds: z.array(z.string()).optional(),
+    approvalMode: z.enum(['any', 'all']).optional(),
+    approvalTimeoutDays: z.number().optional(),
+
+    // Offboarding fields (REMOVE_FROM_TEAM, REVOKE_ACCESS, ARCHIVE_DATA)
+    removeFromAllTeams: z.boolean().optional(),
+    revokeReason: z.string().optional(),
+    archiveScope: z.enum(['tasks', 'documents', 'all']).optional(),
 });
 
 const WorkflowNodeSchema = z.object({
@@ -141,6 +180,8 @@ export const OnboardingWorkflowStoredSchema = z.object({
     updatedAt: z.string(),
     createdBy: z.string().optional(),
     updatedBy: z.string().optional(),
+    currentVersion: z.number().optional(),
+    activeVersion: z.number().optional(),
 });
 export type OnboardingWorkflow = z.infer<typeof OnboardingWorkflowStoredSchema>;
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
