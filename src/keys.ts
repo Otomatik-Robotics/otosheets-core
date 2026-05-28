@@ -10,6 +10,7 @@ export const onboardingWorkflowSk = (workflowId: string) => `WORKFLOW#${workflow
 export const welcomeEmailSk = (templateId: string) => `WELCOME_EMAIL#${templateId}`;
 export const onboardingRunSk = (membershipId: string) => `ONBOARDING#${membershipId}`;
 export const workflowRunSk = (runId: string) => `RUN#${runId}`;
+export const workflowApprovalSk = (approvalId: string) => `APPROVAL#${approvalId}`;
 
 // GSI key builders
 export const dueDateSk = (dueDate: string, invoiceId: string) => `${dueDate}#${invoiceId}`;

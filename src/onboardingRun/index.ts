@@ -1,2 +1,2 @@
 export * from './schema';
-export * from './repo';
+export { OnboardingRunRepo, WorkflowRunRepo, WorkflowApprovalRepo } from './repo';

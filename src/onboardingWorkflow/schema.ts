@@ -35,6 +35,7 @@ const WorkflowNodeDataSchema = z.object({
         'REMOVE_FROM_TEAM',
         'REVOKE_ACCESS',
         'ARCHIVE_DATA',
+        'TOOL_CALL',
     ]),
 
     // TRIGGER fields
@@ -158,6 +159,12 @@ const WorkflowNodeDataSchema = z.object({
     mcpAuthSecretId: z.string().optional(),
     mcpTimeout: z.number().optional(),
 
+    // TOOL_CALL fields — generic node that references an agent tool by name
+    toolName: z.string().optional(),
+    toolParams: z.record(z.unknown()).optional(),
+    toolOutputKey: z.string().optional(),
+    toolDomain: z.enum(['billing', 'operations', 'growth', 'team']).optional(),
+
     // Offboarding fields (REMOVE_FROM_TEAM, REVOKE_ACCESS, ARCHIVE_DATA)
     removeFromAllTeams: z.boolean().optional(),
     revokeReason: z.string().optional(),
@@ -195,6 +202,7 @@ export const OnboardingWorkflowStoredSchema = z.object({
     updatedBy: z.string().optional(),
     currentVersion: z.number().optional(),
     activeVersion: z.number().optional(),
+    executorType: z.enum(['v1_durable', 'v2_agent']).optional(),
 });
 export type OnboardingWorkflow = z.infer<typeof OnboardingWorkflowStoredSchema>;
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
