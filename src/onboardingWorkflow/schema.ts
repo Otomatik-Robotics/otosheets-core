@@ -18,7 +18,11 @@ const WorkflowNodeDataSchema = z.object({
         'CONDITION',
         'TOOL_CALL',
         'APPROVAL',
+        'AGENT',
     ]),
+
+    /** Plain-English instructions describing what this step does and why */
+    instructions: z.string().optional(),
 
     // TRIGGER fields
     eventType: z.string().optional(),
@@ -48,6 +52,11 @@ const WorkflowNodeDataSchema = z.object({
     approverIds: z.array(z.string()).optional(),
     approvalMode: z.enum(['any', 'all']).optional(),
     approvalTimeoutDays: z.number().optional(),
+
+    // AGENT fields — LLM-powered reasoning step
+    agentToolDomains: z.array(z.enum(['billing', 'operations', 'growth', 'team'])).optional(),
+    agentOutputKey: z.string().optional(),
+    agentMaxTurns: z.number().optional(),
 
     // Variable capture (available on any node)
     outputVariables: z.array(z.object({
