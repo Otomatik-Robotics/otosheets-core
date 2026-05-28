@@ -16,26 +16,8 @@ const WorkflowNodeDataSchema = z.object({
     nodeType: z.enum([
         'TRIGGER',
         'CONDITION',
-        'SEND_WELCOME_EMAIL',
-        'SEND_EMAIL',
-        'SEND_SMS',
-        'ASSIGN_COMPLIANCE',
-        'ASSIGN_GENERAL_TASK',
-        'CREATE_TASK',
-        'SEND_INVITE_LINK',
-        'ADD_TO_TEAM',
-        'EXTERNAL_SYSTEM',
-        'WAIT',
-        'NOTIFY_ADMIN',
-        'AGENT',
-        'GENERATE_DOCUMENT',
-        'HTTP_REQUEST',
-        'MCP_TOOL',
-        'APPROVAL',
-        'REMOVE_FROM_TEAM',
-        'REVOKE_ACCESS',
-        'ARCHIVE_DATA',
         'TOOL_CALL',
+        'APPROVAL',
     ]),
 
     // TRIGGER fields
@@ -56,119 +38,22 @@ const WorkflowNodeDataSchema = z.object({
     ]).optional(),
     conditionValue: z.string().optional(),
 
-    // SEND_WELCOME_EMAIL (legacy)
-    welcomeEmailTemplateId: z.string().optional(),
-
-    // SEND_EMAIL fields
-    emailMode: z.enum(['scratch', 'template']).optional(),
-    emailTemplateId: z.string().optional(),
-    recipientType: z.enum(['trigger_user', 'org_admins', 'custom']).optional(),
-    customRecipientEmail: z.string().optional(),
-    emailSubject: z.string().optional(),
-    emailBody: z.string().optional(),
-    emailCc: z.string().optional(),
-    attachmentIds: z.array(z.string()).optional(),
-
-    // SEND_SMS fields
-    smsBody: z.string().optional(),
-    smsRecipientType: z.enum(['trigger_user', 'org_admins', 'custom']).optional(),
-    customRecipientPhone: z.string().optional(),
-
-    // Team / system fields
-    teamId: z.string().optional(),
-    systemId: z.string().optional(),
-    systemCapabilityIds: z.array(z.string()).optional(),
-
-    // WAIT
-    waitDays: z.number().optional(),
-
-    // NOTIFY_ADMIN fields
-    notificationMessage: z.string().optional(),
-
-    // SEND_INVITE_LINK
-    inviteLinks: z.array(z.object({
-        name: z.string(),
-        url: z.string(),
-    })).optional(),
-
-    // Task fields (ASSIGN_COMPLIANCE, ASSIGN_GENERAL_TASK, CREATE_TASK)
-    taskType: z.enum(['DOCUMENT_UPLOAD', 'FORM_FILL', 'ACKNOWLEDGEMENT', 'GENERAL_TASK']).optional(),
-    taskTitle: z.string().optional(),
-    taskDescription: z.string().optional(),
-    taskCategory: z.string().optional(),
-    taskRequired: z.boolean().optional(),
-    dueDaysAfterInvite: z.number().optional(),
-    acceptedFileTypes: z.array(z.string()).optional(),
-    formFields: z.array(z.object({
-        name: z.string(),
-        label: z.string(),
-        type: z.string(),
-        required: z.boolean(),
-    })).optional(),
-    acknowledgementText: z.string().optional(),
-
-    // Variable capture
-    outputVariables: z.array(z.object({
-        name: z.string(),
-        key: z.string(),
-    })).optional(),
-
-    // AGENT fields
-    agentMode: z.enum(['simple', 'standard']).optional(),
-    promptTemplate: z.string().optional(),
-    systemPrompt: z.string().optional(),
-    modelId: z.string().optional(),
-    maxTokens: z.number().optional(),
-    outputKey: z.string().optional(),
-
-    // GENERATE_DOCUMENT fields
-    templateDocumentId: z.string().optional(),
-    templateFileName: z.string().optional(),
-    outputFileName: z.string().optional(),
-    outputFormat: z.enum(['docx', 'pdf']).optional(),
-
-    // HTTP_REQUEST fields
-    httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
-    httpUrl: z.string().optional(),
-    httpHeaders: z.array(z.object({
-        key: z.string(),
-        value: z.string(),
-    })).optional(),
-    httpBody: z.string().optional(),
-    httpAuthType: z.enum(['none', 'bearer', 'basic', 'api_key']).optional(),
-    httpAuthValue: z.string().optional(),
-    httpAuthHeaderName: z.string().optional(),
-    /** Reference to a stored secret (workflowSecretsTable) for auth — preferred over raw httpAuthValue */
-    httpAuthSecretId: z.string().optional(),
-    httpTimeout: z.number().optional(),
-    httpRetryCount: z.number().optional(),
-    continueOnError: z.boolean().optional(),
+    // TOOL_CALL fields — references an agent tool by name
+    toolName: z.string().optional(),
+    toolParams: z.record(z.unknown()).optional(),
+    toolOutputKey: z.string().optional(),
+    toolDomain: z.enum(['billing', 'operations', 'growth', 'team']).optional(),
 
     // APPROVAL fields
     approverIds: z.array(z.string()).optional(),
     approvalMode: z.enum(['any', 'all']).optional(),
     approvalTimeoutDays: z.number().optional(),
 
-    // MCP_TOOL fields — call a tool on a remote MCP server
-    mcpServerUrl: z.string().optional(),
-    mcpToolName: z.string().optional(),
-    mcpToolArguments: z.string().optional(), // JSON template with {{var}} interpolation
-    mcpAuthType: z.enum(['none', 'bearer', 'api_key', 'custom_header']).optional(),
-    mcpAuthValue: z.string().optional(),
-    mcpAuthHeaderName: z.string().optional(),
-    mcpAuthSecretId: z.string().optional(),
-    mcpTimeout: z.number().optional(),
-
-    // TOOL_CALL fields — generic node that references an agent tool by name
-    toolName: z.string().optional(),
-    toolParams: z.record(z.unknown()).optional(),
-    toolOutputKey: z.string().optional(),
-    toolDomain: z.enum(['billing', 'operations', 'growth', 'team']).optional(),
-
-    // Offboarding fields (REMOVE_FROM_TEAM, REVOKE_ACCESS, ARCHIVE_DATA)
-    removeFromAllTeams: z.boolean().optional(),
-    revokeReason: z.string().optional(),
-    archiveScope: z.enum(['tasks', 'documents', 'all']).optional(),
+    // Variable capture (available on any node)
+    outputVariables: z.array(z.object({
+        name: z.string(),
+        key: z.string(),
+    })).optional(),
 });
 
 const WorkflowNodeSchema = z.object({
