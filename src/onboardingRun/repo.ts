@@ -1,53 +1,53 @@
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { onboardingRunSk, workflowRunSk, workflowApprovalSk } from '../keys';
-import { OnboardingRun, WorkflowApproval } from './schema';
+import { WorkflowRun, WorkflowApproval } from './schema';
 
-export class OnboardingRunRepo {
+export class WorkflowRunRepo {
     constructor(private ddb: IDdb) {}
 
-    async get(orgId: string, membershipId: string): Promise<OnboardingRun | null> {
+    async get(orgId: string, membershipId: string): Promise<WorkflowRun | null> {
         const { Item } = await this.ddb.getItem(Tables.ONBOARDING, {
             orgId,
             sk: onboardingRunSk(membershipId),
         });
-        return (Item as OnboardingRun) ?? null;
+        return (Item as WorkflowRun) ?? null;
     }
 
-    async list(orgId: string): Promise<OnboardingRun[]> {
+    async list(orgId: string): Promise<WorkflowRun[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.ONBOARDING,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
             ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'ONBOARDING#' },
         });
-        return (Items as OnboardingRun[]) ?? [];
+        return (Items as WorkflowRun[]) ?? [];
     }
 
-    async put(orgId: string, run: Omit<OnboardingRun, 'orgId' | 'sk'>): Promise<void> {
+    async put(orgId: string, run: Omit<WorkflowRun, 'orgId' | 'sk'>): Promise<void> {
         const sk = run.membershipId
             ? onboardingRunSk(run.membershipId)
             : workflowRunSk(run.runId!);
         await this.ddb.put(Tables.ONBOARDING, { orgId, sk, ...run });
     }
 
-    async listRuns(orgId: string): Promise<OnboardingRun[]> {
+    async listRuns(orgId: string): Promise<WorkflowRun[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.ONBOARDING,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
             ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'RUN#' },
         });
-        return (Items as OnboardingRun[]) ?? [];
+        return (Items as WorkflowRun[]) ?? [];
     }
 
-    async getRun(orgId: string, runId: string): Promise<OnboardingRun | null> {
+    async getRun(orgId: string, runId: string): Promise<WorkflowRun | null> {
         const { Item } = await this.ddb.getItem(Tables.ONBOARDING, {
             orgId,
             sk: workflowRunSk(runId),
         });
-        return (Item as OnboardingRun) ?? null;
+        return (Item as WorkflowRun) ?? null;
     }
 
-    async listRunsByWorkflow(orgId: string, workflowId: string, limit: number): Promise<OnboardingRun[]> {
+    async listRunsByWorkflow(orgId: string, workflowId: string, limit: number): Promise<WorkflowRun[]> {
         const all = await this.listRuns(orgId);
         return all
             .filter(r => r.workflowId === workflowId)
@@ -55,7 +55,7 @@ export class OnboardingRunRepo {
             .slice(0, limit);
     }
 
-    async listRunsByOrg(orgId: string, limit: number): Promise<OnboardingRun[]> {
+    async listRunsByOrg(orgId: string, limit: number): Promise<WorkflowRun[]> {
         const all = await this.listRuns(orgId);
         return all
             .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
@@ -81,7 +81,9 @@ export class OnboardingRunRepo {
     }
 }
 
-export { OnboardingRunRepo as WorkflowRunRepo };
+// Backward-compat alias (deprecated — use WorkflowRunRepo)
+/** @deprecated Use WorkflowRunRepo */
+export { WorkflowRunRepo as OnboardingRunRepo };
 
 export class WorkflowApprovalRepo {
     constructor(private ddb: IDdb) {}

@@ -6,7 +6,7 @@ const CompletedNodeSchema = z.object({
     result: z.any().optional(),
 });
 
-export const OnboardingRunStoredSchema = z.object({
+export const WorkflowRunStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(),
     runId: z.string().optional(),
@@ -39,9 +39,15 @@ export const OnboardingRunStoredSchema = z.object({
     durationMs: z.number().optional(),
     error: z.string().optional(),
 });
-export type OnboardingRun = z.infer<typeof OnboardingRunStoredSchema>;
-export type WorkflowRun = OnboardingRun;
+
+export type WorkflowRun = z.infer<typeof WorkflowRunStoredSchema>;
 export type CompletedNode = z.infer<typeof CompletedNodeSchema>;
+
+// Backward-compat aliases (deprecated — use WorkflowRun / WorkflowRunStoredSchema)
+/** @deprecated Use WorkflowRunStoredSchema */
+export const OnboardingRunStoredSchema = WorkflowRunStoredSchema;
+/** @deprecated Use WorkflowRun */
+export type OnboardingRun = WorkflowRun;
 
 export const WorkflowApprovalStoredSchema = z.object({
     orgId: z.string(),
