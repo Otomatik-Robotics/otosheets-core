@@ -81,6 +81,33 @@ These must be installed in the consuming project:
 }
 ```
 
+## Adding a New Endpoint — This Repo's Role
+
+This repo is **Step 1** in the cross-repo endpoint process. It provides the DynamoDB data layer.
+
+When a new endpoint needs a new repo method:
+
+1. Add the method to `src/{entity}/repo.ts`
+2. Export from `src/{entity}/index.ts` → `src/index.ts`
+3. `npm run build`, push, grab the commit hash
+4. Update consumers' `package.json`: `"@otosheets/core": "github:Tinago95/otosheets-core#<new-hash>"`
+5. `npm install` in each consumer (`otosheets-app-backend`, `otosheets-agents`, `otosheets-external-mcp`)
+
+If the existing repo already has the methods you need, skip this repo entirely.
+
+**Full process (all repos):**
+
+| Step | Repo | What |
+|------|------|------|
+| 1. Data layer | **`@otosheets/core` (this repo)** | Add DynamoDB repo methods |
+| 2. Handler | `otosheets-app-backend` | Business logic + route registration in handler router |
+| 3. Contract | `@otosheets/shared` | Endpoint path + cache tags in `query/endpoints.ts` |
+| 4. Frontend | `otosheets-app-frontend` | `useMutate()` hook (if frontend calls it directly) |
+| 5. MCP tool | `otosheets-domain-mcp` | Agent-callable tool wrapper (calls backend REST API, not DynamoDB) |
+| 6. Agent config | `otosheets-agents` | Add to `READ_ONLY` set in `mcpBridge.ts` (if read-only) |
+
+See `otosheets/CLAUDE.md` § "New API Endpoint (Full Cross-Repo Process)" for the detailed guide.
+
 ## Development
 
 ```bash
