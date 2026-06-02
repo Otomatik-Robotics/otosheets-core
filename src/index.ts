@@ -33,3 +33,4 @@ export * from './welcomeEmail';
 export * from './onboardingRun';
 export * from './notification';
 export * from './orgChannel';
+export * from './document';
