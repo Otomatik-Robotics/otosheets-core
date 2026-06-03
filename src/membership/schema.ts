@@ -6,6 +6,8 @@ export const MembershipStoredSchema = z.object({
     membershipId: z.string(),
     role: z.string(),
     status: z.string().default('PENDING'),
+    firstName: z.string().nullish(),
+    lastName: z.string().nullish(),
     inviteName: z.string().nullish(),
     inviteToken: z.string().nullish(),
     inviteExpiresAt: z.string().nullish(),
@@ -23,6 +25,8 @@ export type Membership = z.infer<typeof MembershipStoredSchema>;
 
 export const MembershipCreateRequestSchema = z.object({
     role: z.string(),
+    firstName: z.string().nullish(),
+    lastName: z.string().nullish(),
     inviteName: z.string().nullish(),
     inviteEmail: z.string().nullish(),
     invitePhone: z.string().nullish(),
