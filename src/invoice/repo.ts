@@ -29,6 +29,11 @@ export class InvoiceRepo {
         return (Items as Invoice[]) ?? [];
     }
 
+    async listDraftInvoices(orgId: string): Promise<Invoice[]> {
+        const all = await this.listAllOrgInvoices(orgId);
+        return all.filter(i => i.status === 'DRAFT');
+    }
+
     async listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
