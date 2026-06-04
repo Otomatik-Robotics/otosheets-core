@@ -22,4 +22,5 @@ export const Tables = {
     get ONBOARDING() { return process.env.ONBOARDING_TABLE!; },
     get INBOX_CACHE() { return process.env.INBOX_CACHE_TABLE!; },
     get META_PAGE_MAPPINGS() { return process.env.META_PAGE_MAPPINGS_TABLE!; },
+    get SCHEDULING() { return process.env.SCHEDULING_TABLE!; },
 } as const;

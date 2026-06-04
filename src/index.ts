@@ -34,3 +34,7 @@ export * from './onboardingRun';
 export * from './notification';
 export * from './orgChannel';
 export * from './document';
+export * from './availabilityRule';
+export * from './timeOff';
+export * from './rotation';
+export * from './rosterEntry';
