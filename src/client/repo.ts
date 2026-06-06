@@ -48,6 +48,24 @@ export class ClientRepo {
         });
     }
 
+    async batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]> {
+        if (clientIds.length === 0) return [];
+        const chunks: string[][] = [];
+        for (let i = 0; i < clientIds.length; i += 100) {
+            chunks.push(clientIds.slice(i, i + 100));
+        }
+        const results: Client[] = [];
+        for (const chunk of chunks) {
+            const { Responses } = await this.ddb.batchGet({
+                [Tables.CLIENTS]: { Keys: chunk.map(id => ({ orgId, clientId: id })) },
+            });
+            if (Responses?.[Tables.CLIENTS]) {
+                results.push(...(Responses[Tables.CLIENTS] as Client[]));
+            }
+        }
+        return results;
+    }
+
     async deleteClient(orgId: string, clientId: string): Promise<void> {
         await this.ddb.delete(Tables.CLIENTS, { orgId, clientId });
     }
