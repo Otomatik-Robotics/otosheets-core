@@ -24,6 +24,53 @@ export class ReceiptRepo {
         return { receipt: item, ownerId: item.createdBy };
     }
 
+    async findReceiptByDescriptionPrefix(orgId: string, prefix: string): Promise<Receipt | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: 'begins_with(#description, :prefix)',
+            ExpressionAttributeNames: { '#description': 'description' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': prefix },
+            Limit: 1,
+        });
+        return (Items?.[0] as Receipt) ?? null;
+    }
+
+    async findReceiptByContentHash(orgId: string, contentHash: string): Promise<Receipt | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#contentHash = :contentHash AND #status <> :archived AND #status <> :duplicate',
+            ExpressionAttributeNames: { '#contentHash': 'contentHash', '#status': 'status' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':contentHash': contentHash,
+                ':archived': 'ARCHIVED',
+                ':duplicate': 'DUPLICATE',
+            },
+            Limit: 1,
+        });
+        return (Items?.[0] as Receipt) ?? null;
+    }
+
+    async findReceiptsByDuplicateOf(orgId: string, receiptId: string): Promise<Receipt[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#status = :duplicate AND #duplicateOf = :receiptId',
+            ExpressionAttributeNames: { '#status': 'status', '#duplicateOf': 'duplicateOf' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':duplicate': 'DUPLICATE',
+                ':receiptId': receiptId,
+            },
+        });
+        return (Items as Receipt[]) ?? [];
+    }
+
     async listAllOrgReceipts(orgId: string): Promise<Receipt[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.RECEIPTS,

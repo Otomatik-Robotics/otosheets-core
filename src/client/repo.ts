@@ -43,6 +43,19 @@ export class ClientRepo {
         };
     }
 
+    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.CLIENTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#email = :email',
+            ExpressionAttributeNames: { '#email': 'email' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':email': email.toLowerCase() },
+            Limit: 1,
+        });
+        return (Items?.[0] as Client) ?? null;
+    }
+
     async createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void> {
         const now = new Date().toISOString();
         await this.ddb.put(Tables.CLIENTS, {

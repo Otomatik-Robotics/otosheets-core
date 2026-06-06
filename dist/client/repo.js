@@ -35,6 +35,18 @@ class ClientRepo {
             lastEvaluatedKey: result.LastEvaluatedKey,
         };
     }
+    async findClientByEmail(orgId, email) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.CLIENTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#email = :email',
+            ExpressionAttributeNames: { '#email': 'email' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':email': email.toLowerCase() },
+            Limit: 1,
+        });
+        return Items?.[0] ?? null;
+    }
     async createClient(orgId, clientId, data) {
         const now = new Date().toISOString();
         await this.ddb.put(tables_1.Tables.CLIENTS, {

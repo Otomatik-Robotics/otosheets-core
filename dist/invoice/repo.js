@@ -26,14 +26,30 @@ class InvoiceRepo {
         return { invoice: item, ownerId: item.createdBy };
     }
     async listOrgInvoicesPaginated(params) {
-        const { orgId, limit = 20, exclusiveStartKey, status, isQuote } = params;
+        const { orgId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo } = params;
         const filterParts = [];
         const names = {};
         const values = { ':orgId': orgId };
-        // Exclude payment links (safe for legacy records without the attribute)
-        filterParts.push('(attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false)');
-        names['#isPaymentLink'] = 'isPaymentLink';
-        values[':false'] = false;
+        if (isPaymentLink === true) {
+            filterParts.push('#isPaymentLink = :isPaymentLinkVal');
+            names['#isPaymentLink'] = 'isPaymentLink';
+            values[':isPaymentLinkVal'] = true;
+        }
+        else {
+            filterParts.push('(attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false)');
+            names['#isPaymentLink'] = 'isPaymentLink';
+            values[':false'] = false;
+        }
+        if (isRecurring === true) {
+            filterParts.push('#isRecurring = :isRecurringVal');
+            names['#isRecurring'] = 'isRecurring';
+            values[':isRecurringVal'] = true;
+        }
+        else if (isRecurring === false) {
+            filterParts.push('(attribute_not_exists(#isRecurring) OR #isRecurring = :isRecurringVal)');
+            names['#isRecurring'] = 'isRecurring';
+            values[':isRecurringVal'] = false;
+        }
         // Filter by isQuote
         if (isQuote === true) {
             filterParts.push('#isQuote = :isQuoteVal');
@@ -50,6 +66,27 @@ class InvoiceRepo {
             filterParts.push('#status = :status');
             names['#status'] = 'status';
             values[':status'] = status;
+        }
+        if (clientId) {
+            filterParts.push('#clientId = :clientId');
+            names['#clientId'] = 'clientId';
+            values[':clientId'] = clientId;
+        }
+        if (search) {
+            const q = search.toLowerCase();
+            filterParts.push('(contains(searchName, :search) OR contains(searchNumber, :search))');
+            values[':search'] = q;
+        }
+        if (dueDateFrom) {
+            filterParts.push('#dueDate >= :dueDateFrom');
+            names['#dueDate'] = 'dueDate';
+            values[':dueDateFrom'] = dueDateFrom;
+        }
+        if (dueDateTo) {
+            if (!names['#dueDate'])
+                names['#dueDate'] = 'dueDate';
+            filterParts.push('#dueDate <= :dueDateTo');
+            values[':dueDateTo'] = dueDateTo;
         }
         const result = await this.ddb.query({
             TableName: tables_1.Tables.INVOICES,

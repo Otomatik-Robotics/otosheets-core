@@ -7,6 +7,12 @@ export interface ListInvoicesPaginatedParams {
     exclusiveStartKey?: Record<string, any>;
     status?: string;
     isQuote?: boolean;
+    isRecurring?: boolean;
+    isPaymentLink?: boolean;
+    clientId?: string;
+    search?: string;
+    dueDateFrom?: string;
+    dueDateTo?: string;
 }
 export declare class InvoiceRepo {
     private ddb;

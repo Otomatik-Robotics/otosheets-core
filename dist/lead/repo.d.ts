@@ -18,6 +18,7 @@ export declare class LeadRepo {
         stage?: string;
         source?: string;
     }): Promise<PaginatedResult<Lead>>;
+    findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
     listLeadsByStage(orgId: string, stage: string): Promise<Lead[]>;
     createLead(orgId: string, userId: string, leadId: string, data: Record<string, any>): Promise<void>;
     updateLead(orgId: string, userId: string, leadId: string, updates: Record<string, any>): Promise<void>;

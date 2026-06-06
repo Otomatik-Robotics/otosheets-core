@@ -72,6 +72,25 @@ class LeadRepo {
             lastEvaluatedKey: result.LastEvaluatedKey,
         };
     }
+    async findActiveLeadBySenderId(orgId, senderId) {
+        const terminalStages = ['COMPLETE', 'LOST'];
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#senderId = :senderId AND NOT #stage IN (:s1, :s2)',
+            ExpressionAttributeNames: { '#senderId': 'senderId', '#stage': 'stage' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':senderId': senderId,
+                ':s1': terminalStages[0],
+                ':s2': terminalStages[1],
+            },
+            ScanIndexForward: false,
+            Limit: 1,
+        });
+        return Items?.[0] ?? null;
+    }
     async listLeadsByStage(orgId, stage) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.LEADS,

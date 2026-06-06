@@ -25,6 +25,50 @@ class ReceiptRepo {
             return null;
         return { receipt: item, ownerId: item.createdBy };
     }
+    async findReceiptByDescriptionPrefix(orgId, prefix) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: 'begins_with(#description, :prefix)',
+            ExpressionAttributeNames: { '#description': 'description' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': prefix },
+            Limit: 1,
+        });
+        return Items?.[0] ?? null;
+    }
+    async findReceiptByContentHash(orgId, contentHash) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#contentHash = :contentHash AND #status <> :archived AND #status <> :duplicate',
+            ExpressionAttributeNames: { '#contentHash': 'contentHash', '#status': 'status' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':contentHash': contentHash,
+                ':archived': 'ARCHIVED',
+                ':duplicate': 'DUPLICATE',
+            },
+            Limit: 1,
+        });
+        return Items?.[0] ?? null;
+    }
+    async findReceiptsByDuplicateOf(orgId, receiptId) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#status = :duplicate AND #duplicateOf = :receiptId',
+            ExpressionAttributeNames: { '#status': 'status', '#duplicateOf': 'duplicateOf' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':duplicate': 'DUPLICATE',
+                ':receiptId': receiptId,
+            },
+        });
+        return Items ?? [];
+    }
     async listAllOrgReceipts(orgId) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.RECEIPTS,
