@@ -93,16 +93,17 @@ export class ClientRepo {
         return Count ?? 0;
     }
 
-    async listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string }>> {
+    async listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string; name: string }>> {
         const { Items } = await this.ddb.query({
             TableName: Tables.CLIENTS,
             KeyConditionExpression: 'orgId = :orgId',
             ExpressionAttributeValues: { ':orgId': orgId },
-            ProjectionExpression: 'clientId, email',
+            ProjectionExpression: 'clientId, email, #name',
+            ExpressionAttributeNames: { '#name': 'name' },
         });
         return ((Items as any[]) ?? [])
             .filter(c => c.email)
-            .map(c => ({ clientId: c.clientId, email: c.email }));
+            .map(c => ({ clientId: c.clientId, email: c.email, name: c.name || '' }));
     }
 
     async createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void> {

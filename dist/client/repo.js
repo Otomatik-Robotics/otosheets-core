@@ -84,11 +84,12 @@ class ClientRepo {
             TableName: tables_1.Tables.CLIENTS,
             KeyConditionExpression: 'orgId = :orgId',
             ExpressionAttributeValues: { ':orgId': orgId },
-            ProjectionExpression: 'clientId, email',
+            ProjectionExpression: 'clientId, email, #name',
+            ExpressionAttributeNames: { '#name': 'name' },
         });
         return (Items ?? [])
             .filter(c => c.email)
-            .map(c => ({ clientId: c.clientId, email: c.email }));
+            .map(c => ({ clientId: c.clientId, email: c.email, name: c.name || '' }));
     }
     async createClient(orgId, clientId, data) {
         const now = new Date().toISOString();

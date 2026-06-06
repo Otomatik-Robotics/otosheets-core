@@ -19,6 +19,7 @@ export declare class ClientRepo {
     listClientEmails(orgId: string): Promise<Array<{
         clientId: string;
         email: string;
+        name: string;
     }>>;
     createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;
     updateClient(orgId: string, clientId: string, updates: Record<string, any>): Promise<void>;
