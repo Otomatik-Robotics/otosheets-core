@@ -83,6 +83,28 @@ export class ClientRepo {
         return (Items?.[0] as Client) ?? null;
     }
 
+    async countClients(orgId: string): Promise<number> {
+        const { Count } = await this.ddb.query({
+            TableName: Tables.CLIENTS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            Select: 'COUNT',
+        });
+        return Count ?? 0;
+    }
+
+    async listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string }>> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.CLIENTS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ProjectionExpression: 'clientId, email',
+        });
+        return ((Items as any[]) ?? [])
+            .filter(c => c.email)
+            .map(c => ({ clientId: c.clientId, email: c.email }));
+    }
+
     async createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void> {
         const now = new Date().toISOString();
         await this.ddb.put(Tables.CLIENTS, {

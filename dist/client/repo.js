@@ -70,6 +70,26 @@ class ClientRepo {
         });
         return Items?.[0] ?? null;
     }
+    async countClients(orgId) {
+        const { Count } = await this.ddb.query({
+            TableName: tables_1.Tables.CLIENTS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            Select: 'COUNT',
+        });
+        return Count ?? 0;
+    }
+    async listClientEmails(orgId) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.CLIENTS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ProjectionExpression: 'clientId, email',
+        });
+        return (Items ?? [])
+            .filter(c => c.email)
+            .map(c => ({ clientId: c.clientId, email: c.email }));
+    }
     async createClient(orgId, clientId, data) {
         const now = new Date().toISOString();
         await this.ddb.put(tables_1.Tables.CLIENTS, {

@@ -11,6 +11,7 @@ export declare class ReceiptRepo {
     findReceiptByDescriptionPrefix(orgId: string, prefix: string): Promise<Receipt | null>;
     findReceiptByContentHash(orgId: string, contentHash: string): Promise<Receipt | null>;
     findReceiptsByDuplicateOf(orgId: string, receiptId: string): Promise<Receipt[]>;
+    findReceiptsByVendorAndAmount(orgId: string, vendorName: string, amount: number): Promise<Receipt[]>;
     listAllOrgReceipts(orgId: string): Promise<Receipt[]>;
     listUserReceipts(orgId: string, userId: string): Promise<Receipt[]>;
     listReceiptsByDate(orgId: string, from: string, to: string, projection?: string): Promise<Receipt[]>;

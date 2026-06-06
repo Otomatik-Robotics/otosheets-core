@@ -112,6 +112,27 @@ export class LeadRepo {
         return (Items?.[0] as Lead) ?? null;
     }
 
+    async countOrgLeads(orgId: string): Promise<number> {
+        const { Count } = await this.ddb.query({
+            TableName: Tables.LEADS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            Select: 'COUNT',
+        });
+        return Count ?? 0;
+    }
+
+    async listRecentLeads(orgId: string, since: string): Promise<Lead[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId AND createdAt >= :since',
+            ExpressionAttributeValues: { ':orgId': orgId, ':since': since },
+            ScanIndexForward: false,
+        });
+        return (Items as Lead[]) ?? [];
+    }
+
     async findLeadsByPipelineId(orgId: string, pipelineId: string): Promise<Lead[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.LEADS,

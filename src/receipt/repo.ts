@@ -71,6 +71,25 @@ export class ReceiptRepo {
         return (Items as Receipt[]) ?? [];
     }
 
+    async findReceiptsByVendorAndAmount(orgId: string, vendorName: string, amount: number): Promise<Receipt[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#vendorName = :vendorName AND #totalAmount BETWEEN :lo AND :hi AND #status <> :archived AND #status <> :duplicate',
+            ExpressionAttributeNames: { '#vendorName': 'vendorName', '#totalAmount': 'totalAmount', '#status': 'status' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':vendorName': vendorName,
+                ':lo': amount - 0.01,
+                ':hi': amount + 0.01,
+                ':archived': 'ARCHIVED',
+                ':duplicate': 'DUPLICATE',
+            },
+        });
+        return (Items as Receipt[]) ?? [];
+    }
+
     async listAllOrgReceipts(orgId: string): Promise<Receipt[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.RECEIPTS,

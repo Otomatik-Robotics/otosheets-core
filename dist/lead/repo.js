@@ -98,6 +98,25 @@ class LeadRepo {
         });
         return Items?.[0] ?? null;
     }
+    async countOrgLeads(orgId) {
+        const { Count } = await this.ddb.query({
+            TableName: tables_1.Tables.LEADS,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            Select: 'COUNT',
+        });
+        return Count ?? 0;
+    }
+    async listRecentLeads(orgId, since) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId AND createdAt >= :since',
+            ExpressionAttributeValues: { ':orgId': orgId, ':since': since },
+            ScanIndexForward: false,
+        });
+        return Items ?? [];
+    }
     async findLeadsByPipelineId(orgId, pipelineId) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.LEADS,

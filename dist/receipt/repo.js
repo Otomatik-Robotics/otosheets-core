@@ -69,6 +69,24 @@ class ReceiptRepo {
         });
         return Items ?? [];
     }
+    async findReceiptsByVendorAndAmount(orgId, vendorName, amount) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.RECEIPTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#vendorName = :vendorName AND #totalAmount BETWEEN :lo AND :hi AND #status <> :archived AND #status <> :duplicate',
+            ExpressionAttributeNames: { '#vendorName': 'vendorName', '#totalAmount': 'totalAmount', '#status': 'status' },
+            ExpressionAttributeValues: {
+                ':orgId': orgId,
+                ':vendorName': vendorName,
+                ':lo': amount - 0.01,
+                ':hi': amount + 0.01,
+                ':archived': 'ARCHIVED',
+                ':duplicate': 'DUPLICATE',
+            },
+        });
+        return Items ?? [];
+    }
     async listAllOrgReceipts(orgId) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.RECEIPTS,

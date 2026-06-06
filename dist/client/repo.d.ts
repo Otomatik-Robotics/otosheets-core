@@ -15,6 +15,11 @@ export declare class ClientRepo {
         dateTo?: string;
     }): Promise<PaginatedResult<Client>>;
     findClientByEmail(orgId: string, email: string): Promise<Client | null>;
+    countClients(orgId: string): Promise<number>;
+    listClientEmails(orgId: string): Promise<Array<{
+        clientId: string;
+        email: string;
+    }>>;
     createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;
     updateClient(orgId: string, clientId: string, updates: Record<string, any>): Promise<void>;
     batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]>;
