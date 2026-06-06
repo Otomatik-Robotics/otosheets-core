@@ -2,6 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk, dateSk } from '../keys';
 import { Job } from './schema';
+import { PaginatedResult } from '../types';
 
 export class JobRepo {
     constructor(private ddb: IDdb) {}
@@ -50,6 +51,47 @@ export class JobRepo {
             ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿` },
         });
         return (Items as Job[]) ?? [];
+    }
+
+    async listOrgJobsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        status?: string;
+        clientId?: string;
+    }): Promise<PaginatedResult<Job>> {
+        const { orgId, limit = 20, exclusiveStartKey, status, clientId } = params;
+        const filterParts: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId };
+
+        if (status) {
+            filterParts.push('#status = :status');
+            names['#status'] = 'status';
+            values[':status'] = status;
+        }
+        if (clientId) {
+            filterParts.push('#clientId = :clientId');
+            names['#clientId'] = 'clientId';
+            values[':clientId'] = clientId;
+        }
+
+        const result = await this.ddb.query({
+            TableName: Tables.JOBS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+
+        return {
+            items: (result.Items as Job[]) ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
     }
 
     async createJob(orgId: string, userId: string, jobId: string, data: Record<string, any>): Promise<void> {

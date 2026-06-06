@@ -33,6 +33,46 @@ class TimeEntryRepo {
         });
         return Items ?? [];
     }
+    async listOrgTimeEntriesPaginated(params) {
+        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced } = params;
+        const filterParts = [];
+        const names = {};
+        const values = { ':orgId': orgId };
+        if (clientId) {
+            filterParts.push('#clientId = :clientId');
+            names['#clientId'] = 'clientId';
+            values[':clientId'] = clientId;
+        }
+        if (from) {
+            filterParts.push('#date >= :from');
+            names['#date'] = 'date';
+            values[':from'] = from;
+        }
+        if (to) {
+            if (!names['#date'])
+                names['#date'] = 'date';
+            filterParts.push('#date <= :to');
+            values[':to'] = to;
+        }
+        if (uninvoiced) {
+            filterParts.push('attribute_not_exists(invoicedAt)');
+        }
+        const result = await this.ddb.query({
+            TableName: tables_1.Tables.TIME_ENTRIES,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+        return {
+            items: result.Items ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
+    }
     async listTimeEntries(orgId, userId, opts) {
         const params = {
             TableName: tables_1.Tables.TIME_ENTRIES,

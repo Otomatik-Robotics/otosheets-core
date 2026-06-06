@@ -1,5 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Job } from './schema';
+import { PaginatedResult } from '../types';
 export declare class JobRepo {
     private ddb;
     constructor(ddb: IDdb);
@@ -11,6 +12,13 @@ export declare class JobRepo {
     listUserJobs(orgId: string, userId: string): Promise<Job[]>;
     listAllOrgJobs(orgId: string): Promise<Job[]>;
     listJobsByDate(orgId: string, from: string, to: string): Promise<Job[]>;
+    listOrgJobsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        status?: string;
+        clientId?: string;
+    }): Promise<PaginatedResult<Job>>;
     createJob(orgId: string, userId: string, jobId: string, data: Record<string, any>): Promise<void>;
     updateJob(orgId: string, userId: string, jobId: string, updates: Record<string, any>): Promise<void>;
     deleteJob(orgId: string, userId: string, jobId: string): Promise<void>;

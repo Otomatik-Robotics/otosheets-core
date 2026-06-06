@@ -2,6 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk, dateSk } from '../keys';
 import { Booking } from './schema';
+import { PaginatedResult } from '../types';
 
 export class BookingRepo {
     constructor(private ddb: IDdb) {}
@@ -31,6 +32,41 @@ export class BookingRepo {
             ExpressionAttributeValues: { ':orgId': orgId },
         });
         return (Items as Booking[]) ?? [];
+    }
+
+    async listOrgBookingsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        status?: string;
+    }): Promise<PaginatedResult<Booking>> {
+        const { orgId, limit = 20, exclusiveStartKey, status } = params;
+        const filterParts: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId };
+
+        if (status) {
+            filterParts.push('#status = :status');
+            names['#status'] = 'status';
+            values[':status'] = status;
+        }
+
+        const result = await this.ddb.query({
+            TableName: Tables.BOOKINGS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+
+        return {
+            items: (result.Items as Booking[]) ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
     }
 
     async deleteBooking(orgId: string, userId: string, bookingId: string): Promise<void> {

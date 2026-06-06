@@ -33,6 +33,32 @@ class BookingRepo {
         });
         return Items ?? [];
     }
+    async listOrgBookingsPaginated(params) {
+        const { orgId, limit = 20, exclusiveStartKey, status } = params;
+        const filterParts = [];
+        const names = {};
+        const values = { ':orgId': orgId };
+        if (status) {
+            filterParts.push('#status = :status');
+            names['#status'] = 'status';
+            values[':status'] = status;
+        }
+        const result = await this.ddb.query({
+            TableName: tables_1.Tables.BOOKINGS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+        return {
+            items: result.Items ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
+    }
     async deleteBooking(orgId, userId, bookingId) {
         await this.ddb.delete(tables_1.Tables.BOOKINGS, { orgId, sk: (0, keys_1.sk)(userId, bookingId) });
     }

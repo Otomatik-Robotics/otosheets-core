@@ -2,6 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk, orgStageKey } from '../keys';
 import { Lead } from './schema';
+import { PaginatedResult } from '../types';
 
 export class LeadRepo {
     constructor(private ddb: IDdb) {}
@@ -40,6 +41,47 @@ export class LeadRepo {
             ExpressionAttributeValues: { ':orgId': orgId },
         });
         return (Items as Lead[]) ?? [];
+    }
+
+    async listOrgLeadsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        stage?: string;
+        source?: string;
+    }): Promise<PaginatedResult<Lead>> {
+        const { orgId, limit = 20, exclusiveStartKey, stage, source } = params;
+        const filterParts: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId };
+
+        if (stage) {
+            filterParts.push('#stage = :stage');
+            names['#stage'] = 'stage';
+            values[':stage'] = stage;
+        }
+        if (source) {
+            filterParts.push('#source = :source');
+            names['#source'] = 'source';
+            values[':source'] = source;
+        }
+
+        const result = await this.ddb.query({
+            TableName: Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+
+        return {
+            items: (result.Items as Lead[]) ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
     }
 
     async listLeadsByStage(orgId: string, stage: string): Promise<Lead[]> {

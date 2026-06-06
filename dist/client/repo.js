@@ -19,6 +19,22 @@ class ClientRepo {
         });
         return Items ?? [];
     }
+    async listClientsPaginated(params) {
+        const { orgId, limit = 20, exclusiveStartKey } = params;
+        const result = await this.ddb.query({
+            TableName: tables_1.Tables.CLIENTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+        return {
+            items: result.Items ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
+    }
     async createClient(orgId, clientId, data) {
         const now = new Date().toISOString();
         await this.ddb.put(tables_1.Tables.CLIENTS, {

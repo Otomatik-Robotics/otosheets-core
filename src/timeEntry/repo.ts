@@ -2,6 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk } from '../keys';
 import { TimeEntry } from './schema';
+import { PaginatedResult } from '../types';
 
 export class TimeEntryRepo {
     constructor(private ddb: IDdb) {}
@@ -31,6 +32,57 @@ export class TimeEntryRepo {
             ExpressionAttributeValues: { ':orgId': orgId },
         });
         return (Items as TimeEntry[]) ?? [];
+    }
+
+    async listOrgTimeEntriesPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        clientId?: string;
+        from?: string;
+        to?: string;
+        uninvoiced?: boolean;
+    }): Promise<PaginatedResult<TimeEntry>> {
+        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced } = params;
+        const filterParts: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId };
+
+        if (clientId) {
+            filterParts.push('#clientId = :clientId');
+            names['#clientId'] = 'clientId';
+            values[':clientId'] = clientId;
+        }
+        if (from) {
+            filterParts.push('#date >= :from');
+            names['#date'] = 'date';
+            values[':from'] = from;
+        }
+        if (to) {
+            if (!names['#date']) names['#date'] = 'date';
+            filterParts.push('#date <= :to');
+            values[':to'] = to;
+        }
+        if (uninvoiced) {
+            filterParts.push('attribute_not_exists(invoicedAt)');
+        }
+
+        const result = await this.ddb.query({
+            TableName: Tables.TIME_ENTRIES,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+
+        return {
+            items: (result.Items as TimeEntry[]) ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
     }
 
     async listTimeEntries(orgId: string, userId: string, opts?: { uninvoiced?: boolean }): Promise<TimeEntry[]> {

@@ -1,5 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { TimeEntry } from './schema';
+import { PaginatedResult } from '../types';
 export declare class TimeEntryRepo {
     private ddb;
     constructor(ddb: IDdb);
@@ -9,6 +10,15 @@ export declare class TimeEntryRepo {
         ownerId: string;
     } | null>;
     listAllOrgTimeEntries(orgId: string): Promise<TimeEntry[]>;
+    listOrgTimeEntriesPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        clientId?: string;
+        from?: string;
+        to?: string;
+        uninvoiced?: boolean;
+    }): Promise<PaginatedResult<TimeEntry>>;
     listTimeEntries(orgId: string, userId: string, opts?: {
         uninvoiced?: boolean;
     }): Promise<TimeEntry[]>;

@@ -33,6 +33,22 @@ class TripRepo {
         });
         return Items ?? [];
     }
+    async listOrgTripsPaginated(params) {
+        const { orgId, limit = 20, exclusiveStartKey } = params;
+        const result = await this.ddb.query({
+            TableName: tables_1.Tables.TRIPS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+        return {
+            items: result.Items ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
+    }
     async listUserTrips(orgId, userId) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.TRIPS,

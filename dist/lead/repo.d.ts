@@ -1,5 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Lead } from './schema';
+import { PaginatedResult } from '../types';
 export declare class LeadRepo {
     private ddb;
     constructor(ddb: IDdb);
@@ -10,6 +11,13 @@ export declare class LeadRepo {
     } | null>;
     listUserLeads(orgId: string, userId: string): Promise<Lead[]>;
     listAllOrgLeads(orgId: string): Promise<Lead[]>;
+    listOrgLeadsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        stage?: string;
+        source?: string;
+    }): Promise<PaginatedResult<Lead>>;
     listLeadsByStage(orgId: string, stage: string): Promise<Lead[]>;
     createLead(orgId: string, userId: string, leadId: string, data: Record<string, any>): Promise<void>;
     updateLead(orgId: string, userId: string, leadId: string, updates: Record<string, any>): Promise<void>;

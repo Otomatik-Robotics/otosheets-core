@@ -1,5 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Trip } from './schema';
+import { PaginatedResult } from '../types';
 export declare class TripRepo {
     private ddb;
     constructor(ddb: IDdb);
@@ -9,6 +10,11 @@ export declare class TripRepo {
         ownerId: string;
     } | null>;
     listAllOrgTrips(orgId: string): Promise<Trip[]>;
+    listOrgTripsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+    }): Promise<PaginatedResult<Trip>>;
     listUserTrips(orgId: string, userId: string): Promise<Trip[]>;
     listTripsByDate(orgId: string, from: string, to: string): Promise<Trip[]>;
     createTrip(orgId: string, userId: string, tripId: string, data: Record<string, any>): Promise<void>;

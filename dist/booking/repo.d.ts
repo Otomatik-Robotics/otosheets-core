@@ -1,5 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Booking } from './schema';
+import { PaginatedResult } from '../types';
 export declare class BookingRepo {
     private ddb;
     constructor(ddb: IDdb);
@@ -9,6 +10,12 @@ export declare class BookingRepo {
         ownerId: string;
     } | null>;
     listAllOrgBookings(orgId: string): Promise<Booking[]>;
+    listOrgBookingsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+        status?: string;
+    }): Promise<PaginatedResult<Booking>>;
     deleteBooking(orgId: string, userId: string, bookingId: string): Promise<void>;
     listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]>;
     createBooking(orgId: string, userId: string, bookingId: string, data: Record<string, any>): Promise<void>;

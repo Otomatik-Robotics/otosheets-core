@@ -1,6 +1,7 @@
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Client } from './schema';
+import { PaginatedResult } from '../types';
 
 export class ClientRepo {
     constructor(private ddb: IDdb) {}
@@ -17,6 +18,29 @@ export class ClientRepo {
             ExpressionAttributeValues: { ':orgId': orgId },
         });
         return (Items as Client[]) ?? [];
+    }
+
+    async listClientsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+    }): Promise<PaginatedResult<Client>> {
+        const { orgId, limit = 20, exclusiveStartKey } = params;
+
+        const result = await this.ddb.query({
+            TableName: Tables.CLIENTS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+
+        return {
+            items: (result.Items as Client[]) ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
     }
 
     async createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void> {

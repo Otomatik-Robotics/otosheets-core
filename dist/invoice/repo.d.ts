@@ -1,9 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Invoice } from './schema';
-export interface PaginatedResult<T> {
-    items: T[];
-    lastEvaluatedKey?: Record<string, any>;
-}
+import { PaginatedResult } from '../types';
 export interface ListInvoicesPaginatedParams {
     orgId: string;
     limit?: number;

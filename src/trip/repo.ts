@@ -2,6 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk, dateSk } from '../keys';
 import { Trip } from './schema';
+import { PaginatedResult } from '../types';
 
 export class TripRepo {
     constructor(private ddb: IDdb) {}
@@ -31,6 +32,29 @@ export class TripRepo {
             ExpressionAttributeValues: { ':orgId': orgId },
         });
         return (Items as Trip[]) ?? [];
+    }
+
+    async listOrgTripsPaginated(params: {
+        orgId: string;
+        limit?: number;
+        exclusiveStartKey?: Record<string, any>;
+    }): Promise<PaginatedResult<Trip>> {
+        const { orgId, limit = 20, exclusiveStartKey } = params;
+
+        const result = await this.ddb.query({
+            TableName: Tables.TRIPS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+
+        return {
+            items: (result.Items as Trip[]) ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
     }
 
     async listUserTrips(orgId: string, userId: string): Promise<Trip[]> {

@@ -1,6 +1,6 @@
 export { DynamoDbAdapter } from './ddbAdapter';
 export type { IDdb } from './ddbPort';
-export type { Key, BatchReadItem, BatchReadItems } from './types';
+export type { Key, BatchReadItem, BatchReadItems, PaginatedResult } from './types';
 export { Tables } from './tables';
 export * from './keys';
 export { ddb, docClient } from './ddbClient';

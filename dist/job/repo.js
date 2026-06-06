@@ -50,6 +50,37 @@ class JobRepo {
         });
         return Items ?? [];
     }
+    async listOrgJobsPaginated(params) {
+        const { orgId, limit = 20, exclusiveStartKey, status, clientId } = params;
+        const filterParts = [];
+        const names = {};
+        const values = { ':orgId': orgId };
+        if (status) {
+            filterParts.push('#status = :status');
+            names['#status'] = 'status';
+            values[':status'] = status;
+        }
+        if (clientId) {
+            filterParts.push('#clientId = :clientId');
+            names['#clientId'] = 'clientId';
+            values[':clientId'] = clientId;
+        }
+        const result = await this.ddb.query({
+            TableName: tables_1.Tables.JOBS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+        return {
+            items: result.Items ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
+    }
     async createJob(orgId, userId, jobId, data) {
         const now = new Date().toISOString();
         await this.ddb.put(tables_1.Tables.JOBS, {

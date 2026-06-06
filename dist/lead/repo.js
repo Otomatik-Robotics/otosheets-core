@@ -41,6 +41,37 @@ class LeadRepo {
         });
         return Items ?? [];
     }
+    async listOrgLeadsPaginated(params) {
+        const { orgId, limit = 20, exclusiveStartKey, stage, source } = params;
+        const filterParts = [];
+        const names = {};
+        const values = { ':orgId': orgId };
+        if (stage) {
+            filterParts.push('#stage = :stage');
+            names['#stage'] = 'stage';
+            values[':stage'] = stage;
+        }
+        if (source) {
+            filterParts.push('#source = :source');
+            names['#source'] = 'source';
+            values[':source'] = source;
+        }
+        const result = await this.ddb.query({
+            TableName: tables_1.Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+            ScanIndexForward: false,
+            Limit: limit,
+            ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+        });
+        return {
+            items: result.Items ?? [],
+            lastEvaluatedKey: result.LastEvaluatedKey,
+        };
+    }
     async listLeadsByStage(orgId, stage) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.LEADS,
