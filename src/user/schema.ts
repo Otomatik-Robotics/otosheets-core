@@ -18,6 +18,7 @@ export const UserStoredSchema = z.object({
     phone: z.string().nullish(),
     stripeAccountId: z.string().nullish(),
     stripeCustomerId: z.string().nullish(),
+    stripeSubscriptionId: z.string().nullish(),
     subscriptionTier: z.string().nullish(),
     subscriptionStatus: z.string().nullish(),
     categoryRules: z.record(z.string(), z.string()).nullish(),
