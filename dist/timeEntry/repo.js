@@ -34,7 +34,7 @@ class TimeEntryRepo {
         return Items ?? [];
     }
     async listOrgTimeEntriesPaginated(params) {
-        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced } = params;
+        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced, search } = params;
         const filterParts = [];
         const names = {};
         const values = { ':orgId': orgId };
@@ -56,6 +56,12 @@ class TimeEntryRepo {
         }
         if (uninvoiced) {
             filterParts.push('attribute_not_exists(invoicedAt)');
+        }
+        if (search) {
+            filterParts.push('(contains(#description, :search) OR contains(#project, :search))');
+            names['#description'] = 'description';
+            names['#project'] = 'project';
+            values[':search'] = search;
         }
         const result = await this.ddb.query({
             TableName: tables_1.Tables.TIME_ENTRIES,

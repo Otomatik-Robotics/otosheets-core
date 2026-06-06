@@ -73,9 +73,10 @@ class InvoiceRepo {
             values[':clientId'] = clientId;
         }
         if (search) {
-            const q = search.toLowerCase();
-            filterParts.push('(contains(searchName, :search) OR contains(searchNumber, :search))');
-            values[':search'] = q;
+            filterParts.push('(contains(#invoiceNumber, :search) OR contains(#notes, :search))');
+            names['#invoiceNumber'] = 'invoiceNumber';
+            names['#notes'] = 'notes';
+            values[':search'] = search;
         }
         if (dueDateFrom) {
             filterParts.push('#dueDate >= :dueDateFrom');

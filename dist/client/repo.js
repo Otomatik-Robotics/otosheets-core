@@ -20,12 +20,35 @@ class ClientRepo {
         return Items ?? [];
     }
     async listClientsPaginated(params) {
-        const { orgId, limit = 20, exclusiveStartKey } = params;
+        const { orgId, limit = 20, exclusiveStartKey, search, dateFrom, dateTo } = params;
+        const filterParts = [];
+        const names = {};
+        const values = { ':orgId': orgId };
+        if (search) {
+            filterParts.push('(contains(#name, :search) OR contains(#email, :search) OR contains(#abn, :search))');
+            names['#name'] = 'name';
+            names['#email'] = 'email';
+            names['#abn'] = 'abn';
+            values[':search'] = search;
+        }
+        if (dateFrom) {
+            filterParts.push('#createdAt >= :dateFrom');
+            names['#createdAt'] = 'createdAt';
+            values[':dateFrom'] = dateFrom;
+        }
+        if (dateTo) {
+            if (!names['#createdAt'])
+                names['#createdAt'] = 'createdAt';
+            filterParts.push('#createdAt <= :dateTo');
+            values[':dateTo'] = dateTo;
+        }
         const result = await this.ddb.query({
             TableName: tables_1.Tables.CLIENTS,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            ExpressionAttributeValues: { ':orgId': orgId },
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
             ScanIndexForward: false,
             Limit: limit,
             ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),

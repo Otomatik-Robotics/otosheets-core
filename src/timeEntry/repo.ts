@@ -42,8 +42,9 @@ export class TimeEntryRepo {
         from?: string;
         to?: string;
         uninvoiced?: boolean;
+        search?: string;
     }): Promise<PaginatedResult<TimeEntry>> {
-        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced } = params;
+        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced, search } = params;
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
@@ -65,6 +66,12 @@ export class TimeEntryRepo {
         }
         if (uninvoiced) {
             filterParts.push('attribute_not_exists(invoicedAt)');
+        }
+        if (search) {
+            filterParts.push('(contains(#description, :search) OR contains(#project, :search))');
+            names['#description'] = 'description';
+            names['#project'] = 'project';
+            values[':search'] = search;
         }
 
         const result = await this.ddb.query({

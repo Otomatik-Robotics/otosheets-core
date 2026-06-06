@@ -14,6 +14,10 @@ export declare class TripRepo {
         orgId: string;
         limit?: number;
         exclusiveStartKey?: Record<string, any>;
+        search?: string;
+        purpose?: string;
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<PaginatedResult<Trip>>;
     listUserTrips(orgId: string, userId: string): Promise<Trip[]>;
     listTripsByDate(orgId: string, from: string, to: string): Promise<Trip[]>;

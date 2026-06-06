@@ -17,6 +17,7 @@ export declare class LeadRepo {
         exclusiveStartKey?: Record<string, any>;
         stage?: string;
         source?: string;
+        search?: string;
     }): Promise<PaginatedResult<Lead>>;
     findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
     listLeadsByStage(orgId: string, stage: string): Promise<Lead[]>;

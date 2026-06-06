@@ -59,8 +59,12 @@ export class JobRepo {
         exclusiveStartKey?: Record<string, any>;
         status?: string;
         clientId?: string;
+        search?: string;
+        memberId?: string;
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<PaginatedResult<Job>> {
-        const { orgId, limit = 20, exclusiveStartKey, status, clientId } = params;
+        const { orgId, limit = 20, exclusiveStartKey, status, clientId, search, memberId, dateFrom, dateTo } = params;
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
@@ -74,6 +78,27 @@ export class JobRepo {
             filterParts.push('#clientId = :clientId');
             names['#clientId'] = 'clientId';
             values[':clientId'] = clientId;
+        }
+        if (search) {
+            filterParts.push('(contains(#title, :search) OR contains(#address, :search))');
+            names['#title'] = 'title';
+            names['#address'] = 'address';
+            values[':search'] = search;
+        }
+        if (memberId) {
+            filterParts.push('contains(#assignedMembers, :memberId)');
+            names['#assignedMembers'] = 'assignedMembers';
+            values[':memberId'] = memberId;
+        }
+        if (dateFrom) {
+            filterParts.push('#scheduledDate >= :dateFrom');
+            names['#scheduledDate'] = 'scheduledDate';
+            values[':dateFrom'] = dateFrom;
+        }
+        if (dateTo) {
+            if (!names['#scheduledDate']) names['#scheduledDate'] = 'scheduledDate';
+            filterParts.push('#scheduledDate <= :dateTo');
+            values[':dateTo'] = dateTo;
         }
 
         const result = await this.ddb.query({

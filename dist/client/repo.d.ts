@@ -10,6 +10,9 @@ export declare class ClientRepo {
         orgId: string;
         limit?: number;
         exclusiveStartKey?: Record<string, any>;
+        search?: string;
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<PaginatedResult<Client>>;
     findClientByEmail(orgId: string, email: string): Promise<Client | null>;
     createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;

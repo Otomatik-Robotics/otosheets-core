@@ -38,14 +38,46 @@ export class TripRepo {
         orgId: string;
         limit?: number;
         exclusiveStartKey?: Record<string, any>;
+        search?: string;
+        purpose?: string;
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<PaginatedResult<Trip>> {
-        const { orgId, limit = 20, exclusiveStartKey } = params;
+        const { orgId, limit = 20, exclusiveStartKey, search, purpose, dateFrom, dateTo } = params;
+
+        const filterParts: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId };
+
+        if (search) {
+            filterParts.push('(contains(#startAddress, :search) OR contains(#endAddress, :search))');
+            names['#startAddress'] = 'startAddress';
+            names['#endAddress'] = 'endAddress';
+            values[':search'] = search;
+        }
+        if (purpose) {
+            filterParts.push('#purpose = :purpose');
+            names['#purpose'] = 'purpose';
+            values[':purpose'] = purpose;
+        }
+        if (dateFrom) {
+            filterParts.push('#date >= :dateFrom');
+            names['#date'] = 'date';
+            values[':dateFrom'] = dateFrom;
+        }
+        if (dateTo) {
+            if (!names['#date']) names['#date'] = 'date';
+            filterParts.push('#date <= :dateTo');
+            values[':dateTo'] = dateTo;
+        }
 
         const result = await this.ddb.query({
             TableName: Tables.TRIPS,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            ExpressionAttributeValues: { ':orgId': orgId },
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
             ScanIndexForward: false,
             Limit: limit,
             ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),

@@ -18,6 +18,10 @@ export declare class JobRepo {
         exclusiveStartKey?: Record<string, any>;
         status?: string;
         clientId?: string;
+        search?: string;
+        memberId?: string;
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<PaginatedResult<Job>>;
     createJob(orgId: string, userId: string, jobId: string, data: Record<string, any>): Promise<void>;
     updateJob(orgId: string, userId: string, jobId: string, updates: Record<string, any>): Promise<void>;

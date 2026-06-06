@@ -22,9 +22,9 @@ export declare const RosterEntryStoredSchema: z.ZodObject<{
     updatedAt: string;
     orgId: string;
     sk: string;
+    memberId: string;
     startTime: string;
     endTime: string;
-    memberId: string;
     rosterId: string;
     slotLabel: string;
     teamId?: string | null | undefined;
@@ -37,9 +37,9 @@ export declare const RosterEntryStoredSchema: z.ZodObject<{
     updatedAt: string;
     orgId: string;
     sk: string;
+    memberId: string;
     startTime: string;
     endTime: string;
-    memberId: string;
     rosterId: string;
     slotLabel: string;
     status?: "draft" | "confirmed" | "swapped" | "cancelled" | undefined;
@@ -62,18 +62,18 @@ export declare const RosterEntryCreateRequestSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     status: "draft" | "confirmed" | "swapped" | "cancelled";
     date: string;
+    memberId: string;
     startTime: string;
     endTime: string;
-    memberId: string;
     slotLabel: string;
     teamId?: string | null | undefined;
     category?: string | null | undefined;
     rotationId?: string | null | undefined;
 }, {
     date: string;
+    memberId: string;
     startTime: string;
     endTime: string;
-    memberId: string;
     slotLabel: string;
     status?: "draft" | "confirmed" | "swapped" | "cancelled" | undefined;
     teamId?: string | null | undefined;

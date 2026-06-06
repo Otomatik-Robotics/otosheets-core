@@ -20,8 +20,8 @@ export declare const TimeOffStoredSchema: z.ZodObject<{
     updatedAt: string;
     orgId: string;
     sk: string;
-    approved: boolean;
     memberId: string;
+    approved: boolean;
     timeOffId: string;
     startDate: string;
     endDate: string;

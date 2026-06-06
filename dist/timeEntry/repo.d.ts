@@ -18,6 +18,7 @@ export declare class TimeEntryRepo {
         from?: string;
         to?: string;
         uninvoiced?: boolean;
+        search?: string;
     }): Promise<PaginatedResult<TimeEntry>>;
     listTimeEntries(orgId: string, userId: string, opts?: {
         uninvoiced?: boolean;

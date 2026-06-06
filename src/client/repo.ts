@@ -24,14 +24,41 @@ export class ClientRepo {
         orgId: string;
         limit?: number;
         exclusiveStartKey?: Record<string, any>;
+        search?: string;
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<PaginatedResult<Client>> {
-        const { orgId, limit = 20, exclusiveStartKey } = params;
+        const { orgId, limit = 20, exclusiveStartKey, search, dateFrom, dateTo } = params;
+
+        const filterParts: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId };
+
+        if (search) {
+            filterParts.push('(contains(#name, :search) OR contains(#email, :search) OR contains(#abn, :search))');
+            names['#name'] = 'name';
+            names['#email'] = 'email';
+            names['#abn'] = 'abn';
+            values[':search'] = search;
+        }
+        if (dateFrom) {
+            filterParts.push('#createdAt >= :dateFrom');
+            names['#createdAt'] = 'createdAt';
+            values[':dateFrom'] = dateFrom;
+        }
+        if (dateTo) {
+            if (!names['#createdAt']) names['#createdAt'] = 'createdAt';
+            filterParts.push('#createdAt <= :dateTo');
+            values[':dateTo'] = dateTo;
+        }
 
         const result = await this.ddb.query({
             TableName: Tables.CLIENTS,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            ExpressionAttributeValues: { ':orgId': orgId },
+            ExpressionAttributeValues: values,
+            ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+            ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
             ScanIndexForward: false,
             Limit: limit,
             ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),

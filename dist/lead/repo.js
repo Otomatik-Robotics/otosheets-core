@@ -42,7 +42,7 @@ class LeadRepo {
         return Items ?? [];
     }
     async listOrgLeadsPaginated(params) {
-        const { orgId, limit = 20, exclusiveStartKey, stage, source } = params;
+        const { orgId, limit = 20, exclusiveStartKey, stage, source, search } = params;
         const filterParts = [];
         const names = {};
         const values = { ':orgId': orgId };
@@ -55,6 +55,13 @@ class LeadRepo {
             filterParts.push('#source = :source');
             names['#source'] = 'source';
             values[':source'] = source;
+        }
+        if (search) {
+            filterParts.push('(contains(#clientName, :search) OR contains(#clientEmail, :search) OR contains(#suburb, :search))');
+            names['#clientName'] = 'clientName';
+            names['#clientEmail'] = 'clientEmail';
+            names['#suburb'] = 'suburb';
+            values[':search'] = search;
         }
         const result = await this.ddb.query({
             TableName: tables_1.Tables.LEADS,

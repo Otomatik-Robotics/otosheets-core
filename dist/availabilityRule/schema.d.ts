@@ -19,10 +19,10 @@ export declare const AvailabilityRuleStoredSchema: z.ZodObject<{
     updatedAt: string;
     orgId: string;
     sk: string;
+    memberId: string;
     startTime: string;
     endTime: string;
     ruleId: string;
-    memberId: string;
     effectiveFrom: string;
     recurrence: "custom" | "weekly" | "fortnightly";
     isAvailable: boolean;
@@ -34,10 +34,10 @@ export declare const AvailabilityRuleStoredSchema: z.ZodObject<{
     updatedAt: string;
     orgId: string;
     sk: string;
+    memberId: string;
     startTime: string;
     endTime: string;
     ruleId: string;
-    memberId: string;
     effectiveFrom: string;
     recurrence: "custom" | "weekly" | "fortnightly";
     dayOfWeek?: number | null | undefined;

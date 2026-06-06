@@ -49,8 +49,9 @@ export class LeadRepo {
         exclusiveStartKey?: Record<string, any>;
         stage?: string;
         source?: string;
+        search?: string;
     }): Promise<PaginatedResult<Lead>> {
-        const { orgId, limit = 20, exclusiveStartKey, stage, source } = params;
+        const { orgId, limit = 20, exclusiveStartKey, stage, source, search } = params;
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
@@ -64,6 +65,13 @@ export class LeadRepo {
             filterParts.push('#source = :source');
             names['#source'] = 'source';
             values[':source'] = source;
+        }
+        if (search) {
+            filterParts.push('(contains(#clientName, :search) OR contains(#clientEmail, :search) OR contains(#suburb, :search))');
+            names['#clientName'] = 'clientName';
+            names['#clientEmail'] = 'clientEmail';
+            names['#suburb'] = 'suburb';
+            values[':search'] = search;
         }
 
         const result = await this.ddb.query({
