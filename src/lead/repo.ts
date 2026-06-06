@@ -112,6 +112,18 @@ export class LeadRepo {
         return (Items?.[0] as Lead) ?? null;
     }
 
+    async findLeadsByPipelineId(orgId: string, pipelineId: string): Promise<Lead[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#pipelineId = :pipelineId',
+            ExpressionAttributeNames: { '#pipelineId': 'pipelineId' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':pipelineId': pipelineId },
+        });
+        return (Items as Lead[]) ?? [];
+    }
+
     async listLeadsByStage(orgId: string, stage: string): Promise<Lead[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.LEADS,

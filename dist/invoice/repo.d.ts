@@ -24,6 +24,7 @@ export declare class InvoiceRepo {
     } | null>;
     listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>>;
     listUserInvoices(orgId: string, userId: string): Promise<Invoice[]>;
+    listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]>;
     listAllOrgInvoices(orgId: string): Promise<Invoice[]>;
     listDraftInvoices(orgId: string): Promise<Invoice[]>;
     listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]>;

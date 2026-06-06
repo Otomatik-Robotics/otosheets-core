@@ -20,6 +20,7 @@ export declare class LeadRepo {
         search?: string;
     }): Promise<PaginatedResult<Lead>>;
     findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
+    findLeadsByPipelineId(orgId: string, pipelineId: string): Promise<Lead[]>;
     listLeadsByStage(orgId: string, stage: string): Promise<Lead[]>;
     createLead(orgId: string, userId: string, leadId: string, data: Record<string, any>): Promise<void>;
     updateLead(orgId: string, userId: string, leadId: string, updates: Record<string, any>): Promise<void>;

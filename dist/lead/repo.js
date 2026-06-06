@@ -98,6 +98,17 @@ class LeadRepo {
         });
         return Items?.[0] ?? null;
     }
+    async findLeadsByPipelineId(orgId, pipelineId) {
+        const { Items } = await this.ddb.query({
+            TableName: tables_1.Tables.LEADS,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#pipelineId = :pipelineId',
+            ExpressionAttributeNames: { '#pipelineId': 'pipelineId' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':pipelineId': pipelineId },
+        });
+        return Items ?? [];
+    }
     async listLeadsByStage(orgId, stage) {
         const { Items } = await this.ddb.query({
             TableName: tables_1.Tables.LEADS,

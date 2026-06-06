@@ -135,6 +135,18 @@ export class InvoiceRepo {
         return (Items as Invoice[]) ?? [];
     }
 
+    async listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.INVOICES,
+            IndexName: 'CreatedAtIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: '#date >= :from AND #date <= :to',
+            ExpressionAttributeNames: { '#date': 'date' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': to },
+        });
+        return (Items as Invoice[]) ?? [];
+    }
+
     async listAllOrgInvoices(orgId: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
@@ -161,9 +173,9 @@ export class InvoiceRepo {
             TableName: Tables.INVOICES,
             IndexName: 'DueDateIndex',
             KeyConditionExpression: 'orgId = :orgId AND dueDateSk < :before',
-            FilterExpression: '#status IN (:sent, :overdue)',
+            FilterExpression: '#status IN (:sent, :partial, :overdue)',
             ExpressionAttributeNames: { '#status': 'status' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':overdue': 'OVERDUE' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE' },
         });
         return (Items as Invoice[]) ?? [];
     }
