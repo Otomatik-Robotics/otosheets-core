@@ -11,6 +11,19 @@ export class ReceiptRepo {
         return (Item as Receipt) ?? null;
     }
 
+    async findReceiptByIdInOrg(orgId: string, receiptId: string): Promise<{ receipt: Receipt; ownerId: string } | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.RECEIPTS,
+            IndexName: 'ReceiptIdIndex',
+            KeyConditionExpression: 'orgId = :orgId AND receiptId = :receiptId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':receiptId': receiptId },
+            Limit: 1,
+        });
+        const item = Items?.[0] as Receipt | undefined;
+        if (!item) return null;
+        return { receipt: item, ownerId: item.createdBy };
+    }
+
     async listAllOrgReceipts(orgId: string): Promise<Receipt[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.RECEIPTS,

@@ -11,6 +11,19 @@ export class TripRepo {
         return (Item as Trip) ?? null;
     }
 
+    async findTripByIdInOrg(orgId: string, tripId: string): Promise<{ trip: Trip; ownerId: string } | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.TRIPS,
+            IndexName: 'TripIdIndex',
+            KeyConditionExpression: 'orgId = :orgId AND tripId = :tripId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':tripId': tripId },
+            Limit: 1,
+        });
+        const item = Items?.[0] as Trip | undefined;
+        if (!item) return null;
+        return { trip: item, ownerId: item.createdBy };
+    }
+
     async listAllOrgTrips(orgId: string): Promise<Trip[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.TRIPS,

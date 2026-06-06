@@ -11,6 +11,19 @@ export class BookingRepo {
         return (Item as Booking) ?? null;
     }
 
+    async findBookingByIdInOrg(orgId: string, bookingId: string): Promise<{ booking: Booking; ownerId: string } | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.BOOKINGS,
+            IndexName: 'BookingIdIndex',
+            KeyConditionExpression: 'orgId = :orgId AND bookingId = :bookingId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':bookingId': bookingId },
+            Limit: 1,
+        });
+        const item = Items?.[0] as Booking | undefined;
+        if (!item) return null;
+        return { booking: item, ownerId: item.createdBy };
+    }
+
     async listAllOrgBookings(orgId: string): Promise<Booking[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.BOOKINGS,

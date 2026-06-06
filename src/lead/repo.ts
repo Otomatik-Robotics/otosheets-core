@@ -11,6 +11,19 @@ export class LeadRepo {
         return (Item as Lead) ?? null;
     }
 
+    async findLeadByIdInOrg(orgId: string, leadId: string): Promise<{ lead: Lead; ownerId: string } | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.LEADS,
+            IndexName: 'LeadIdIndex',
+            KeyConditionExpression: 'orgId = :orgId AND leadId = :leadId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':leadId': leadId },
+            Limit: 1,
+        });
+        const item = Items?.[0] as Lead | undefined;
+        if (!item) return null;
+        return { lead: item, ownerId: item.createdBy };
+    }
+
     async listUserLeads(orgId: string, userId: string): Promise<Lead[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.LEADS,

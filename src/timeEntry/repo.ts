@@ -11,6 +11,19 @@ export class TimeEntryRepo {
         return (Item as TimeEntry) ?? null;
     }
 
+    async findTimeEntryByIdInOrg(orgId: string, timeEntryId: string): Promise<{ timeEntry: TimeEntry; ownerId: string } | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.TIME_ENTRIES,
+            IndexName: 'TimeEntryIdIndex',
+            KeyConditionExpression: 'orgId = :orgId AND timeEntryId = :timeEntryId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':timeEntryId': timeEntryId },
+            Limit: 1,
+        });
+        const item = Items?.[0] as TimeEntry | undefined;
+        if (!item) return null;
+        return { timeEntry: item, ownerId: item.createdBy };
+    }
+
     async listAllOrgTimeEntries(orgId: string): Promise<TimeEntry[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.TIME_ENTRIES,

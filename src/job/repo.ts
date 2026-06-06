@@ -11,6 +11,19 @@ export class JobRepo {
         return (Item as Job) ?? null;
     }
 
+    async findJobByIdInOrg(orgId: string, jobId: string): Promise<{ job: Job; ownerId: string } | null> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.JOBS,
+            IndexName: 'JobIdIndex',
+            KeyConditionExpression: 'orgId = :orgId AND jobId = :jobId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':jobId': jobId },
+            Limit: 1,
+        });
+        const item = Items?.[0] as Job | undefined;
+        if (!item) return null;
+        return { job: item, ownerId: item.createdBy };
+    }
+
     async listUserJobs(orgId: string, userId: string): Promise<Job[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.JOBS,
