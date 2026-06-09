@@ -31,6 +31,7 @@ export const InvoiceBaseSchema = z.object({
     recurringConfig: z.any().nullish(),
     isQuote: z.boolean().default(false),
     isPaymentLink: z.boolean().default(false),
+    paymentUrl: z.string().nullish(),
     fromTimeEntries: z.any().nullish(),
     followUpSequenceId: z.string().nullish(),
     createdAt: z.string(),
@@ -65,6 +66,7 @@ export const InvoiceCreateRequestSchema = z.object({
     recurringConfig: z.any().nullish(),
     isQuote: z.boolean().optional(),
     isPaymentLink: z.boolean().optional(),
+    paymentUrl: z.string().nullish(),
     fromTimeEntries: z.any().nullish(),
     followUpSequenceId: z.string().nullish(),
 });
