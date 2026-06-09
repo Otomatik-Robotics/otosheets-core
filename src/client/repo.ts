@@ -52,6 +52,10 @@ export class ClientRepo {
             values[':dateTo'] = dateTo;
         }
 
+        // When searching, scan more items so FilterExpression has enough to work with —
+        // DynamoDB applies Limit before FilterExpression, so a tight limit silently misses matches.
+        const scanLimit = search ? Math.max(limit, 500) : limit;
+
         const result = await this.ddb.query({
             TableName: Tables.CLIENTS,
             IndexName: 'CreatedAtIndex',
@@ -60,7 +64,7 @@ export class ClientRepo {
             ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
             ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
             ScanIndexForward: false,
-            Limit: limit,
+            Limit: scanLimit,
             ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
         });
 
@@ -155,5 +159,24 @@ export class ClientRepo {
 
     async deleteClient(orgId: string, clientId: string): Promise<void> {
         await this.ddb.delete(Tables.CLIENTS, { orgId, clientId });
+    }
+
+    async incrementPaymentLinkUsage(orgId: string, clientId: string): Promise<void> {
+        await this.ddb.update(Tables.CLIENTS, { orgId, clientId }, {
+            UpdateExpression: 'ADD paymentLinkUsageCount :inc',
+            ExpressionAttributeValues: { ':inc': 1 },
+        });
+    }
+
+    async getTopByUsage(orgId: string, limit = 3): Promise<Client[]> {
+        const result = await this.ddb.query({
+            TableName: Tables.CLIENTS,
+            IndexName: 'UsageCountIndex',
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ScanIndexForward: false,
+            Limit: limit,
+        });
+        return (result.Items as Client[]) ?? [];
     }
 }

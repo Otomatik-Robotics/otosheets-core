@@ -26,6 +26,7 @@ export const ClientBaseSchema = z.object({
     contactPerson: z.string().nullish(),
     convertedFromLeadId: z.string().nullish(),
     convertedAt: z.string().nullish(),
+    paymentLinkUsageCount: z.number().optional(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });
