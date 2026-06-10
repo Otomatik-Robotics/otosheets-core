@@ -6,6 +6,7 @@ export const invoicePaymentSk = (invoiceId: string, paymentId: string) => `${inv
 export const statementSk = (fy: string, statementId: string) => `${fy}#${statementId}`;
 export const compliancePlaybookSk = () => 'PLAYBOOK';
 export const complianceTaskSk = (userId: string, taskId: string) => `TASK#${userId}#${taskId}`;
+export const complianceSettingsSk = () => 'COMPLIANCE_SETTINGS';
 export const onboardingWorkflowSk = (workflowId: string) => `WORKFLOW#${workflowId}`;
 export const welcomeEmailSk = (templateId: string) => `WELCOME_EMAIL#${templateId}`;
 export const onboardingRunSk = (membershipId: string) => `ONBOARDING#${membershipId}`;

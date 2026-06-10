@@ -6,6 +6,8 @@ import {
     DeleteCommandOutput,
     BatchGetCommandOutput,
     QueryCommandInput,
+    ScanCommandInput,
+    ScanCommandOutput,
     TransactWriteCommandInput,
     TransactWriteCommandOutput,
     BatchWriteCommandInput,
@@ -19,6 +21,7 @@ export interface IDdb {
     update(tableName: string, key: Key, params: Record<string, any>): Promise<UpdateCommandOutput>;
     delete(tableName: string, key: Key): Promise<DeleteCommandOutput>;
     query(params: QueryCommandInput): Promise<QueryCommandOutput>;
+    scan(params: ScanCommandInput): Promise<ScanCommandOutput>;
     batchGet(params: Record<string, { Keys: Key[] }>): Promise<BatchGetCommandOutput>;
     batchWrite(params: BatchWriteCommandInput['RequestItems']): Promise<BatchWriteCommandOutput>;
     transactWrite(params: TransactWriteCommandInput['TransactItems']): Promise<TransactWriteCommandOutput>;

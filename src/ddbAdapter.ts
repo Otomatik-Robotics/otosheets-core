@@ -11,6 +11,9 @@ import {
     QueryCommand,
     QueryCommandInput,
     QueryCommandOutput,
+    ScanCommand,
+    ScanCommandInput,
+    ScanCommandOutput,
     BatchGetCommand,
     BatchGetCommandOutput,
     BatchWriteCommand,
@@ -48,6 +51,10 @@ export class DynamoDbAdapter implements IDdb {
 
     async query(params: QueryCommandInput): Promise<QueryCommandOutput> {
         return this.client.send(new QueryCommand(params));
+    }
+
+    async scan(params: ScanCommandInput): Promise<ScanCommandOutput> {
+        return this.client.send(new ScanCommand(params));
     }
 
     async batchGet(requestItems: Record<string, { Keys: Key[] }>): Promise<BatchGetCommandOutput> {

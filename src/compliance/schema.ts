@@ -23,6 +23,10 @@ export const ComplianceTaskStoredSchema = z.object({
     description: z.string().nullish(),
     required: z.boolean().default(true),
     dueDate: z.string().nullish(),
+    expiryDate: z.string().nullish(), // YYYY-MM-DD — credential/licence expiry for renewal reminders
+    renewalNotifiedAt: z.string().nullish(),
+    renewalNotificationCount: z.number().nullish(),
+    extracted: z.any().nullish(), // AI-extracted document metadata (documentType, holderName, documentNumber, issueDate, expiryDate, confidence)
     status: z.string().default('PENDING'),
     formData: z.any().nullish(),
     fileKey: z.string().nullish(),
@@ -37,3 +41,14 @@ export const ComplianceTaskStoredSchema = z.object({
     updatedAt: z.string(),
 });
 export type ComplianceTask = z.infer<typeof ComplianceTaskStoredSchema>;
+
+export const ComplianceSettingsStoredSchema = z.object({
+    orgId: z.string(),
+    sk: z.literal('COMPLIANCE_SETTINGS'),
+    renewalDaysBefore: z.number().default(30), // start notifying this many days before expiry
+    renewalFrequencyDays: z.number().default(7), // repeat notification every N days
+    notifyByEmail: z.boolean().default(true),
+    updatedAt: z.string(),
+    updatedBy: z.string().nullish(),
+});
+export type ComplianceSettings = z.infer<typeof ComplianceSettingsStoredSchema>;
