@@ -14,7 +14,6 @@ export { TripBaseSchema, TripStoredSchema, TripCreateRequestSchema, type TripBas
 export { StatementBaseSchema, StatementStoredSchema, StatementCreateRequestSchema, type StatementBase, type Statement, type StatementCreateRequest } from './statement/schema';
 export { StageHistoryEntrySchema, LeadBaseSchema, LeadStoredSchema, LeadCreateRequestSchema, type StageHistoryEntry, type LeadBase, type Lead, type LeadCreateRequest } from './lead/schema';
 export { PipelineSourceSchema, PipelineBaseSchema, PipelineStoredSchema, PipelineCreateRequestSchema, type PipelineSource, type PipelineBase, type Pipeline, type PipelineCreateRequest } from './pipeline/schema';
-export { AdBaseSchema, AdStoredSchema, AdCreateRequestSchema, type AdBase, type Ad, type AdCreateRequest } from './ad/schema';
 export { ConversationBaseSchema, ConversationStoredSchema, ConversationCreateRequestSchema, type ConversationBase, type Conversation, type ConversationCreateRequest } from './conversation/schema';
 export { CompliancePlaybookStoredSchema, ComplianceTaskStoredSchema, type CompliancePlaybook, type ComplianceTask } from './compliance/schema';
 export { NotificationBaseSchema, NotificationStoredSchema, NotificationCreateRequestSchema, type NotificationBase, type Notification, type NotificationCreateRequest } from './notification/schema';
