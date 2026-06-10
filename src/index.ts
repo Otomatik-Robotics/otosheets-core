@@ -14,6 +14,7 @@ export * from './org';
 export * from './membership';
 export * from './team';
 export * from './integration';
+export * from './accountingSync';
 export * from './invoice';
 export * from './invoicePayment';
 export * from './client';

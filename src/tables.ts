@@ -4,6 +4,7 @@ export const Tables = {
     get MEMBERSHIPS() { return process.env.MEMBERSHIPS_TABLE!; },
     get TEAMS() { return process.env.TEAMS_TABLE!; },
     get INTEGRATIONS() { return process.env.INTEGRATIONS_TABLE!; },
+    get ACCOUNTING_SYNC() { return process.env.ACCOUNTING_SYNC_TABLE!; },
     get INVOICES() { return process.env.INVOICES_TABLE!; },
     get INVOICE_PAYMENTS() { return process.env.INVOICE_PAYMENTS_TABLE!; },
     get CLIENTS() { return process.env.CLIENTS_TABLE!; },

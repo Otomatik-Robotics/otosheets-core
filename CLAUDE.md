@@ -75,7 +75,8 @@ otosheets-core/
 │   ├── compliance/           # ComplianceRepo — getPlaybook, listTasks
 │   ├── notification/         # NotificationRepo — listNotifications, createNotification
 │   ├── orgChannel/           # OrgChannelRepo — getChannel, listChannels
-│   ├── integration/          # IntegrationRepo — getIntegration, listIntegrations
+│   ├── integration/          # IntegrationRepo — getIntegration, listIntegrations (also stores Xero/MYOB tokens under provider='accounting')
+│   ├── accountingSync/       # AccountingSyncRepo — Xero/MYOB sync-state (idempotency); table created by external-mcp stack
 │   ├── onboardingRun/        # WorkflowRunRepo (legacy name: OnboardingRunRepo)
 │   ├── onboardingWorkflow/   # WorkflowRepo (legacy name: OnboardingWorkflowRepo)
 │   └── welcomeEmail/         # WelcomeEmailRepo
