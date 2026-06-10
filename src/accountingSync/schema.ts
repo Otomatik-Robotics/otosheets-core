@@ -12,7 +12,7 @@ import { z } from 'zod';
 export const AccountingSyncStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(), // `${entityType}#${entityId}`
-    entityType: z.enum(['contact', 'invoice', 'payment', 'expense']),
+    entityType: z.enum(['contact', 'invoice', 'payment', 'expense', 'employee']),
     entityId: z.string(),
     provider: z.enum(['xero', 'myob']),
     externalId: z.string().nullish(), // ledger-side ID (null while PENDING/FAILED before first success)
