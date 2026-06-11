@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const CALL_RECORD_STATUSES = ['QUEUED', 'DIALING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'NO_ANSWER', 'BLOCKED'] as const;
+export const CALL_RECORD_STATUSES = ['QUEUED', 'DIALING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'NO_ANSWER', 'BLOCKED', 'CANCELLED'] as const;
 export const CallRecordStatusSchema = z.enum(CALL_RECORD_STATUSES);
 export type CallRecordStatus = z.infer<typeof CallRecordStatusSchema>;
 
@@ -15,6 +15,10 @@ export const CallRecordStoredSchema = z.object({
     externalId: z.string().nullish(),
     phoneNumber: z.string(),
     status: CallRecordStatusSchema,
+    /** Earliest dial time — the cooldown window before this lets the user cancel */
+    dialAt: z.string().nullish(),
+    /** Voice agent assigned to place this call */
+    agentId: z.string().nullish(),
     /** Why the compliance gate blocked the call (DNCR, calling hours, consent, rate limit) */
     blockReason: z.string().nullish(),
     /** Short outcome summary of the completed call */

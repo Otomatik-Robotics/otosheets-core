@@ -17,9 +17,13 @@ export type PipelineSource = z.infer<typeof PipelineSourceSchema>;
  */
 export const PipelineVoiceConfigSchema = z.object({
     enabled: z.boolean().default(false),
+    /** Assigned voice agent — owns the system prompt, tools and outbound number */
+    agentId: z.string().nullish(),
+    /** @deprecated superseded by the agent's tools; kept for back-compat reads */
     capabilities: z.record(z.string(), z.boolean()).default({}),
+    /** @deprecated superseded by the agent's systemPrompt */
     scriptPrompt: z.string().nullish(),
-    /** Imported provider phone-number id used as outbound caller ID */
+    /** @deprecated superseded by the agent's allocated number */
     phoneNumberId: z.string().nullish(),
 });
 export type PipelineVoiceConfig = z.infer<typeof PipelineVoiceConfigSchema>;
