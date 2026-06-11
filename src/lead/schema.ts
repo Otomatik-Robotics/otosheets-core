@@ -33,6 +33,8 @@ export const LeadBaseSchema = z.object({
     bookingTime: z.string().nullish(),
     notes: z.string().nullish(),
     conversationSummary: z.string().nullish(),
+    /** Manual voice-calling opt-out — the dial queue must never call this lead */
+    doNotCall: z.boolean().nullish(),
     stageHistory: z.array(StageHistoryEntrySchema).default([]),
     orgStage: z.string().nullish(),
     createdAt: z.string(),

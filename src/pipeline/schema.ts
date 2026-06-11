@@ -9,6 +9,21 @@ export const PipelineSourceSchema = z.object({
 });
 export type PipelineSource = z.infer<typeof PipelineSourceSchema>;
 
+/**
+ * Voice-calling config for a pipeline. When enabled, a "CALLING" stage sits between
+ * NEW and CONTACTED and acts as the visible dial queue. Capabilities are the toggles
+ * for what the voice agent may do mid-call (e.g. bookings, pricing) — one config per
+ * pipeline, no per-lead overrides.
+ */
+export const PipelineVoiceConfigSchema = z.object({
+    enabled: z.boolean().default(false),
+    capabilities: z.record(z.string(), z.boolean()).default({}),
+    scriptPrompt: z.string().nullish(),
+    /** Imported provider phone-number id used as outbound caller ID */
+    phoneNumberId: z.string().nullish(),
+});
+export type PipelineVoiceConfig = z.infer<typeof PipelineVoiceConfigSchema>;
+
 export const PipelineBaseSchema = z.object({
     pipelineId: z.string(),
     name: z.string(),
@@ -16,6 +31,7 @@ export const PipelineBaseSchema = z.object({
     stages: z.array(z.string()),
     isDefault: z.boolean().default(false),
     sources: z.array(PipelineSourceSchema).default([]),
+    voiceConfig: PipelineVoiceConfigSchema.nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });
