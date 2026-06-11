@@ -87,6 +87,10 @@ export class CallRecordRepo {
         };
     }
 
+    async delete(orgId: string, leadId: string, callId: string): Promise<void> {
+        await this.ddb.delete(Tables.CALL_RECORDS, { orgId, sk: skOf(leadId, callId) });
+    }
+
     async countByStatus(orgId: string, status: CallRecordStatus): Promise<number> {
         const { Count } = await this.ddb.query({
             TableName: Tables.CALL_RECORDS,

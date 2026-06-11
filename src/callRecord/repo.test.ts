@@ -40,6 +40,10 @@ function makeStubDdb() {
             if (params.Limit) items = items.slice(0, params.Limit);
             return { Items: items };
         },
+        async delete(_t: string, key: any) {
+            store.delete(`${key.orgId}|${key.sk}`);
+            return {};
+        },
     };
     return { ddb: ddb as unknown as IDdb, store };
 }
@@ -106,6 +110,12 @@ describe('CallRecordRepo', () => {
         const blocked = await repo.listByOrg({ orgId: 'org1', status: 'BLOCKED' });
         expect(blocked.items).toHaveLength(1);
         expect(blocked.items[0].callId).toBe('c2');
+    });
+
+    it('delete removes the call record', async () => {
+        await repo.put('org1', 'lead1', 'c1', { phoneNumber: '+61400000000', status: 'QUEUED' });
+        await repo.delete('org1', 'lead1', 'c1');
+        expect(await repo.get('org1', 'lead1', 'c1')).toBeNull();
     });
 
     it('countByStatus counts only the org + status', async () => {
