@@ -1,7 +1,7 @@
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
-import { compliancePlaybookSk, complianceSettingsSk, complianceTaskSk, memberCertificationSk } from '../keys';
-import { CompliancePlaybook, ComplianceSettings, ComplianceTask, MemberCertification } from './schema';
+import { complianceChecklistSk, compliancePlaybookSk, complianceSettingsSk, complianceTaskSk, memberCertificationSk } from '../keys';
+import { ComplianceChecklist, CompliancePlaybook, ComplianceSettings, ComplianceTask, MemberCertification } from './schema';
 
 export class ComplianceRepo {
     constructor(private ddb: IDdb) {}
@@ -148,7 +148,7 @@ export class ComplianceRepo {
         return (Item as ComplianceSettings) ?? null;
     }
 
-    async putSettings(orgId: string, settings: Pick<ComplianceSettings, 'renewalDaysBefore' | 'renewalFrequencyDays' | 'notifyByEmail' | 'checkTypes'>, updatedBy?: string): Promise<void> {
+    async putSettings(orgId: string, settings: Pick<ComplianceSettings, 'renewalDaysBefore' | 'renewalFrequencyDays' | 'notifyByEmail' | 'defaultAutoRenew'>, updatedBy?: string): Promise<void> {
         await this.ddb.put(Tables.ONBOARDING, {
             orgId,
             sk: complianceSettingsSk(),
@@ -156,6 +156,56 @@ export class ComplianceRepo {
             updatedBy,
             updatedAt: new Date().toISOString(),
         });
+    }
+
+    // ─── Compliance checklists (named, assignable templates) ──────────
+
+    async listChecklists(orgId: string): Promise<ComplianceChecklist[]> {
+        const items: ComplianceChecklist[] = [];
+        let lastKey: Record<string, any> | undefined;
+        do {
+            const { Items, LastEvaluatedKey } = await this.ddb.query({
+                TableName: Tables.ONBOARDING,
+                KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
+                ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'CHECKLIST#' },
+                ExclusiveStartKey: lastKey,
+            });
+            items.push(...((Items as ComplianceChecklist[]) ?? []));
+            lastKey = LastEvaluatedKey;
+        } while (lastKey);
+        return items;
+    }
+
+    async getChecklist(orgId: string, checklistId: string): Promise<ComplianceChecklist | null> {
+        const { Item } = await this.ddb.getItem(Tables.ONBOARDING, { orgId, sk: complianceChecklistSk(checklistId) });
+        return (Item as ComplianceChecklist) ?? null;
+    }
+
+    async putChecklist(
+        orgId: string,
+        checklistId: string,
+        data: Partial<Omit<ComplianceChecklist, 'orgId' | 'sk' | 'checklistId' | 'createdAt' | 'updatedAt'>>,
+        updatedBy?: string,
+    ): Promise<ComplianceChecklist> {
+        const now = new Date().toISOString();
+        const existing = await this.getChecklist(orgId, checklistId);
+        const record: ComplianceChecklist = {
+            ...(existing as ComplianceChecklist),
+            ...(data as ComplianceChecklist),
+            orgId,
+            sk: complianceChecklistSk(checklistId),
+            checklistId,
+            createdAt: existing?.createdAt ?? now,
+            createdBy: existing?.createdBy ?? updatedBy,
+            updatedAt: now,
+            updatedBy,
+        } as ComplianceChecklist;
+        await this.ddb.put(Tables.ONBOARDING, record);
+        return record;
+    }
+
+    async deleteChecklist(orgId: string, checklistId: string): Promise<void> {
+        await this.ddb.delete(Tables.ONBOARDING, { orgId, sk: complianceChecklistSk(checklistId) });
     }
 
     async createTask(orgId: string, userId: string, taskId: string, data: Record<string, any>): Promise<void> {

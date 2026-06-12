@@ -8,6 +8,7 @@ export const compliancePlaybookSk = () => 'PLAYBOOK';
 export const complianceTaskSk = (userId: string, taskId: string) => `TASK#${userId}#${taskId}`;
 export const complianceSettingsSk = () => 'COMPLIANCE_SETTINGS';
 export const memberCertificationSk = (membershipId: string, certKey: string) => `CERT#${membershipId}#${certKey}`;
+export const complianceChecklistSk = (checklistId: string) => `CHECKLIST#${checklistId}`;
 export const onboardingWorkflowSk = (workflowId: string) => `WORKFLOW#${workflowId}`;
 export const welcomeEmailSk = (templateId: string) => `WELCOME_EMAIL#${templateId}`;
 export const onboardingRunSk = (membershipId: string) => `ONBOARDING#${membershipId}`;
