@@ -24,6 +24,9 @@ export const VoiceAgentStoredSchema = z.object({
     systemPrompt: z.string(),
     /** Tool toggles, keyed by VoiceAgentTool */
     tools: z.record(z.string(), z.boolean()).default({}),
+    /** TTS voice the agent speaks with — provider + that provider's voice id (e.g. vapi / "Savannah"). Null = provider default. */
+    voiceProvider: z.string().nullish(),
+    voiceId: z.string().nullish(),
     /** Allocated outbound number (Vapi phone-number id + E.164) from the org's purchased numbers */
     phoneNumberId: z.string().nullish(),
     phoneNumber: z.string().nullish(),
