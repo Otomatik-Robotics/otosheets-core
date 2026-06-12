@@ -24,6 +24,8 @@ export const ComplianceTaskStoredSchema = z.object({
     isComplianceTask: z.boolean().default(true),
     description: z.string().nullish(),
     externalLink: z.string().nullish(), // optional resource link shown on the item
+    acknowledgementText: z.string().nullish(), // shown for ACKNOWLEDGEMENT items
+    formFields: z.any().nullish(), // field definitions for FORM_FILL items (copied from the checklist item)
     required: z.boolean().default(true),
     hasExpiry: z.boolean().nullish(), // credential item — carries an expiry date + renewals
     requiresSignature: z.boolean().nullish(), // item must be signed to complete
