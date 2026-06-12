@@ -19,6 +19,8 @@ export const PipelineVoiceConfigSchema = z.object({
     enabled: z.boolean().default(false),
     /** Assigned voice agent — owns the system prompt, tools and outbound number */
     agentId: z.string().nullish(),
+    /** Cancel window (seconds) before a queued call dials. 0–900 (SQS DelaySeconds ceiling). */
+    dialCooldownSeconds: z.number().int().min(0).max(900).nullish(),
     /** @deprecated superseded by the agent's tools; kept for back-compat reads */
     capabilities: z.record(z.string(), z.boolean()).default({}),
     /** @deprecated superseded by the agent's systemPrompt */
