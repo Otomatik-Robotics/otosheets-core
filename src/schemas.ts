@@ -15,6 +15,6 @@ export { StatementBaseSchema, StatementStoredSchema, StatementCreateRequestSchem
 export { StageHistoryEntrySchema, LeadBaseSchema, LeadStoredSchema, LeadCreateRequestSchema, type StageHistoryEntry, type LeadBase, type Lead, type LeadCreateRequest } from './lead/schema';
 export { PipelineSourceSchema, PipelineBaseSchema, PipelineStoredSchema, PipelineCreateRequestSchema, type PipelineSource, type PipelineBase, type Pipeline, type PipelineCreateRequest } from './pipeline/schema';
 export { ConversationBaseSchema, ConversationStoredSchema, ConversationCreateRequestSchema, type ConversationBase, type Conversation, type ConversationCreateRequest } from './conversation/schema';
-export { CompliancePlaybookStoredSchema, ComplianceTaskStoredSchema, type CompliancePlaybook, type ComplianceTask } from './compliance/schema';
+export { ComplianceTaskStoredSchema, type ComplianceTask } from './compliance/schema';
 export { NotificationBaseSchema, NotificationStoredSchema, NotificationCreateRequestSchema, type NotificationBase, type Notification, type NotificationCreateRequest } from './notification/schema';
 export { OrgChannelStoredSchema, OrgChannelCreateRequestSchema, type OrgChannel, type OrgChannelCreateRequest } from './orgChannel/schema';

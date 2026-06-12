@@ -1,25 +1,10 @@
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
-import { complianceChecklistSk, compliancePlaybookSk, complianceSettingsSk, complianceTaskSk, memberCertificationSk } from '../keys';
-import { ComplianceChecklist, CompliancePlaybook, ComplianceSettings, ComplianceTask, MemberCertification } from './schema';
+import { complianceChecklistSk, complianceSettingsSk, complianceTaskSk } from '../keys';
+import { ComplianceChecklist, ComplianceSettings, ComplianceTask } from './schema';
 
 export class ComplianceRepo {
     constructor(private ddb: IDdb) {}
-
-    async getPlaybook(orgId: string): Promise<CompliancePlaybook | null> {
-        const { Item } = await this.ddb.getItem(Tables.ONBOARDING, { orgId, sk: compliancePlaybookSk() });
-        return (Item as CompliancePlaybook) ?? null;
-    }
-
-    async putPlaybook(orgId: string, tasks: any, updatedBy?: string): Promise<void> {
-        await this.ddb.put(Tables.ONBOARDING, {
-            orgId,
-            sk: compliancePlaybookSk(),
-            tasks,
-            updatedBy,
-            updatedAt: new Date().toISOString(),
-        });
-    }
 
     async listTasks(orgId: string, userId?: string): Promise<ComplianceTask[]> {
         const prefix = userId ? `TASK#${userId}#` : 'TASK#';
@@ -69,75 +54,6 @@ export class ComplianceRepo {
                 ExclusiveStartKey: lastKey,
             });
             items.push(...((Items as ComplianceTask[]) ?? []));
-            lastKey = LastEvaluatedKey;
-        } while (lastKey);
-        return items;
-    }
-
-    // ─── Member certifications (mandatory checks with expiry) ─────────
-
-    async putCertification(
-        orgId: string,
-        membershipId: string,
-        certKey: string,
-        data: Partial<Omit<MemberCertification, 'orgId' | 'sk' | 'membershipId' | 'certKey' | 'createdAt' | 'updatedAt'>>,
-    ): Promise<void> {
-        const now = new Date().toISOString();
-        const existing = await this.getCertification(orgId, membershipId, certKey);
-        await this.ddb.put(Tables.ONBOARDING, {
-            ...existing,
-            orgId,
-            sk: memberCertificationSk(membershipId, certKey),
-            membershipId,
-            certKey,
-            ...data,
-            createdAt: existing?.createdAt ?? now,
-            updatedAt: now,
-        });
-    }
-
-    async getCertification(orgId: string, membershipId: string, certKey: string): Promise<MemberCertification | null> {
-        const { Item } = await this.ddb.getItem(Tables.ONBOARDING, { orgId, sk: memberCertificationSk(membershipId, certKey) });
-        return (Item as MemberCertification) ?? null;
-    }
-
-    /** All certifications for an org, or for a single member when membershipId is given. */
-    async listCertifications(orgId: string, membershipId?: string): Promise<MemberCertification[]> {
-        const prefix = membershipId ? `CERT#${membershipId}#` : 'CERT#';
-        const items: MemberCertification[] = [];
-        let lastKey: Record<string, any> | undefined;
-        do {
-            const { Items, LastEvaluatedKey } = await this.ddb.query({
-                TableName: Tables.ONBOARDING,
-                KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
-                ExpressionAttributeValues: { ':orgId': orgId, ':prefix': prefix },
-                ExclusiveStartKey: lastKey,
-            });
-            items.push(...((Items as MemberCertification[]) ?? []));
-            lastKey = LastEvaluatedKey;
-        } while (lastKey);
-        return items;
-    }
-
-    async deleteCertification(orgId: string, membershipId: string, certKey: string): Promise<void> {
-        await this.ddb.delete(Tables.ONBOARDING, { orgId, sk: memberCertificationSk(membershipId, certKey) });
-    }
-
-    /**
-     * Cross-org scan of certifications expiring on or before the cutoff.
-     * Used by the daily renewal-reminder cron (no org context).
-     */
-    async scanCertificationsExpiringBy(cutoffDate: string): Promise<MemberCertification[]> {
-        const items: MemberCertification[] = [];
-        let lastKey: Record<string, any> | undefined;
-        do {
-            const { Items, LastEvaluatedKey } = await this.ddb.scan({
-                TableName: Tables.ONBOARDING,
-                FilterExpression: 'begins_with(sk, :prefix) AND attribute_exists(expiry) AND expiry <= :cutoff AND expiry <> :empty',
-                ExpressionAttributeValues: { ':prefix': 'CERT#', ':cutoff': cutoffDate, ':empty': '' },
-                ExclusiveStartKey: lastKey,
-            });
-            items.push(...((Items as MemberCertification[]) ?? []));
             lastKey = LastEvaluatedKey;
         } while (lastKey);
         return items;

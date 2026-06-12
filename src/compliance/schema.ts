@@ -1,14 +1,5 @@
 import { z } from 'zod';
 
-export const CompliancePlaybookStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.literal('PLAYBOOK'),
-    tasks: z.any(),
-    updatedAt: z.string(),
-    updatedBy: z.string().nullish(),
-});
-export type CompliancePlaybook = z.infer<typeof CompliancePlaybookStoredSchema>;
-
 export const ComplianceTaskStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(),
@@ -112,26 +103,3 @@ export const ComplianceChecklistStoredSchema = z.object({
 });
 export type ComplianceChecklist = z.infer<typeof ComplianceChecklistStoredSchema>;
 
-/**
- * A mandatory compliance check held by an org member (e.g. Police Check,
- * First Aid, Worker Screening). Status is derived at read time from the
- * expiry date — it is intentionally not stored.
- */
-export const MemberCertificationStoredSchema = z.object({
-    orgId: z.string(),
-    sk: z.string(), // CERT#{membershipId}#{certKey}
-    membershipId: z.string(),
-    certKey: z.string(), // slug of the check name, e.g. 'police-check'
-    name: z.string(), // display name, e.g. 'Police Check'
-    expiry: z.string().nullish(), // YYYY-MM-DD; absent = pending/not yet provided
-    fileKey: z.string().nullish(),
-    fileName: z.string().nullish(),
-    extracted: z.any().nullish(), // AI-extracted document metadata
-    notes: z.string().nullish(),
-    renewalNotifiedAt: z.string().nullish(),
-    renewalNotificationCount: z.number().nullish(),
-    updatedBy: z.string().nullish(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-});
-export type MemberCertification = z.infer<typeof MemberCertificationStoredSchema>;

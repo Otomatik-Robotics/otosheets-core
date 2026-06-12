@@ -4,10 +4,8 @@ export const sk = (userId: string, entityId: string) => `${userId}#${entityId}`;
 // SK builders for specific entity patterns
 export const invoicePaymentSk = (invoiceId: string, paymentId: string) => `${invoiceId}#${paymentId}`;
 export const statementSk = (fy: string, statementId: string) => `${fy}#${statementId}`;
-export const compliancePlaybookSk = () => 'PLAYBOOK';
 export const complianceTaskSk = (userId: string, taskId: string) => `TASK#${userId}#${taskId}`;
 export const complianceSettingsSk = () => 'COMPLIANCE_SETTINGS';
-export const memberCertificationSk = (membershipId: string, certKey: string) => `CERT#${membershipId}#${certKey}`;
 export const complianceChecklistSk = (checklistId: string) => `CHECKLIST#${checklistId}`;
 export const onboardingWorkflowSk = (workflowId: string) => `WORKFLOW#${workflowId}`;
 export const welcomeEmailSk = (templateId: string) => `WELCOME_EMAIL#${templateId}`;
