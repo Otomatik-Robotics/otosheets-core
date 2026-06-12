@@ -21,6 +21,19 @@ export const PipelineVoiceConfigSchema = z.object({
     agentId: z.string().nullish(),
     /** Cancel window (seconds) before a queued call dials. 0–900 (SQS DelaySeconds ceiling). */
     dialCooldownSeconds: z.number().int().min(0).max(900).nullish(),
+    /**
+     * Auto-retry for unanswered (NO_ANSWER) calls. Absent or `enabled:false` means
+     * no retry — the lead drops back to NEW on the first no-answer. When enabled, the
+     * card stays in CALLING and the retry sweep re-dials up to `attemptsPerDay` times
+     * a day, `minHoursBetween` hours apart, across up to `maxDays` business days
+     * (within ACMA calling hours), then drops to NEW if still unreached.
+     */
+    retry: z.object({
+        enabled: z.boolean().default(false),
+        attemptsPerDay: z.number().int().min(1).max(10),
+        minHoursBetween: z.number().min(0.25).max(24),
+        maxDays: z.number().int().min(1).max(14),
+    }).nullish(),
     /** @deprecated superseded by the agent's tools; kept for back-compat reads */
     capabilities: z.record(z.string(), z.boolean()).default({}),
     /** @deprecated superseded by the agent's systemPrompt */

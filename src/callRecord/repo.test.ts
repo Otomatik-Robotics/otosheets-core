@@ -16,16 +16,28 @@ function makeStubDdb() {
         },
         async update(_t: string, key: any, params: any) {
             const item = store.get(`${key.orgId}|${key.sk}`) ?? { orgId: key.orgId, sk: key.sk };
-            const sets = params.UpdateExpression.replace(/^SET /, '').split(',');
-            for (const assign of sets) {
+            const [setClause, removeClause] = params.UpdateExpression.split(/\bREMOVE\b/);
+            for (const assign of setClause.replace(/^SET /, '').split(',')) {
                 const [lhs, rhs] = assign.split('=').map((s: string) => s.trim());
-                const attr = params.ExpressionAttributeNames[lhs];
-                item[attr] = params.ExpressionAttributeValues[rhs];
+                item[params.ExpressionAttributeNames[lhs]] = params.ExpressionAttributeValues[rhs];
+            }
+            for (const token of (removeClause ?? '').split(',').map((s: string) => s.trim()).filter(Boolean)) {
+                delete item[params.ExpressionAttributeNames[token]];
             }
             store.set(`${key.orgId}|${key.sk}`, item);
             return {};
         },
         async query(params: any) {
+            // Sparse retryDue GSI: PK=retryShard, SK=nextAttemptAt (<= :now).
+            if (params.IndexName === 'retryDue') {
+                const shard = params.ExpressionAttributeValues[':shard'];
+                const now = params.ExpressionAttributeValues[':now'];
+                let items = [...store.values()]
+                    .filter((i) => i.retryShard === shard && i.nextAttemptAt != null && i.nextAttemptAt <= now)
+                    .sort((a, b) => String(a.nextAttemptAt).localeCompare(String(b.nextAttemptAt)));
+                if (params.Limit) items = items.slice(0, params.Limit);
+                return { Items: items };
+            }
             const orgId = params.ExpressionAttributeValues[':orgId'];
             const prefix = params.ExpressionAttributeValues[':prefix'];
             let items = [...store.values()]
@@ -124,5 +136,32 @@ describe('CallRecordRepo', () => {
         await repo.put('org1', 'lead3', 'c3', { phoneNumber: '+61400000003', status: 'COMPLETED' });
         expect(await repo.countByStatus('org1', 'QUEUED')).toBe(2);
         expect(await repo.countByStatus('org1', 'COMPLETED')).toBe(1);
+    });
+
+    it('listDueRetries returns only due, retry-marked calls across orgs, oldest-due first', async () => {
+        const now = '2026-06-12T03:00:00.000Z';
+        // Due (org1) — earlier slot.
+        await repo.put('org1', 'lead1', 'c1', { phoneNumber: '+61400000001', status: 'NO_ANSWER', retryShard: 'RETRY', nextAttemptAt: '2026-06-12T02:00:00.000Z' });
+        // Due (org2) — later slot, still <= now.
+        await repo.put('org2', 'lead2', 'c2', { phoneNumber: '+61400000002', status: 'NO_ANSWER', retryShard: 'RETRY', nextAttemptAt: '2026-06-12T02:45:00.000Z' });
+        // Not yet due.
+        await repo.put('org1', 'lead3', 'c3', { phoneNumber: '+61400000003', status: 'NO_ANSWER', retryShard: 'RETRY', nextAttemptAt: '2026-06-12T05:00:00.000Z' });
+        // No-answer but not retry-marked (retry disabled) — must not surface.
+        await repo.put('org1', 'lead4', 'c4', { phoneNumber: '+61400000004', status: 'NO_ANSWER', nextAttemptAt: '2026-06-12T01:00:00.000Z' });
+
+        const due = await repo.listDueRetries(now);
+        expect(due.map((d) => d.callId)).toEqual(['c1', 'c2']);
+    });
+
+    it('update with null REMOVEs the attribute (drops a record out of the sparse GSI)', async () => {
+        await repo.put('org1', 'lead1', 'c1', { phoneNumber: '+61400000001', status: 'NO_ANSWER', retryShard: 'RETRY', nextAttemptAt: '2026-06-12T02:00:00.000Z' });
+        await repo.update('org1', 'lead1', 'c1', { retryShard: null, nextAttemptAt: null, status: 'QUEUED', attemptCount: 2 });
+        const row = await repo.get('org1', 'lead1', 'c1');
+        expect(row?.retryShard).toBeUndefined();
+        expect(row?.nextAttemptAt).toBeUndefined();
+        expect(row?.status).toBe('QUEUED');
+        expect(row?.attemptCount).toBe(2);
+        // …and it no longer appears as a due retry.
+        expect(await repo.listDueRetries('2026-06-12T09:00:00.000Z')).toHaveLength(0);
     });
 });

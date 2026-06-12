@@ -5,6 +5,14 @@ import { CallRecord, CallRecordStatus } from './schema';
 
 const skOf = (leadId: string, callId: string) => `CALL#${leadId}#${callId}`;
 
+/** Sparse GSI for the retry sweep: PK=retryShard, SK=nextAttemptAt. */
+export const RETRY_DUE_INDEX = 'retryDue';
+/**
+ * Single shard value for the retry GSI. Sole-trader call volume is low, so one
+ * partition is ample; bump to a small hashed set if a hot partition ever appears.
+ */
+export const RETRY_SHARD = 'RETRY';
+
 export class CallRecordRepo {
     constructor(private ddb: IDdb) {}
 
@@ -34,13 +42,21 @@ export class CallRecordRepo {
         const names: Record<string, string> = { '#updatedAt': 'updatedAt' };
         const values: Record<string, any> = { ':updatedAt': new Date().toISOString() };
         const sets = ['#updatedAt = :updatedAt'];
+        // An explicit `null` REMOVEs the attribute — required to drop a record out of
+        // the sparse `retryDue` GSI (a NULL-typed attribute would still be indexed).
+        const removes: string[] = [];
         for (const [k, v] of entries) {
             names[`#${k}`] = k;
-            values[`:${k}`] = v;
-            sets.push(`#${k} = :${k}`);
+            if (v === null) {
+                removes.push(`#${k}`);
+            } else {
+                values[`:${k}`] = v;
+                sets.push(`#${k} = :${k}`);
+            }
         }
+        const expr = `SET ${sets.join(', ')}` + (removes.length ? ` REMOVE ${removes.join(', ')}` : '');
         await this.ddb.update(Tables.CALL_RECORDS, { orgId, sk: skOf(leadId, callId) }, {
-            UpdateExpression: `SET ${sets.join(', ')}`,
+            UpdateExpression: expr,
             ExpressionAttributeNames: names,
             ExpressionAttributeValues: values,
         });
@@ -101,5 +117,22 @@ export class CallRecordRepo {
             Select: 'COUNT',
         });
         return Count ?? 0;
+    }
+
+    /**
+     * Retry-pending calls due at or before `nowIso`, across all orgs, oldest-due
+     * first. Backed by the sparse `retryDue` GSI — only records awaiting a
+     * scheduled retry carry `retryShard`, so this never scans the full table.
+     */
+    async listDueRetries(nowIso: string, limit = 50): Promise<CallRecord[]> {
+        const result = await this.ddb.query({
+            TableName: Tables.CALL_RECORDS,
+            IndexName: RETRY_DUE_INDEX,
+            KeyConditionExpression: 'retryShard = :shard AND nextAttemptAt <= :now',
+            ExpressionAttributeValues: { ':shard': RETRY_SHARD, ':now': nowIso },
+            ScanIndexForward: true,
+            Limit: limit,
+        });
+        return (result.Items as CallRecord[]) ?? [];
     }
 }

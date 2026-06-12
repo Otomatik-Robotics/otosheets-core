@@ -29,6 +29,12 @@ export const CallRecordStoredSchema = z.object({
     scriptPrompt: z.string().nullish(),
     startedAt: z.string().nullish(),
     endedAt: z.string().nullish(),
+    /** Dial attempts made on this retry chain so far (1 after the first dial). */
+    attemptCount: z.number().int().nullish(),
+    /** ISO time the retry sweep should next re-dial this call (NO_ANSWER + retry enabled). */
+    nextAttemptAt: z.string().nullish(),
+    /** Sparse `retryDue` GSI partition marker — present ONLY while awaiting a scheduled retry. */
+    retryShard: z.string().nullish(),
     createdBy: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
