@@ -51,7 +51,7 @@ describe('VoiceAgentRepo', () => {
     });
 
     it('round-trips put → get under the AGENT# prefix', async () => {
-        await repo.put('org1', 'a1', { name: 'Quoter', systemPrompt: 'You are…', tools: { quote_pricing: true } });
+        await repo.put('org1', 'a1', { name: 'Quoter', systemPrompt: 'You are…', tools: { offer_bookings: true } });
         const agent = await repo.get('org1', 'a1');
         expect(agent).toMatchObject({ orgId: 'org1', sk: 'AGENT#a1', agentId: 'a1', name: 'Quoter' });
         expect(agent?.createdAt).toBeTruthy();

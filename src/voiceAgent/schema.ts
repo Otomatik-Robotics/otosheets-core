@@ -6,7 +6,6 @@ import { z } from 'zod';
  */
 export const VOICE_AGENT_TOOLS = [
     'offer_bookings',
-    'quote_pricing',
     'qualify_needs',
     'take_message',
     'schedule_callback',
