@@ -28,6 +28,7 @@ export * from './lead';
 export * from './pipeline';
 export * from './callRecord';
 export * from './voiceAgent';
+export * from './voiceCredit';
 export * from './conversation';
 export * from './compliance';
 export * from './onboardingWorkflow';
