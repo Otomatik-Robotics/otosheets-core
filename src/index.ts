@@ -40,3 +40,5 @@ export * from './availabilityRule';
 export * from './timeOff';
 export * from './rotation';
 export * from './rosterEntry';
+export * from './usage';
+export * from './limits';
