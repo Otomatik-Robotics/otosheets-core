@@ -12,6 +12,25 @@ export const VOICE_AGENT_TOOLS = [
 ] as const;
 export type VoiceAgentTool = (typeof VOICE_AGENT_TOOLS)[number];
 
+/**
+ * An agent's avatar — either a curated lucide icon (with a colour theme) or a
+ * custom uploaded image. Purely cosmetic; null/absent = the default Bot icon.
+ * For `image`, `imageKey` is the S3 object key; the backend presigns a GET URL
+ * (`imageUrl`) on read — it is never persisted.
+ */
+export const VoiceAgentAvatarSchema = z.object({
+    type: z.enum(['icon', 'image']),
+    /** lucide icon key, when type === 'icon' */
+    icon: z.string().nullish(),
+    /** colour-theme key (e.g. 'indigo'), when type === 'icon' */
+    color: z.string().nullish(),
+    /** S3 object key, when type === 'image' */
+    imageKey: z.string().nullish(),
+    /** Presigned GET URL — derived on read, never stored */
+    imageUrl: z.string().nullish(),
+});
+export type VoiceAgentAvatar = z.infer<typeof VoiceAgentAvatarSchema>;
+
 export const VoiceAgentStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(), // AGENT#{agentId}
@@ -23,6 +42,8 @@ export const VoiceAgentStoredSchema = z.object({
     systemPrompt: z.string(),
     /** Tool toggles, keyed by VoiceAgentTool */
     tools: z.record(z.string(), z.boolean()).default({}),
+    /** Cosmetic avatar — curated icon+colour or an uploaded image. Null = default Bot icon. */
+    avatar: VoiceAgentAvatarSchema.nullish(),
     /** TTS voice the agent speaks with — provider + that provider's voice id (e.g. vapi / "Savannah"). Null = provider default. */
     voiceProvider: z.string().nullish(),
     voiceId: z.string().nullish(),

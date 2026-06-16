@@ -74,6 +74,19 @@ describe('VoiceAgentRepo', () => {
         expect(agent?.agentId).toBe('a1');
     });
 
+    it('round-trips an icon avatar and an image avatar', async () => {
+        await repo.put('org1', 'a1', { name: 'A', systemPrompt: 'p', avatar: { type: 'icon', icon: 'headset', color: 'emerald' } });
+        await repo.put('org1', 'a2', { name: 'B', systemPrompt: 'p', avatar: { type: 'image', imageKey: 'voice-agents/org1/abc.png' } });
+        expect((await repo.get('org1', 'a1'))?.avatar).toMatchObject({ type: 'icon', icon: 'headset', color: 'emerald' });
+        expect((await repo.get('org1', 'a2'))?.avatar).toMatchObject({ type: 'image', imageKey: 'voice-agents/org1/abc.png' });
+    });
+
+    it('update can change the avatar', async () => {
+        await repo.put('org1', 'a1', { name: 'A', systemPrompt: 'p', avatar: { type: 'icon', icon: 'bot', color: 'indigo' } });
+        await repo.update('org1', 'a1', { avatar: { type: 'image', imageKey: 'voice-agents/org1/x.jpg' } });
+        expect((await repo.get('org1', 'a1'))?.avatar).toMatchObject({ type: 'image', imageKey: 'voice-agents/org1/x.jpg' });
+    });
+
     it('delete removes the agent', async () => {
         await repo.put('org1', 'a1', { name: 'A', systemPrompt: 'p' });
         await repo.delete('org1', 'a1');
