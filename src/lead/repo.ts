@@ -193,4 +193,8 @@ export class LeadRepo {
             ExpressionAttributeValues: values,
         });
     }
+
+    async deleteLead(orgId: string, userId: string, leadId: string): Promise<void> {
+        await this.ddb.delete(Tables.LEADS, { orgId, sk: sk(userId, leadId) });
+    }
 }
