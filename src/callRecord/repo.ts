@@ -13,6 +13,16 @@ export const RETRY_DUE_INDEX = 'retryDue';
  */
 export const RETRY_SHARD = 'RETRY';
 
+/** Sparse GSI for per-number outbound serialization: PK=activeNumberShard, SK=callId (ULID, oldest-first). */
+export const ACTIVE_BY_NUMBER_INDEX = 'activeByNumber';
+/** Shard value for the active-by-number GSI — one partition per (org, outbound number). */
+export const activeNumberShard = (orgId: string, numberId: string) => `${orgId}#${numberId}`;
+/** SK prefix for the org-wide "is an inbound call live?" markers (cleared on call end; TTL failsafe). */
+export const INBOUND_ACTIVE_PREFIX = 'INBOUND#ACTIVE#';
+const inboundActiveSk = (inboundCallId: string) => `${INBOUND_ACTIVE_PREFIX}${inboundCallId}`;
+/** Statuses that occupy a number — a call in any of these is "live" on its number. */
+const LIVE_STATUSES: CallRecordStatus[] = ['DIALING', 'IN_PROGRESS'];
+
 export class CallRecordRepo {
     constructor(private ddb: IDdb) {}
 
@@ -85,14 +95,21 @@ export class CallRecordRepo {
         limit?: number;
         exclusiveStartKey?: Record<string, any>;
         status?: CallRecordStatus;
+        /** Restrict to one agent's calls (server-side FilterExpression) — backs the per-agent log. */
+        agentId?: string;
     }): Promise<PaginatedResult<CallRecord>> {
-        const { orgId, limit = 20, exclusiveStartKey, status } = params;
+        const { orgId, limit = 20, exclusiveStartKey, status, agentId } = params;
+        const filters: string[] = [];
+        const names: Record<string, string> = {};
+        const values: Record<string, any> = { ':orgId': orgId, ':prefix': 'CALL#' };
+        if (status) { filters.push('#status = :status'); names['#status'] = 'status'; values[':status'] = status; }
+        if (agentId) { filters.push('#agentId = :agentId'); names['#agentId'] = 'agentId'; values[':agentId'] = agentId; }
         const result = await this.ddb.query({
             TableName: Tables.CALL_RECORDS,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
-            ...(status && { FilterExpression: '#status = :status' }),
-            ...(status && { ExpressionAttributeNames: { '#status': 'status' } }),
-            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'CALL#', ...(status && { ':status': status }) },
+            ...(filters.length && { FilterExpression: filters.join(' AND ') }),
+            ...(Object.keys(names).length && { ExpressionAttributeNames: names }),
+            ExpressionAttributeValues: values,
             ScanIndexForward: false,
             Limit: limit,
             ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
@@ -161,5 +178,102 @@ export class CallRecordRepo {
             Limit: limit,
         });
         return (result.Items as CallRecord[]) ?? [];
+    }
+
+    // ─── Concurrency: per-number outbound serialization ──────────────────────
+
+    /**
+     * Live outbound calls on (org, number), oldest-first via the sparse
+     * `activeByNumber` GSI. Only QUEUED/DIALING/IN_PROGRESS calls carry the
+     * shard marker, so this never scans. Used by the dial-admission gate and the
+     * release-kick. `limit` bounds the read (2 is enough to answer "am I head?").
+     */
+    async listActiveByNumber(orgId: string, numberId: string, limit = 10): Promise<CallRecord[]> {
+        const result = await this.ddb.query({
+            TableName: Tables.CALL_RECORDS,
+            IndexName: ACTIVE_BY_NUMBER_INDEX,
+            KeyConditionExpression: 'activeNumberShard = :shard',
+            ExpressionAttributeValues: { ':shard': activeNumberShard(orgId, numberId) },
+            ScanIndexForward: true, // ULID asc = oldest queued first
+            Limit: limit,
+        });
+        return (result.Items as CallRecord[]) ?? [];
+    }
+
+    /** True when a call on this number is already DIALING/IN_PROGRESS (the number is busy). */
+    async hasActiveDialingByNumber(orgId: string, numberId: string): Promise<boolean> {
+        const items = await this.listActiveByNumber(orgId, numberId, 25);
+        return items.some((c) => LIVE_STATUSES.includes(c.status));
+    }
+
+    /** Head (oldest) QUEUED call on this number, or null — the next one allowed to dial. */
+    async headQueuedByNumber(orgId: string, numberId: string): Promise<CallRecord | null> {
+        const items = await this.listActiveByNumber(orgId, numberId, 25);
+        return items.find((c) => c.status === 'QUEUED') ?? null;
+    }
+
+    /**
+     * Atomically claim a QUEUED call for dialing (QUEUED → DIALING) via a
+     * conditional update. Returns true if this caller won the claim, false if the
+     * status was no longer QUEUED (a concurrent consumer already took it, or it was
+     * cancelled). This conditional flip is the mutual-exclusion latch that makes
+     * per-number serialization correct even on a non-FIFO dial queue.
+     */
+    async tryClaimForDial(orgId: string, leadId: string, callId: string): Promise<boolean> {
+        try {
+            await this.ddb.update(Tables.CALL_RECORDS, { orgId, sk: skOf(leadId, callId) }, {
+                UpdateExpression: 'SET #status = :dialing, #updatedAt = :now',
+                ConditionExpression: '#status = :queued',
+                ExpressionAttributeNames: { '#status': 'status', '#updatedAt': 'updatedAt' },
+                ExpressionAttributeValues: { ':dialing': 'DIALING', ':queued': 'QUEUED', ':now': new Date().toISOString() },
+            });
+            return true;
+        } catch (err: any) {
+            if (err?.name === 'ConditionalCheckFailedException' || err?.code === 'ConditionalCheckFailedException') return false;
+            throw err;
+        }
+    }
+
+    // ─── Concurrency: org-wide inbound-active markers ────────────────────────
+
+    /** Any live inbound call for this org (single-partition query, no GSI), or null. */
+    async getActiveInboundForOrg(orgId: string): Promise<CallRecord | null> {
+        const result = await this.ddb.query({
+            TableName: Tables.CALL_RECORDS,
+            KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': INBOUND_ACTIVE_PREFIX },
+            Limit: 1,
+        });
+        return ((result.Items as CallRecord[]) ?? [])[0] ?? null;
+    }
+
+    /**
+     * Mark an inbound call live. `ttlSeconds` sets a failsafe auto-clear (telephony
+     * end webhooks aren't guaranteed; a stuck marker must never wedge outbound forever).
+     */
+    async putInboundActive(
+        orgId: string,
+        inboundCallId: string,
+        data: { callerNumber?: string | null; agentId?: string | null; twilioCallSid?: string | null; status?: string; ttlSeconds?: number },
+    ): Promise<void> {
+        const now = Date.now();
+        const ttlSeconds = data.ttlSeconds ?? 3600;
+        await this.ddb.put(Tables.CALL_RECORDS, {
+            orgId,
+            sk: inboundActiveSk(inboundCallId),
+            direction: 'inbound',
+            status: data.status ?? 'IN_PROGRESS',
+            callerNumber: data.callerNumber ?? null,
+            agentId: data.agentId ?? null,
+            twilioCallSid: data.twilioCallSid ?? null,
+            ttl: Math.floor(now / 1000) + ttlSeconds,
+            createdAt: new Date(now).toISOString(),
+            updatedAt: new Date(now).toISOString(),
+        });
+    }
+
+    /** Clear an inbound-active marker (idempotent — no-op if already gone). */
+    async clearInboundActive(orgId: string, inboundCallId: string): Promise<void> {
+        await this.ddb.delete(Tables.CALL_RECORDS, { orgId, sk: inboundActiveSk(inboundCallId) });
     }
 }

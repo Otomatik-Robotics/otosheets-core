@@ -31,11 +31,22 @@ export const VoiceAgentAvatarSchema = z.object({
 });
 export type VoiceAgentAvatar = z.infer<typeof VoiceAgentAvatarSchema>;
 
+/**
+ * An agent either places calls (`outbound`) or answers them (`inbound`).
+ * Outbound agents may share a number; an inbound agent owns its number's SIP
+ * line one-to-one. Legacy rows have no value → treated as `outbound` on read.
+ */
+export const VOICE_AGENT_DIRECTIONS = ['inbound', 'outbound'] as const;
+export type VoiceAgentDirection = (typeof VOICE_AGENT_DIRECTIONS)[number];
+export const VoiceAgentDirectionSchema = z.enum(VOICE_AGENT_DIRECTIONS);
+
 export const VoiceAgentStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(), // AGENT#{agentId}
     agentId: z.string(),
     name: z.string(),
+    /** Inbound = answers calls (ring-owner-first, AI takes over); outbound = places calls. Default outbound. */
+    direction: VoiceAgentDirectionSchema.nullish(),
     /** The user's plain-language description of what this agent should do */
     intent: z.string().nullish(),
     /** Generated (or hand-edited) system prompt the voice agent runs with */
@@ -50,6 +61,19 @@ export const VoiceAgentStoredSchema = z.object({
     /** Allocated outbound number (Vapi phone-number id + E.164) from the org's purchased numbers */
     phoneNumberId: z.string().nullish(),
     phoneNumber: z.string().nullish(),
+    // ─── Inbound-only settings (carried on the agent; replaces the per-org inboundRouting) ───
+    /** E.164 number an inbound call rings first (the owner's mobile) before the AI takes over. */
+    ownerNumber: z.string().nullish(),
+    /** Seconds to ring the owner before the AI agent answers (5–60). */
+    ringTimeoutSeconds: z.number().int().nullish(),
+    /** SMS copy sent when an inbound caller isn't reached and text-back is preferred. */
+    textBackMessage: z.string().nullish(),
+    /** Record + transcribe answered calls (opt-in; consent disclosure required). */
+    recordCalls: z.boolean().nullish(),
+    /** Vapi assistant id provisioned for an inbound agent (for in-place re-provisioning). */
+    assistantId: z.string().nullish(),
+    /** Deterministic SIP URI this inbound agent answers on (mirrors its number's sipUri). */
+    sipUri: z.string().nullish(),
     createdBy: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),

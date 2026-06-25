@@ -4,6 +4,10 @@ export const CALL_RECORD_STATUSES = ['QUEUED', 'DIALING', 'IN_PROGRESS', 'COMPLE
 export const CallRecordStatusSchema = z.enum(CALL_RECORD_STATUSES);
 export type CallRecordStatus = z.infer<typeof CallRecordStatusSchema>;
 
+export const CALL_DIRECTIONS = ['inbound', 'outbound'] as const;
+export const CallDirectionSchema = z.enum(CALL_DIRECTIONS);
+export type CallDirection = z.infer<typeof CallDirectionSchema>;
+
 export const CallRecordStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(), // CALL#{leadId}#{callId}
@@ -15,10 +19,21 @@ export const CallRecordStoredSchema = z.object({
     externalId: z.string().nullish(),
     phoneNumber: z.string(),
     status: CallRecordStatusSchema,
+    /** inbound = received, outbound = placed. Default outbound on read for legacy rows. */
+    direction: CallDirectionSchema.nullish(),
     /** Earliest dial time — the cooldown window before this lets the user cancel */
     dialAt: z.string().nullish(),
-    /** Voice agent assigned to place this call */
+    /** Voice agent assigned to place/answer this call */
     agentId: z.string().nullish(),
+    /** Vapi phone-number id this call dials FROM — the per-number serialization key (outbound only). */
+    outboundNumberId: z.string().nullish(),
+    /**
+     * Sparse `activeByNumber` GSI partition marker — `${orgId}#${outboundNumberId}`,
+     * present ONLY while an outbound call is live (QUEUED/DIALING/IN_PROGRESS).
+     * Cleared (REMOVE) the moment the call reaches a terminal status so the index
+     * holds only in-flight calls. Backs "one call at a time per number".
+     */
+    activeNumberShard: z.string().nullish(),
     /** Why the compliance gate blocked the call (DNCR, calling hours, consent, rate limit) */
     blockReason: z.string().nullish(),
     /** Short outcome summary of the completed call */
