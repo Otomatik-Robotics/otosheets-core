@@ -107,6 +107,33 @@ export class CallRecordRepo {
         await this.ddb.delete(Tables.CALL_RECORDS, { orgId, sk: skOf(leadId, callId) });
     }
 
+    /**
+     * Fixed-window inbound-call counter for spam mitigation. Increments and
+     * returns the call count for (callerNumber, current time-window bucket).
+     * Each window is a fresh counter keyed by its bucket; the `ttl` attribute
+     * auto-expires old buckets so these markers never accumulate. Caller compares
+     * the returned count against a threshold to throttle robocallers before they
+     * burn AI minutes / text-back SMS.
+     */
+    async bumpInboundThrottle(
+        orgId: string,
+        callerNumber: string,
+        nowMs: number,
+        windowSeconds: number,
+    ): Promise<number> {
+        const bucket = Math.floor(nowMs / (windowSeconds * 1000));
+        const sk = `INBOUND#THROTTLE#${callerNumber}#${bucket}`;
+        const ttl = Math.floor(nowMs / 1000) + windowSeconds * 2; // keep one extra window for safety
+        const res = await this.ddb.update(Tables.CALL_RECORDS, { orgId, sk }, {
+            UpdateExpression:
+                'ADD #count :one SET #ttl = if_not_exists(#ttl, :ttl), createdAt = if_not_exists(createdAt, :now)',
+            ExpressionAttributeNames: { '#count': 'count', '#ttl': 'ttl' },
+            ExpressionAttributeValues: { ':one': 1, ':ttl': ttl, ':now': new Date(nowMs).toISOString() },
+            ReturnValues: 'UPDATED_NEW',
+        });
+        return ((res.Attributes as { count?: number } | undefined)?.count) ?? 1;
+    }
+
     async countByStatus(orgId: string, status: CallRecordStatus): Promise<number> {
         const { Count } = await this.ddb.query({
             TableName: Tables.CALL_RECORDS,
