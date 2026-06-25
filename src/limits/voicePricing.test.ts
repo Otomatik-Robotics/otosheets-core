@@ -3,6 +3,9 @@ import {
     callCostCents,
     minBalanceToCallCents,
     isValidTopupAmount,
+    monthlyAllowanceCents,
+    currentBillingPeriod,
+    splitAllowanceOverage,
     VOICE_PER_MINUTE_CENTS,
     VOICE_MIN_CALL_MINUTES,
     TOPUP_CUSTOM_MIN_CENTS,
@@ -37,5 +40,25 @@ describe('voicePricing', () => {
         expect(isValidTopupAmount(TOPUP_CUSTOM_MIN_CENTS - 1)).toBe(false);
         expect(isValidTopupAmount(TOPUP_CUSTOM_MAX_CENTS + 1)).toBe(false);
         expect(isValidTopupAmount(10.5)).toBe(false);
+    });
+
+    it('monthlyAllowanceCents: free has none, paid tiers do; unknown → free', () => {
+        expect(monthlyAllowanceCents('free')).toBe(0);
+        expect(monthlyAllowanceCents('starter')).toBeGreaterThan(0);
+        expect(monthlyAllowanceCents('pro')).toBeGreaterThanOrEqual(monthlyAllowanceCents('starter'));
+        expect(monthlyAllowanceCents(null)).toBe(0);
+        expect(monthlyAllowanceCents('mystery')).toBe(0);
+    });
+
+    it('currentBillingPeriod is a zero-padded YYYY-MM (UTC)', () => {
+        expect(currentBillingPeriod(new Date('2026-01-09T00:00:00Z'))).toBe('2026-01');
+        expect(currentBillingPeriod(new Date('2026-12-31T23:59:59Z'))).toBe('2026-12');
+    });
+
+    it('splitAllowanceOverage covers cost from allowance first, then overage', () => {
+        expect(splitAllowanceOverage(100, 1000)).toEqual({ fromAllowanceCents: 100, overageCents: 0 });
+        expect(splitAllowanceOverage(1000, 300)).toEqual({ fromAllowanceCents: 300, overageCents: 700 });
+        expect(splitAllowanceOverage(500, 0)).toEqual({ fromAllowanceCents: 0, overageCents: 500 });
+        expect(splitAllowanceOverage(0, 1000)).toEqual({ fromAllowanceCents: 0, overageCents: 0 });
     });
 });

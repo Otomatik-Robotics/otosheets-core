@@ -126,4 +126,33 @@ describe('VoiceCreditRepo', () => {
         await repo.debit('org1', 300, { callId: 'call_2' });
         expect(await repo.getBalance('org1')).toBe(500);
     });
+
+    it('grants the monthly allowance into the balance and records it', async () => {
+        const after = await repo.grantMonthlyAllowance('org1', '2026-06', 2000);
+        expect(after).toBe(2000);
+        expect(await repo.getPeriodGrant('org1', '2026-06')).toBe(2000);
+        const grants = (await repo.listLedger('org1')).filter((l) => l.type === 'grant');
+        expect(grants).toHaveLength(1);
+        expect(grants[0]).toMatchObject({ amountCents: 2000, period: '2026-06' });
+    });
+
+    it('is idempotent per period (re-running the same month does not double-grant)', async () => {
+        await repo.grantMonthlyAllowance('org1', '2026-06', 2000);
+        const again = await repo.grantMonthlyAllowance('org1', '2026-06', 2000);
+        expect(again).toBe(2000); // not 4000
+    });
+
+    it('re-grants when the billing period changes (allowance resets)', async () => {
+        await repo.grantMonthlyAllowance('org1', '2026-06', 2000);
+        await repo.debit('org1', 500, { callId: 'c1' }); // used some
+        const afterJuly = await repo.grantMonthlyAllowance('org1', '2026-07', 2000);
+        // 2000 (Jun) - 500 (used) + 2000 (Jul) = 3500
+        expect(afterJuly).toBe(3500);
+        expect(await repo.getPeriodGrant('org1', '2026-07')).toBe(2000);
+    });
+
+    it('a zero allowance (e.g. free tier) is a no-op', async () => {
+        expect(await repo.grantMonthlyAllowance('org1', '2026-06', 0)).toBe(0);
+        expect(await repo.getPeriodGrant('org1', '2026-06')).toBe(0);
+    });
 });

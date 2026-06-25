@@ -7,6 +7,7 @@ import {
     WALLET_LEDGER_PREFIX,
     topupLedgerSk,
     callLedgerSk,
+    grantLedgerSk,
 } from './schema';
 
 /**
@@ -121,6 +122,60 @@ export class VoiceCreditRepo {
             throw err;
         }
         return this.getBalance(orgId);
+    }
+
+    /**
+     * Grant the tier's monthly included voice allowance into the wallet.
+     * Idempotent per billing `period` (deterministic GRANT#{period} marker), so
+     * calling it repeatedly within a month is a safe no-op — the allowance resets
+     * (is re-granted) only when the period key changes. Returns the new balance.
+     */
+    async grantMonthlyAllowance(
+        orgId: string,
+        period: string,
+        amountCents: number,
+    ): Promise<number> {
+        if (amountCents <= 0) return this.getBalance(orgId);
+        const now = new Date().toISOString();
+        const sk = grantLedgerSk(period);
+        try {
+            await this.ddb.transactWrite([
+                {
+                    Put: {
+                        TableName: Tables.CALL_RECORDS,
+                        Item: {
+                            orgId,
+                            sk,
+                            type: 'grant',
+                            amountCents,
+                            period,
+                            description: `Included voice allowance (${period})`,
+                            createdAt: now,
+                        },
+                        ConditionExpression: 'attribute_not_exists(sk)',
+                    },
+                },
+                {
+                    Update: {
+                        TableName: Tables.CALL_RECORDS,
+                        Key: { orgId, sk: WALLET_BALANCE_SK },
+                        UpdateExpression:
+                            'ADD balanceCents :amt SET currency = if_not_exists(currency, :cur), updatedAt = :now',
+                        ExpressionAttributeValues: { ':amt': amountCents, ':cur': 'aud', ':now': now },
+                    },
+                },
+            ]);
+        } catch (err) {
+            if (isDuplicateLedgerWrite(err)) return this.getBalance(orgId);
+            throw err;
+        }
+        return this.getBalance(orgId);
+    }
+
+    /** Allowance granted for `period` (AUD cents), or 0 if not yet granted. */
+    async getPeriodGrant(orgId: string, period: string): Promise<number> {
+        const { Item } = await this.ddb.getItem(Tables.CALL_RECORDS, { orgId, sk: grantLedgerSk(period) });
+        return (Item as { amountCents?: number } | undefined)?.amountCents ?? 0;
     }
 
     /** Recent ledger entries, newest first (for the credit modal's activity list). */

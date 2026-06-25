@@ -18,6 +18,8 @@ export const WALLET_BALANCE_SK = 'WALLET#BALANCE';
 export const WALLET_LEDGER_PREFIX = 'WALLET#LEDGER#';
 export const topupLedgerSk = (stripeSessionId: string) => `${WALLET_LEDGER_PREFIX}TOPUP#${stripeSessionId}`;
 export const callLedgerSk = (callId: string) => `${WALLET_LEDGER_PREFIX}CALL#${callId}`;
+/** Monthly included-allowance grant marker (one per billing period = idempotent). */
+export const grantLedgerSk = (period: string) => `${WALLET_LEDGER_PREFIX}GRANT#${period}`;
 
 export const VoiceCreditBalanceSchema = z.object({
     orgId: z.string(),
@@ -31,12 +33,14 @@ export type VoiceCreditBalance = z.infer<typeof VoiceCreditBalanceSchema>;
 export const VoiceCreditLedgerSchema = z.object({
     orgId: z.string(),
     sk: z.string(), // WALLET#LEDGER#...
-    /** topup (+), debit (−, a call charge), refund (+) */
-    type: z.enum(['topup', 'debit', 'refund']),
+    /** topup (+), grant (+ monthly included allowance), debit (−, a call charge), refund (+) */
+    type: z.enum(['topup', 'grant', 'debit', 'refund']),
     /** Signed change applied to the balance, AUD cents. */
     amountCents: z.number(),
     callId: z.string().nullish(),
     stripeSessionId: z.string().nullish(),
+    /** Billing period (YYYY-MM) for a monthly allowance grant. */
+    period: z.string().nullish(),
     description: z.string().nullish(),
     createdAt: z.string(),
 });
