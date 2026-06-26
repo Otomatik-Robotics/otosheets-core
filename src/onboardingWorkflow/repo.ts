@@ -23,6 +23,17 @@ export class OnboardingWorkflowRepo {
         return (Items as OnboardingWorkflow[]) ?? [];
     }
 
+    /** Cheap count of an org's workflows (Select COUNT — no bodies fetched). */
+    async countByOrg(orgId: string): Promise<number> {
+        const { Count } = await this.ddb.query({
+            TableName: Tables.ONBOARDING,
+            KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'WORKFLOW#' },
+            Select: 'COUNT',
+        });
+        return Count ?? 0;
+    }
+
     async put(orgId: string, workflow: Omit<OnboardingWorkflow, 'orgId' | 'sk'>): Promise<void> {
         await this.ddb.put(Tables.ONBOARDING, {
             orgId,

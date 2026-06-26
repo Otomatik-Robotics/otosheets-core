@@ -17,6 +17,15 @@ export const OrgStoredSchema = z.object({
     bookingSettings: z.any().nullish(),
     tradeSettings: z.any().nullish(),
     stripeAccountId: z.string().nullish(),
+    // ─── Per-org subscription & seats ───────────────────────────
+    // The org is the billable unit: tier drives the CASL entitlement
+    // engine, seatLimit caps members + pending invites (pure pay-per-seat,
+    // owner excluded). Stripe customer/subscription belong to the org.
+    subscriptionTier: z.enum(['free', 'starter', 'pro']).default('free'),
+    subscriptionStatus: z.string().nullish(),
+    stripeCustomerId: z.string().nullish(),
+    stripeSubscriptionId: z.string().nullish(),
+    seatLimit: z.number().default(0),
     encryptedDek: z.string().nullish(),
     dekVersion: z.number().nullish(),
     createdAt: z.string(),

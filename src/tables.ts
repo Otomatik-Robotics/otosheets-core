@@ -24,4 +24,6 @@ export const Tables = {
     get META_PAGE_MAPPINGS() { return process.env.META_PAGE_MAPPINGS_TABLE!; },
     get SCHEDULING() { return process.env.SCHEDULING_TABLE!; },
     get CALL_RECORDS() { return process.env.CALL_RECORDS_TABLE!; },
+    get USAGE() { return process.env.USAGE_TABLE!; },
+    get PRICE_BOOK() { return process.env.PRICE_BOOK_TABLE!; },
 } as const;

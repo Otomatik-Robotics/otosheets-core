@@ -19,6 +19,9 @@ export const timeOffSk = (memberId: string, timeOffId: string) => `TIMEOFF#${mem
 export const rotationSk = (rotationId: string) => `ROTATION#${rotationId}`;
 export const rosterEntrySk = (date: string, memberId: string) => `ROSTER#${date}#${memberId}`;
 
+// Usage metering SK builder: USAGE#{metric}#{YYYY-MM} (monthly bucket per org)
+export const usageSk = (metric: string, month: string) => `USAGE#${metric}#${month}`;
+
 // GSI key builders
 export const dueDateSk = (dueDate: string, invoiceId: string) => `${dueDate}#${invoiceId}`;
 export const dateSk = (date: string, entityId: string) => `${date}#${entityId}`;
