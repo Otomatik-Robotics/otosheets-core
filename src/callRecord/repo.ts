@@ -276,4 +276,29 @@ export class CallRecordRepo {
     async clearInboundActive(orgId: string, inboundCallId: string): Promise<void> {
         await this.ddb.delete(Tables.CALL_RECORDS, { orgId, sk: inboundActiveSk(inboundCallId) });
     }
+
+    /**
+     * Attach the lead the in-call AI just captured to this org's live inbound
+     * marker, so the inbound end-of-call report can link the saved call-history
+     * record back to that lead. Best-effort and idempotent — overwrites with the
+     * latest capture; a no-op when no inbound call is currently marked live (e.g.
+     * the marker already expired, or the call came in without one).
+     */
+    async markInboundCapturedLead(orgId: string, leadId: string, pipelineId?: string | null): Promise<void> {
+        const marker = await this.getActiveInboundForOrg(orgId);
+        if (!marker?.sk) return;
+        await this.ddb.update(Tables.CALL_RECORDS, { orgId, sk: marker.sk }, {
+            UpdateExpression: 'SET #capturedLeadId = :leadId, #capturedPipelineId = :pipelineId, #updatedAt = :now',
+            ExpressionAttributeNames: {
+                '#capturedLeadId': 'capturedLeadId',
+                '#capturedPipelineId': 'capturedPipelineId',
+                '#updatedAt': 'updatedAt',
+            },
+            ExpressionAttributeValues: {
+                ':leadId': leadId,
+                ':pipelineId': pipelineId ?? null,
+                ':now': new Date().toISOString(),
+            },
+        });
+    }
 }

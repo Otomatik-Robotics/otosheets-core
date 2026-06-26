@@ -137,4 +137,18 @@ describe('CallRecordRepo — inbound-active markers', () => {
         await repo.clearInboundActive('org1', 'inb1');
         expect(await repo.getActiveInboundForOrg('org1')).toBeNull();
     });
+
+    it('markInboundCapturedLead attaches the captured lead to the live marker', async () => {
+        await repo.putInboundActive('org1', 'inb1', { callerNumber: '+61411111111', agentId: 'agentA' });
+        await repo.markInboundCapturedLead('org1', 'lead-99', 'pipe-1');
+        const live = await repo.getActiveInboundForOrg('org1');
+        expect(live?.capturedLeadId).toBe('lead-99');
+        expect(live?.capturedPipelineId).toBe('pipe-1');
+    });
+
+    it('markInboundCapturedLead is a no-op when no inbound call is live', async () => {
+        // Must not throw when the marker is gone (call ended / never marked).
+        await expect(repo.markInboundCapturedLead('org1', 'lead-99')).resolves.toBeUndefined();
+        expect(await repo.getActiveInboundForOrg('org1')).toBeNull();
+    });
 });

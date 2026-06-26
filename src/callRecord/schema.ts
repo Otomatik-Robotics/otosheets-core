@@ -35,6 +35,13 @@ export const CallRecordStoredSchema = z.object({
     status: CallRecordStatusSchema,
     /** inbound = received, outbound = placed. Default outbound on read for legacy rows. */
     direction: CallDirectionSchema.nullish(),
+    /**
+     * On the org-wide inbound-active marker only: the lead the in-call AI captured
+     * (via capture_lead). Read back at the inbound end-of-call report so the saved
+     * call-history record can be linked to that lead. Not set on normal call rows.
+     */
+    capturedLeadId: z.string().nullish(),
+    capturedPipelineId: z.string().nullish(),
     /** Earliest dial time — the cooldown window before this lets the user cancel */
     dialAt: z.string().nullish(),
     /** Voice agent assigned to place/answer this call */
