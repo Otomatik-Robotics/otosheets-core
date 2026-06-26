@@ -8,6 +8,20 @@ export const CALL_DIRECTIONS = ['inbound', 'outbound'] as const;
 export const CallDirectionSchema = z.enum(CALL_DIRECTIONS);
 export type CallDirection = z.infer<typeof CallDirectionSchema>;
 
+/**
+ * One timed utterance in a call transcript. `startSec`/`endSec` are seconds from
+ * the start of the recording, enabling playback-synced ("karaoke") highlighting
+ * and click-to-seek in the UI. Optional alongside the flat `transcript` string —
+ * older calls only have the string.
+ */
+export const TranscriptSegmentSchema = z.object({
+    speaker: z.enum(['ai', 'user']),
+    text: z.string(),
+    startSec: z.number(),
+    endSec: z.number().nullish(),
+});
+export type TranscriptSegment = z.infer<typeof TranscriptSegmentSchema>;
+
 export const CallRecordStoredSchema = z.object({
     orgId: z.string(),
     sk: z.string(), // CALL#{leadId}#{callId}
@@ -39,6 +53,8 @@ export const CallRecordStoredSchema = z.object({
     /** Short outcome summary of the completed call */
     outcome: z.string().nullish(),
     transcript: z.string().nullish(),
+    /** Timed, speaker-attributed transcript turns for playback-synced highlighting. */
+    transcriptSegments: z.array(TranscriptSegmentSchema).nullish(),
     recordingUrl: z.string().nullish(),
     durationSeconds: z.number().nullish(),
     scriptPrompt: z.string().nullish(),
