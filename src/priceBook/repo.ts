@@ -23,6 +23,15 @@ export class PriceBookRepo {
         await this.ddb.put(Tables.PRICE_BOOK, item);
     }
 
+    /** Batch-write items in chunks of 25 (DynamoDB BatchWriteItem limit). */
+    async putItems(items: PriceBookItem[]): Promise<void> {
+        for (let i = 0; i < items.length; i += 25) {
+            const chunk = items.slice(i, i + 25);
+            const putRequests = chunk.map(item => ({ PutRequest: { Item: item } }));
+            await this.ddb.batchWrite({ [Tables.PRICE_BOOK]: putRequests });
+        }
+    }
+
     async deleteItem(orgId: string, itemId: string): Promise<void> {
         await this.ddb.delete(Tables.PRICE_BOOK, { orgId, itemId });
     }
