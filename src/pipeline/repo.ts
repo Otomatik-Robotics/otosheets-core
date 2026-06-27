@@ -19,6 +19,24 @@ export class PipelineRepo {
         return (Items as Pipeline[]) ?? [];
     }
 
+    /**
+     * Full-table scan of every pipeline across all orgs. Background-cron use only
+     * (e.g. the 12-hour insights precompute) — never call from a request handler.
+     */
+    async scanAllPipelines(): Promise<Pipeline[]> {
+        const all: Pipeline[] = [];
+        let exclusiveStartKey: Record<string, any> | undefined;
+        do {
+            const res = await this.ddb.scan({
+                TableName: Tables.PIPELINES,
+                ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+            });
+            all.push(...((res.Items as Pipeline[]) ?? []));
+            exclusiveStartKey = res.LastEvaluatedKey;
+        } while (exclusiveStartKey);
+        return all;
+    }
+
     async getDefaultPipeline(orgId: string): Promise<Pipeline | null> {
         const { Items } = await this.ddb.query({
             TableName: Tables.PIPELINES,

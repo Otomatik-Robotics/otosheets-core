@@ -26,6 +26,7 @@ export * from './trip';
 export * from './statement';
 export * from './lead';
 export * from './pipeline';
+export * from './pipelineInsights';
 export * from './callRecord';
 export * from './voiceAgent';
 export * from './voiceCredit';

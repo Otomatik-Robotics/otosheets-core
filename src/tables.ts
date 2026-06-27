@@ -16,6 +16,7 @@ export const Tables = {
     get STATEMENTS() { return process.env.STATEMENTS_TABLE!; },
     get LEADS() { return process.env.LEADS_TABLE!; },
     get PIPELINES() { return process.env.PIPELINES_TABLE!; },
+    get PIPELINE_INSIGHTS() { return process.env.PIPELINE_INSIGHTS_TABLE!; },
     get CONVERSATIONS() { return process.env.CONVERSATIONS_TABLE!; },
     get NOTIFICATIONS() { return process.env.NOTIFICATIONS_TABLE!; },
     get ORG_CHANNELS() { return process.env.ORG_CHANNELS_TABLE!; },
