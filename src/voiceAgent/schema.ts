@@ -61,6 +61,13 @@ export const VoiceAgentStoredSchema = z.object({
     /** Allocated outbound number (Vapi phone-number id + E.164) from the org's purchased numbers */
     phoneNumberId: z.string().nullish(),
     phoneNumber: z.string().nullish(),
+    /**
+     * Lead pipeline this agent works. Outbound agents call leads that land in
+     * this pipeline; inbound agents file the leads they capture here. When unset
+     * the backend resolves it to the org's default ("General") pipeline on write,
+     * so a stored agent always carries a concrete pipelineId.
+     */
+    pipelineId: z.string().nullish(),
     // ─── Inbound-only settings (carried on the agent; replaces the per-org inboundRouting) ───
     /** E.164 number an inbound call rings first (the owner's mobile) before the AI takes over. */
     ownerNumber: z.string().nullish(),
