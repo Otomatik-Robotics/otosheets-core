@@ -36,7 +36,10 @@ export class InvoiceRepo {
         });
         const item = Items?.[0] as Invoice | undefined;
         if (!item) return null;
-        return { invoice: item, ownerId: item.createdBy };
+        // The sort key (`userId#invoiceId`) is the source of truth for ownership;
+        // createdBy can diverge from it and would make callers update the wrong key.
+        const skOwner = (item as any).sk?.split('#')[0];
+        return { invoice: item, ownerId: skOwner || item.createdBy };
     }
 
     async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
@@ -211,6 +214,9 @@ export class InvoiceRepo {
 
         await this.ddb.update(Tables.INVOICES, { orgId, sk: sk(userId, invoiceId) }, {
             UpdateExpression: `SET ${sets.join(', ')}`,
+            // Updates must never upsert: a mismatched key would otherwise create a
+            // sparse shadow record (no items) that getInvoice returns instead of the real one.
+            ConditionExpression: 'attribute_exists(sk)',
             ExpressionAttributeNames: names,
             ExpressionAttributeValues: values,
         });
