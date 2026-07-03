@@ -38,7 +38,16 @@ export const LaunchStepStateSchema = z.object({
     /** Step outputs, e.g. { abn, siteSlug, paymentLinkUrl } — returned as-is on re-runs. */
     artifacts: z.record(z.string(), z.string()).optional(),
 });
-export type LaunchStepState = z.infer<typeof LaunchStepStateSchema>;
+// Explicit interface (not z.infer): consumers may be on a different zod major,
+// and inferred generic types don't survive the declaration-file boundary.
+export interface LaunchStepState {
+    status: LaunchStepStatus;
+    dependsOn?: LaunchStepId[];
+    startedAt?: string;
+    completedAt?: string;
+    error?: string;
+    artifacts?: Record<string, string>;
+}
 
 export const LAUNCH_ASSET_KINDS = [
     'receipt', 'invoice_doc', 'logo', 'work_photo', 'team_photo', 'document', 'text_note',
@@ -56,7 +65,15 @@ export const LaunchAssetSchema = z.object({
     chosenFor: z.enum(['hero', 'gallery', 'about', 'logo']).optional(),
     createdAt: z.string(),
 });
-export type LaunchAsset = z.infer<typeof LaunchAssetSchema>;
+export interface LaunchAsset {
+    assetId: string;
+    key?: string;
+    text?: string;
+    kind: LaunchAssetKind;
+    alt?: string;
+    chosenFor?: 'hero' | 'gallery' | 'about' | 'logo';
+    createdAt: string;
+}
 
 export const LaunchProfileServiceSchema = z.object({
     name: z.string(),
@@ -81,7 +98,28 @@ export const LaunchProfileSchema = z.object({
     phone: z.string().optional(),
     email: z.string().optional(),
 });
-export type LaunchProfile = z.infer<typeof LaunchProfileSchema>;
+export interface LaunchProfileService {
+    name: string;
+    description?: string;
+    suggestedPriceCents?: number;
+    unit?: string;
+}
+export interface LaunchProfile {
+    businessName: string;
+    businessNameCandidates: string[];
+    abn?: string;
+    services: LaunchProfileService[];
+    serviceAreas: string[];
+    targetCustomers: string[];
+    usps: string[];
+    tone?: string;
+    tagline?: string;
+    aboutDraft?: string;
+    templateSuggestion?: string;
+    palette?: { primary: string; accent: string };
+    phone?: string;
+    email?: string;
+}
 
 /** SK of the pointer item enforcing one active run per org. */
 export const LAUNCH_RUN_ACTIVE_POINTER = 'ACTIVE';
@@ -98,7 +136,17 @@ export const LaunchRunSchema = z.object({
     createdAt: z.string(),
     updatedAt: z.string(),
 });
-export type LaunchRun = z.infer<typeof LaunchRunSchema>;
+export interface LaunchRun {
+    orgId: string;
+    runId: string;
+    status: 'confirming' | 'running' | 'completed' | 'partially_completed' | 'abandoned';
+    transcript?: string;
+    profile: LaunchProfile;
+    steps: Record<string, LaunchStepState>;
+    assets: Record<string, LaunchAsset>;
+    createdAt: string;
+    updatedAt: string;
+}
 
 /** Pointer item shape: { orgId, runId: 'ACTIVE', activeRunId } */
 export interface LaunchRunActivePointer {

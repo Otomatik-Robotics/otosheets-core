@@ -22,7 +22,17 @@ export const SiteCustomDomainSchema = z.object({
     requestedAt: z.string(),
     updatedAt: z.string().optional(),
 });
-export type SiteCustomDomain = z.infer<typeof SiteCustomDomainSchema>;
+// Explicit interfaces (not z.infer): consumers may be on a different zod major,
+// and inferred generic types don't survive the declaration-file boundary.
+export interface SiteCustomDomain {
+    domain: string;
+    hostedZoneId?: string;
+    nsRecords?: string[];
+    certArn?: string;
+    status: 'pending_ns' | 'ns_verified' | 'cert_pending' | 'cert_issued' | 'attached' | 'failed';
+    requestedAt: string;
+    updatedAt?: string;
+}
 
 /** Sparse-GSI marker value set while any custom domain is in a non-terminal state. */
 export const DOMAINS_PENDING_KEY = 'DOMAIN_PENDING';
@@ -51,4 +61,20 @@ export const SiteSchema = z.object({
     createdAt: z.string(),
     updatedAt: z.string(),
 });
-export type Site = z.infer<typeof SiteSchema>;
+export interface Site {
+    host: string;
+    type: 'site' | 'alias';
+    aliasOf?: string;
+    orgId: string;
+    slug: string;
+    templateId: SiteTemplateId;
+    status: 'draft' | 'published' | 'suspended';
+    config: Record<string, unknown>;
+    configVersion: number;
+    customDomains: SiteCustomDomain[];
+    domainsPendingKey?: string;
+    previewToken?: string;
+    publishedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+}

@@ -21,4 +21,21 @@ export const SocialPostSchema = z.object({
     createdAt: z.string(),
     updatedAt: z.string(),
 });
-export type SocialPost = z.infer<typeof SocialPostSchema>;
+// Explicit interface (not z.infer): consumers may be on a different zod major,
+// and inferred generic types don't survive the declaration-file boundary.
+export interface SocialPost {
+    orgId: string;
+    postId: string;
+    platform: 'facebook' | 'instagram';
+    caption: string;
+    mediaKey?: string;
+    scheduledAt: string;
+    status: 'draft' | 'queued' | 'published' | 'failed';
+    dueKey?: string;
+    publishedExternalId?: string;
+    publishedAt?: string;
+    attempts: number;
+    lastError?: string;
+    createdAt: string;
+    updatedAt: string;
+}
