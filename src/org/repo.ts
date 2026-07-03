@@ -2,7 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Organization } from './schema';
 
-/** Store-agnostic contract — implemented by OrgRepo (Dynamo) and OrgPgRepo. */
+/** Store-agnostic contract — implemented by OrgDynamoRepo and OrgPgRepo; OrgRepo (factory.ts) routes between them. */
 export interface IOrgRepo {
     getOrg(orgId: string): Promise<Organization | null>;
     getOrgBySlug(slug: string): Promise<Organization | null>;
@@ -12,7 +12,7 @@ export interface IOrgRepo {
     upsertOrg(org: Organization): Promise<void>;
 }
 
-export class OrgRepo implements IOrgRepo {
+export class OrgDynamoRepo implements IOrgRepo {
     constructor(private ddb: IDdb) {}
 
     async upsertOrg(org: Organization): Promise<void> {

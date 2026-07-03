@@ -2,7 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Membership } from './schema';
 
-/** Store-agnostic contract — implemented by MembershipRepo (Dynamo) and MembershipPgRepo. */
+/** Store-agnostic contract — implemented by MembershipDynamoRepo and MembershipPgRepo; MembershipRepo (factory.ts) routes between them. */
 export interface IMembershipRepo {
     getMembership(orgId: string, userId: string): Promise<Membership | null>;
     listOrgMembers(orgId: string): Promise<Membership[]>;
@@ -15,7 +15,7 @@ export interface IMembershipRepo {
     upsertMembership(membership: Membership): Promise<void>;
 }
 
-export class MembershipRepo implements IMembershipRepo {
+export class MembershipDynamoRepo implements IMembershipRepo {
     constructor(private ddb: IDdb) {}
 
     async upsertMembership(membership: Membership): Promise<void> {

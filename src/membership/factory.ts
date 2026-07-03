@@ -1,8 +1,9 @@
 import { resolveRoute, type Route } from '../dataBackend';
 import { mirrorWrite, shadowRead } from '../dualWrite';
 import { ddb } from '../ddbClient';
+import type { IDdb } from '../ddbPort';
 import { Membership } from './schema';
-import { MembershipRepo, type IMembershipRepo } from './repo';
+import { MembershipDynamoRepo, type IMembershipRepo } from './repo';
 import { MembershipPgRepo } from './repo.pg';
 
 const DOMAIN = 'identity' as const;
@@ -100,9 +101,16 @@ export class RoutingMembershipRepo implements IMembershipRepo {
     }
 }
 
+/** Drop-in continuation — `new MembershipRepo(ddb)` now routes; see user/factory.ts. */
+export class MembershipRepo extends RoutingMembershipRepo {
+    constructor(dynamoDb: IDdb) {
+        super(new MembershipDynamoRepo(dynamoDb), new MembershipPgRepo());
+    }
+}
+
 let singleton: IMembershipRepo | undefined;
 
 export function getMembershipRepo(): IMembershipRepo {
-    if (!singleton) singleton = new RoutingMembershipRepo(new MembershipRepo(ddb), new MembershipPgRepo());
+    if (!singleton) singleton = new MembershipRepo(ddb);
     return singleton;
 }

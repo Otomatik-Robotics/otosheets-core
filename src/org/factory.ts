@@ -1,8 +1,9 @@
 import { resolveRoute, type Route } from '../dataBackend';
 import { mirrorWrite, shadowRead } from '../dualWrite';
 import { ddb } from '../ddbClient';
+import type { IDdb } from '../ddbPort';
 import { Organization } from './schema';
-import { OrgRepo, type IOrgRepo } from './repo';
+import { OrgDynamoRepo, type IOrgRepo } from './repo';
 import { OrgPgRepo } from './repo.pg';
 
 const DOMAIN = 'identity' as const;
@@ -70,9 +71,16 @@ export class RoutingOrgRepo implements IOrgRepo {
     }
 }
 
+/** Drop-in continuation — `new OrgRepo(ddb)` now routes; see user/factory.ts. */
+export class OrgRepo extends RoutingOrgRepo {
+    constructor(dynamoDb: IDdb) {
+        super(new OrgDynamoRepo(dynamoDb), new OrgPgRepo());
+    }
+}
+
 let singleton: IOrgRepo | undefined;
 
 export function getOrgRepo(): IOrgRepo {
-    if (!singleton) singleton = new RoutingOrgRepo(new OrgRepo(ddb), new OrgPgRepo());
+    if (!singleton) singleton = new OrgRepo(ddb);
     return singleton;
 }

@@ -1,8 +1,9 @@
 import { resolveRoute, type Route } from '../dataBackend';
 import { mirrorWrite, shadowRead } from '../dualWrite';
 import { ddb } from '../ddbClient';
+import type { IDdb } from '../ddbPort';
 import { User } from './schema';
-import { UserRepo, type IUserRepo } from './repo';
+import { UserDynamoRepo, type IUserRepo } from './repo';
 import { UserPgRepo } from './repo.pg';
 
 const DOMAIN = 'identity' as const;
@@ -92,10 +93,22 @@ export class RoutingUserRepo implements IUserRepo {
     }
 }
 
+/**
+ * Drop-in continuation of the historical class: `new UserRepo(ddb)` keeps its
+ * name and constructor signature everywhere (plan §5.3) but now routes per
+ * the identity cutover flag. Behaviour is byte-identical while the flag is
+ * 'dynamo' (the default).
+ */
+export class UserRepo extends RoutingUserRepo {
+    constructor(dynamoDb: IDdb) {
+        super(new UserDynamoRepo(dynamoDb), new UserPgRepo());
+    }
+}
+
 let singleton: IUserRepo | undefined;
 
 /** Preferred accessor — handlers get flag-routed behaviour transparently. */
 export function getUserRepo(): IUserRepo {
-    if (!singleton) singleton = new RoutingUserRepo(new UserRepo(ddb), new UserPgRepo());
+    if (!singleton) singleton = new UserRepo(ddb);
     return singleton;
 }

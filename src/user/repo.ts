@@ -2,7 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { User } from './schema';
 
-/** Store-agnostic contract — implemented by UserRepo (Dynamo) and UserPgRepo. */
+/** Store-agnostic contract — implemented by UserDynamoRepo and UserPgRepo; UserRepo (factory.ts) routes between them. */
 export interface IUserRepo {
     getUser(userId: string): Promise<User | null>;
     getUserByEmail(email: string): Promise<User | null>;
@@ -14,7 +14,7 @@ export interface IUserRepo {
     upsertUser(user: User): Promise<void>;
 }
 
-export class UserRepo implements IUserRepo {
+export class UserDynamoRepo implements IUserRepo {
     constructor(private ddb: IDdb) {}
 
     async upsertUser(user: User): Promise<void> {

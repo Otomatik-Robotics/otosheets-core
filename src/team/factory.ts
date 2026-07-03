@@ -1,8 +1,9 @@
 import { resolveRoute, type Route } from '../dataBackend';
 import { mirrorWrite, shadowRead } from '../dualWrite';
 import { ddb } from '../ddbClient';
+import type { IDdb } from '../ddbPort';
 import { Team } from './schema';
-import { TeamRepo, type ITeamRepo } from './repo';
+import { TeamDynamoRepo, type ITeamRepo } from './repo';
 import { TeamPgRepo } from './repo.pg';
 
 const DOMAIN = 'identity' as const;
@@ -79,9 +80,16 @@ export class RoutingTeamRepo implements ITeamRepo {
     }
 }
 
+/** Drop-in continuation — `new TeamRepo(ddb)` now routes; see user/factory.ts. */
+export class TeamRepo extends RoutingTeamRepo {
+    constructor(dynamoDb: IDdb) {
+        super(new TeamDynamoRepo(dynamoDb), new TeamPgRepo());
+    }
+}
+
 let singleton: ITeamRepo | undefined;
 
 export function getTeamRepo(): ITeamRepo {
-    if (!singleton) singleton = new RoutingTeamRepo(new TeamRepo(ddb), new TeamPgRepo());
+    if (!singleton) singleton = new TeamRepo(ddb);
     return singleton;
 }

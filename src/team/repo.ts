@@ -2,7 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Team } from './schema';
 
-/** Store-agnostic contract — implemented by TeamRepo (Dynamo) and TeamPgRepo. */
+/** Store-agnostic contract — implemented by TeamDynamoRepo and TeamPgRepo; TeamRepo (factory.ts) routes between them. */
 export interface ITeamRepo {
     getTeam(orgId: string, teamId: string): Promise<Team | null>;
     listTeams(orgId: string): Promise<Team[]>;
@@ -13,7 +13,7 @@ export interface ITeamRepo {
     upsertTeam(team: Team): Promise<void>;
 }
 
-export class TeamRepo implements ITeamRepo {
+export class TeamDynamoRepo implements ITeamRepo {
     constructor(private ddb: IDdb) {}
 
     async upsertTeam(team: Team): Promise<void> {
