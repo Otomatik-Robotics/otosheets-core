@@ -11,7 +11,7 @@ export const SITE_TEMPLATE_IDS = [
     'night-shift',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
-export type SiteTemplateId = z.infer<typeof SiteTemplateIdSchema>;
+export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
 
 export const SiteCustomDomainSchema = z.object({
     domain: z.string(),

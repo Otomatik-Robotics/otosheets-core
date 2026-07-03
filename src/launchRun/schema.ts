@@ -22,12 +22,12 @@ export const LAUNCH_STEP_IDS = [
     'first_posts_scheduled',
 ] as const;
 export const LaunchStepIdSchema = z.enum(LAUNCH_STEP_IDS);
-export type LaunchStepId = z.infer<typeof LaunchStepIdSchema>;
+export type LaunchStepId = (typeof LAUNCH_STEP_IDS)[number];
 
 export const LaunchStepStatusSchema = z.enum([
     'pending', 'running', 'waiting_user', 'done', 'failed', 'skipped',
 ]);
-export type LaunchStepStatus = z.infer<typeof LaunchStepStatusSchema>;
+export type LaunchStepStatus = 'pending' | 'running' | 'waiting_user' | 'done' | 'failed' | 'skipped';
 
 export const LaunchStepStateSchema = z.object({
     status: LaunchStepStatusSchema,
@@ -53,7 +53,7 @@ export const LAUNCH_ASSET_KINDS = [
     'receipt', 'invoice_doc', 'logo', 'work_photo', 'team_photo', 'document', 'text_note',
 ] as const;
 export const LaunchAssetKindSchema = z.enum(LAUNCH_ASSET_KINDS);
-export type LaunchAssetKind = z.infer<typeof LaunchAssetKindSchema>;
+export type LaunchAssetKind = (typeof LAUNCH_ASSET_KINDS)[number];
 
 export const LaunchAssetSchema = z.object({
     /** Deterministic: derived from the S3 key — makes ingest idempotent. */
