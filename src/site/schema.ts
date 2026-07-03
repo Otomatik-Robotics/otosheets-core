@@ -45,6 +45,8 @@ export const SiteSchema = z.object({
     customDomains: z.array(SiteCustomDomainSchema).default([]),
     /** Sparse GSI attribute — present (= DOMAINS_PENDING_KEY) only while a domain is in flight. */
     domainsPendingKey: z.string().optional(),
+    /** Random token gating draft previews (?preview=1&t=...). Only handed out by the authed sites API. */
+    previewToken: z.string().optional(),
     publishedAt: z.string().optional(),
     createdAt: z.string(),
     updatedAt: z.string(),
