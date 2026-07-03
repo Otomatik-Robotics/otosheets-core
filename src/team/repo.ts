@@ -2,8 +2,23 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Team } from './schema';
 
-export class TeamRepo {
+/** Store-agnostic contract — implemented by TeamRepo (Dynamo) and TeamPgRepo. */
+export interface ITeamRepo {
+    getTeam(orgId: string, teamId: string): Promise<Team | null>;
+    listTeams(orgId: string): Promise<Team[]>;
+    createTeam(orgId: string, teamId: string, data: Record<string, any>): Promise<void>;
+    updateTeam(orgId: string, teamId: string, updates: Record<string, any>): Promise<void>;
+    deleteTeam(orgId: string, teamId: string): Promise<void>;
+    /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
+    upsertTeam(team: Team): Promise<void>;
+}
+
+export class TeamRepo implements ITeamRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertTeam(team: Team): Promise<void> {
+        await this.ddb.put(Tables.TEAMS, team);
+    }
 
     async getTeam(orgId: string, teamId: string): Promise<Team | null> {
         const { Item } = await this.ddb.getItem(Tables.TEAMS, { orgId, teamId });

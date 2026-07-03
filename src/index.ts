@@ -8,6 +8,18 @@ export * from './keys';
 // Pre-built singleton (consumers can also construct their own DynamoDbAdapter)
 export { ddb, docClient } from './ddbClient';
 
+// Postgres migration machinery — docs/POSTGRES_MIGRATION_PLAN.md
+export { dataBackend, resolveRoute, resetDataBackendCache } from './dataBackend';
+export type { DataBackendState, DataDomain, Route } from './dataBackend';
+export { mirrorWrite, shadowRead, normalizeForDiff } from './dualWrite';
+export type { RepairMessage } from './dualWrite';
+export { getPg, setPgForTesting } from './pg/client';
+export type { PgDb } from './pg/client';
+export { runMigrations, migrationsDir, splitStatements } from './pg/migrate';
+export type { SqlExecutor } from './pg/migrate';
+export * from './pg/cursor';
+export * as pgSchema from './pg/schema';
+
 // Entity modules — each exports Repo class + Zod schema + inferred type
 export * from './user';
 export * from './org';

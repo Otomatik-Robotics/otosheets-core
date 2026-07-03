@@ -2,8 +2,22 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Organization } from './schema';
 
-export class OrgRepo {
+/** Store-agnostic contract — implemented by OrgRepo (Dynamo) and OrgPgRepo. */
+export interface IOrgRepo {
+    getOrg(orgId: string): Promise<Organization | null>;
+    getOrgBySlug(slug: string): Promise<Organization | null>;
+    createOrg(orgId: string, data: Record<string, any>): Promise<void>;
+    updateOrg(orgId: string, updates: Record<string, any>): Promise<void>;
+    /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
+    upsertOrg(org: Organization): Promise<void>;
+}
+
+export class OrgRepo implements IOrgRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertOrg(org: Organization): Promise<void> {
+        await this.ddb.put(Tables.ORGANIZATIONS, org);
+    }
 
     async getOrg(orgId: string): Promise<Organization | null> {
         const { Item } = await this.ddb.getItem(Tables.ORGANIZATIONS, { orgId });

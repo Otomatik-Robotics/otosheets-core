@@ -2,8 +2,24 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { User } from './schema';
 
-export class UserRepo {
+/** Store-agnostic contract — implemented by UserRepo (Dynamo) and UserPgRepo. */
+export interface IUserRepo {
+    getUser(userId: string): Promise<User | null>;
+    getUserByEmail(email: string): Promise<User | null>;
+    getUserBySlug(slug: string): Promise<User | null>;
+    createUser(userId: string, data: Record<string, any>): Promise<void>;
+    updateUser(userId: string, updates: Record<string, any>): Promise<void>;
+    deleteUser(userId: string): Promise<void>;
+    /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
+    upsertUser(user: User): Promise<void>;
+}
+
+export class UserRepo implements IUserRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertUser(user: User): Promise<void> {
+        await this.ddb.put(Tables.USERS, user);
+    }
 
     async getUser(userId: string): Promise<User | null> {
         const { Item } = await this.ddb.getItem(Tables.USERS, { userId });

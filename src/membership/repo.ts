@@ -2,8 +2,25 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Membership } from './schema';
 
-export class MembershipRepo {
+/** Store-agnostic contract — implemented by MembershipRepo (Dynamo) and MembershipPgRepo. */
+export interface IMembershipRepo {
+    getMembership(orgId: string, userId: string): Promise<Membership | null>;
+    listOrgMembers(orgId: string): Promise<Membership[]>;
+    listUserOrgs(userId: string): Promise<Membership[]>;
+    getByInviteToken(token: string): Promise<Membership | null>;
+    createMembership(orgId: string, userId: string, data: Record<string, any>): Promise<void>;
+    updateMembership(orgId: string, userId: string, updates: Record<string, any>): Promise<void>;
+    deleteMembership(orgId: string, userId: string): Promise<void>;
+    /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
+    upsertMembership(membership: Membership): Promise<void>;
+}
+
+export class MembershipRepo implements IMembershipRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertMembership(membership: Membership): Promise<void> {
+        await this.ddb.put(Tables.MEMBERSHIPS, membership);
+    }
 
     async getMembership(orgId: string, userId: string): Promise<Membership | null> {
         const { Item } = await this.ddb.getItem(Tables.MEMBERSHIPS, { orgId, userId });
