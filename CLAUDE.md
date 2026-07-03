@@ -87,7 +87,23 @@ otosheets-core/
 
 ---
 
-## 4. Adding a New Repo Method
+## 4. Idempotency (Hard Requirement)
+
+This repo is the data layer — it is the last line of defence against duplicate writes. Every trigger upstream (webhooks, crons, SQS, S3, client retries, agent replays) is at-least-once, so repo methods must reject duplicates rather than trusting callers to be perfect. Full platform standard: `docs/standards/07-idempotency.md` in the `otosheets` monorepo.
+
+Rules for all repo code:
+
+1. **Creates use `ConditionExpression: 'attribute_not_exists(sk)'`** (or the table's PK). Callers treat `ConditionalCheckFailedException` as "already done", not as an error. Unconditional `put()` on create paths silently overwrites on retry (e.g. can clobber `stripeCustomerId` during onboarding).
+2. **Ledger/financial writes use `transactWrite` with a conditional dedupe item** — reference: `src/voiceCredit/repo.ts` `credit()`, which keys the ledger entry on the Stripe session ID with `attribute_not_exists(sk)` and updates the balance with atomic `ADD` in the same transaction. A replayed webhook cancels the whole transaction cleanly.
+3. **Counters and balances use atomic `ADD` expressions** — never read-modify-write, which double-counts under replay and loses updates under concurrency.
+4. **Prefer caller-supplied deterministic IDs** for records minted from external triggers (Stripe payment intent ID, S3 key, `templateId#period`) over generating a fresh ULID inside the repo — random IDs make every replay look like a new record and defeat dedupe.
+5. Any new method reachable from a webhook, queue, or cron must answer: **"What happens if this is called twice with the same arguments?"** The correct answer is a failed condition or a no-op, never a second record.
+
+Known violations (e.g. `invoicePayment/repo.ts` `recordPayment`, `org/repo.ts` `createOrg`, `membership/repo.ts` `createMembership`) are tracked in the monorepo's `docs/IDEMPOTENCY_AUDIT_2026-07-03.md` — fix them when touched.
+
+---
+
+## 5. Adding a New Repo Method
 
 1. Open `src/{entity}/repo.ts`
 2. Add the method to the repo class
@@ -100,7 +116,7 @@ otosheets-core/
 
 ---
 
-## 5. Adding a New Entity / Repo
+## 6. Adding a New Entity / Repo
 
 1. Create `src/{entity}/schema.ts` with Zod schema + TypeScript type
 2. Create `src/{entity}/repo.ts` with the repository class (accepts `IDdb` in constructor)
@@ -111,7 +127,7 @@ otosheets-core/
 
 ---
 
-## 6. Adding a New Endpoint — This Repo's Role
+## 7. Adding a New Endpoint — This Repo's Role
 
 This repo is **Step 1** in the cross-repo endpoint process. It provides the DynamoDB data layer.
 
@@ -139,7 +155,7 @@ See `otosheets/CLAUDE.md` § "New API Endpoint (Full Cross-Repo Process)" for th
 
 ---
 
-## 7. Commands
+## 8. Commands
 
 ```bash
 npm install
@@ -150,7 +166,7 @@ Push source only. `dist/` is gitignored — consumers build it on install via th
 
 ---
 
-## 8. Consumers
+## 9. Consumers
 
 | Repo | How it's installed | What it uses |
 |------|--------------------|-------------|
