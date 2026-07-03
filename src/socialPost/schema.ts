@@ -8,6 +8,10 @@ export const SocialPostSchema = z.object({
     postId: z.string(),
     platform: z.enum(['facebook', 'instagram']),
     caption: z.string(),
+    /** Meta page the post publishes to (from the connected user's metaPages). */
+    pageId: z.string().optional(),
+    /** Instagram business account id (required for platform=instagram). */
+    igUserId: z.string().optional(),
     /** S3 key in the storefront assets bucket (IG requires media; FB optional). */
     mediaKey: z.string().optional(),
     scheduledAt: z.string(),
@@ -28,6 +32,8 @@ export interface SocialPost {
     postId: string;
     platform: 'facebook' | 'instagram';
     caption: string;
+    pageId?: string;
+    igUserId?: string;
     mediaKey?: string;
     scheduledAt: string;
     status: 'draft' | 'queued' | 'published' | 'failed';
