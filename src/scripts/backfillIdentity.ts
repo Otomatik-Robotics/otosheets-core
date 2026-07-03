@@ -20,6 +20,8 @@
  */
 import { ddb } from '../ddbClient';
 import { Tables } from '../tables';
+import { toRow } from '../pg/rows';
+import * as pgSchema from '../pg/schema';
 import { UserPgRepo } from '../user/repo.pg';
 import { OrgPgRepo } from '../org/repo.pg';
 import { MembershipPgRepo } from '../membership/repo.pg';
@@ -45,13 +47,18 @@ async function backfillTable(
     tableName: string,
     keyOf: (item: Record<string, any>) => string,
     upsert: (item: Record<string, any>) => Promise<void>,
+    validate: (item: Record<string, any>) => void,
     reportOnly: boolean,
 ): Promise<Counts> {
     const counts: Counts = { scanned: 0, upserted: 0, skipped: [] };
     for await (const item of scanAll(tableName)) {
         counts.scanned++;
         try {
-            if (!reportOnly) await upsert(item);
+            // Report mode runs the same DTO→row transform (schema-drift and
+            // NOT-NULL checks) without touching Postgres — no DATABASE_URL
+            // needed, only Dynamo read access.
+            if (reportOnly) validate(item);
+            else await upsert(item);
             counts.upserted++;
         } catch (err: any) {
             counts.skipped.push({ reason: err?.message ?? String(err), key: keyOf(item) });
@@ -63,19 +70,37 @@ async function backfillTable(
     return counts;
 }
 
+function requireFields(item: Record<string, any>, fields: string[]): void {
+    const missing = fields.filter((f) => item[f] === undefined || item[f] === null || item[f] === '');
+    if (missing.length > 0) throw new Error(`missing required (NOT NULL) field(s): ${missing.join(', ')}`);
+}
+
 export async function backfillIdentity(reportOnly: boolean): Promise<void> {
     const userPg = new UserPgRepo();
     const orgPg = new OrgPgRepo();
     const membershipPg = new MembershipPgRepo();
     const teamPg = new TeamPgRepo();
 
+    // Offline validators mirroring the pg NOT NULL constraints + strict toRow
+    // (unknown-attribute) checks — what WRITE mode would hit, minus the DB.
+    const validators = {
+        org: (i: Record<string, any>) => { requireFields(i, ['orgId', 'name']); toRow(pgSchema.orgs, i, 'org'); },
+        user: (i: Record<string, any>) => { requireFields(i, ['userId', 'email', 'fullName']); toRow(pgSchema.users, i, 'user'); },
+        membership: (i: Record<string, any>) => { requireFields(i, ['orgId', 'userId', 'role']); toRow(pgSchema.memberships, i, 'membership'); },
+        team: (i: Record<string, any>) => {
+            requireFields(i, ['orgId', 'teamId', 'name']);
+            const { memberIds, ...rest } = i;
+            toRow(pgSchema.teams, rest, 'team');
+        },
+    };
+
     console.log(`identity backfill starting (${reportOnly ? 'REPORT-ONLY' : 'WRITE'} mode)`);
     // FK order: orgs and users first, then memberships, then teams.
     const results = {
-        orgs: await backfillTable('orgs', Tables.ORGANIZATIONS, (i) => i.orgId, (i) => orgPg.upsertOrg(i as any), reportOnly),
-        users: await backfillTable('users', Tables.USERS, (i) => i.userId, (i) => userPg.upsertUser(i as any), reportOnly),
-        memberships: await backfillTable('memberships', Tables.MEMBERSHIPS, (i) => `${i.orgId}/${i.userId}`, (i) => membershipPg.upsertMembership(i as any), reportOnly),
-        teams: await backfillTable('teams', Tables.TEAMS, (i) => `${i.orgId}/${i.teamId}`, (i) => teamPg.upsertTeam(i as any), reportOnly),
+        orgs: await backfillTable('orgs', Tables.ORGANIZATIONS, (i) => i.orgId, (i) => orgPg.upsertOrg(i as any), validators.org, reportOnly),
+        users: await backfillTable('users', Tables.USERS, (i) => i.userId, (i) => userPg.upsertUser(i as any), validators.user, reportOnly),
+        memberships: await backfillTable('memberships', Tables.MEMBERSHIPS, (i) => `${i.orgId}/${i.userId}`, (i) => membershipPg.upsertMembership(i as any), validators.membership, reportOnly),
+        teams: await backfillTable('teams', Tables.TEAMS, (i) => `${i.orgId}/${i.teamId}`, (i) => teamPg.upsertTeam(i as any), validators.team, reportOnly),
     };
 
     const totalSkipped = Object.values(results).reduce((n, c) => n + c.skipped.length, 0);
