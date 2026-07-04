@@ -3,6 +3,12 @@ import { z } from 'zod';
 export const OrgStoredSchema = z.object({
     orgId: z.string(),
     name: z.string(),
+    /** Org flavour (e.g. advisor practice vs business) — drift-report addition 2026-07-04 */
+    type: z.string().nullish(),
+    stripeOnboardingStatus: z.string().nullish(),
+    advisorFacts: z.any().nullish(),
+    customRoles: z.any().nullish(),
+    timezone: z.string().nullish(),
     legalName: z.string().nullish(),
     tradeName: z.string().nullish(),
     slug: z.string().nullish(),

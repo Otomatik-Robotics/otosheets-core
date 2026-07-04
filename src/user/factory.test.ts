@@ -31,16 +31,12 @@ let dynamo: InMemoryUserRepo;
 let routing: RoutingUserRepo;
 
 beforeAll(async () => {
-    const pglite = new PGlite();
+    const { pg_trgm } = await import('@electric-sql/pglite/contrib/pg_trgm');
+    const pglite = new PGlite({ extensions: { pg_trgm } });
     const executor: SqlExecutor = {
         exec: async (s: string) => ({ rows: (await pglite.query(s)).rows as any[] }),
     };
-    // Identity tables only — skip 0000 (pg_trgm isn't needed here)
-    const fs = await import('fs');
-    const path = await import('path');
-    const { splitStatements, migrationsDir } = await import('../pg/migrate');
-    const sql = fs.readFileSync(path.join(migrationsDir(), '0001_identity.sql'), 'utf-8');
-    for (const stmt of splitStatements(sql)) await executor.exec(stmt);
+    await runMigrations(executor);
 
     pg = new UserPgRepo(drizzle(pglite) as unknown as PgDb);
 });

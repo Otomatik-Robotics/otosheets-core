@@ -18,6 +18,8 @@ export const MembershipStoredSchema = z.object({
     joinedAt: z.string().nullish(),
     availability: z.any().nullish(),
     calendarConnection: z.any().nullish(),
+    /** @deprecated legacy single-team name; superseded by the teams junction */
+    team: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });

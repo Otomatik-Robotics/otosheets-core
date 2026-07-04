@@ -6,6 +6,7 @@ export const UserStoredSchema = z.object({
     firstName: z.string().nullish(),
     lastName: z.string().nullish(),
     fullName: z.string(),
+    userType: z.string().nullish(),
     businessName: z.string().nullish(),
     tradeName: z.string().nullish(),
     slug: z.string().nullish(),

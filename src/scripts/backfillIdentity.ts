@@ -85,7 +85,7 @@ export async function backfillIdentity(reportOnly: boolean): Promise<void> {
     // (unknown-attribute) checks — what WRITE mode would hit, minus the DB.
     const validators = {
         org: (i: Record<string, any>) => { requireFields(i, ['orgId', 'name']); toRow(pgSchema.orgs, i, 'org'); },
-        user: (i: Record<string, any>) => { requireFields(i, ['userId', 'email', 'fullName']); toRow(pgSchema.users, i, 'user'); },
+        user: (i: Record<string, any>) => { requireFields(i, ['userId', 'email']); toRow(pgSchema.users, i, 'user'); },
         membership: (i: Record<string, any>) => { requireFields(i, ['orgId', 'userId', 'role']); toRow(pgSchema.memberships, i, 'membership'); },
         team: (i: Record<string, any>) => {
             requireFields(i, ['orgId', 'teamId', 'name']);

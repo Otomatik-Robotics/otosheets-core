@@ -25,7 +25,10 @@ export const users = pgTable('users', {
     email: text('email').notNull(),
     firstName: text('first_name'),
     lastName: text('last_name'),
-    fullName: text('full_name').notNull(),
+    // Nullable in the DB: federated sign-ups can exist before a name is set
+    // (found by the backfill report). The write contract still expects it.
+    fullName: text('full_name'),
+    userType: text('user_type'),
     businessName: text('business_name'),
     tradeName: text('trade_name'),
     slug: text('slug'),
@@ -57,6 +60,12 @@ export const users = pgTable('users', {
 export const orgs = pgTable('orgs', {
     orgId: text('org_id').primaryKey(),
     name: text('name').notNull(),
+    // Live attributes surfaced by the backfill drift report (2026-07-04):
+    type: text('type'),                                        // e.g. advisor practice vs business org
+    stripeOnboardingStatus: text('stripe_onboarding_status'),
+    advisorFacts: jsonb('advisor_facts'),
+    customRoles: jsonb('custom_roles'),
+    timezone: text('timezone'),
     legalName: text('legal_name'),
     tradeName: text('trade_name'),
     slug: text('slug'),
@@ -104,6 +113,8 @@ export const memberships = pgTable('memberships', {
     joinedAt: timestamp('joined_at', { withTimezone: true, mode: 'date' }),
     availability: jsonb('availability'),
     calendarConnection: jsonb('calendar_connection'),
+    /** @deprecated legacy single-team name; superseded by team_members. Kept for lossless migration; drop at contract step. */
+    team: text('team'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
