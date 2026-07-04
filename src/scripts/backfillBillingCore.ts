@@ -85,7 +85,7 @@ export async function backfillBillingCore(reportOnly: boolean): Promise<void> {
     console.log(`billing-core backfill (${reportOnly ? 'REPORT-ONLY' : 'WRITE'})`);
     // FK order: clients (→orgs) first, then invoices (→clients), then payments (→invoices).
     const results = {
-        clients: await run('clients', Tables.CLIENTS, (i) => i.clientId, vClient, (i) => { const { contacts, ...rest } = i; return clientPg.createClient(i.orgId, i.clientId, { ...rest, contacts }); }, reportOnly),
+        clients: await run('clients', Tables.CLIENTS, (i) => i.clientId, vClient, (i) => clientPg.upsertClient(i), reportOnly),
         invoices: await run('invoices', Tables.INVOICES, (i) => i.invoiceId, vInvoice, (i) => invoicePg.upsertInvoice(i), reportOnly),
         payments: await run('payments', Tables.INVOICE_PAYMENTS, (i) => i.paymentId ?? i.sk, vPayment, (i) => paymentPg.upsertPayment(i), reportOnly),
     };

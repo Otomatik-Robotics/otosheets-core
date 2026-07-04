@@ -26,7 +26,10 @@ function toPaymentRow(p: Record<string, any>): Record<string, any> {
     const row: Record<string, any> = {};
     for (const [k, v] of Object.entries(rest)) {
         if (v === undefined) continue;
-        row[k] = v === null ? null : (NUMERIC_KEYS.includes(k) && typeof v === 'number' ? String(v) : v);
+        if (v === null) { row[k] = null; }
+        else if (k === 'createdAt' && typeof v === 'string') row[k] = new Date(v); // timestamptz
+        else if (NUMERIC_KEYS.includes(k) && typeof v === 'number') row[k] = String(v);
+        else row[k] = v;
     }
     return row;
 }

@@ -43,6 +43,9 @@ function toInvoiceDto(row: any, items: LineItemRow[]): Invoice {
     return dto as Invoice;
 }
 
+// timestamptz columns need a Date, not the ISO string Dynamo stores.
+const TS_KEYS = new Set(['createdAt', 'updatedAt']);
+
 /** Invoice DTO → column row (strips sk/dueDateSk/items/clientSnapshot; derives owner_id). */
 function toInvoiceRow(invoice: Record<string, any>): Record<string, any> {
     const { sk, dueDateSk, items, clientSnapshot, lineItems, ...rest } = invoice;
@@ -52,7 +55,10 @@ function toInvoiceRow(invoice: Record<string, any>): Record<string, any> {
     if (lineItems !== undefined) row.legacyLineItems = lineItems ?? null;
     for (const [k, v] of Object.entries(rest)) {
         if (v === undefined) continue;
-        row[k] = v === null ? null : (NUMERIC_KEYS.includes(k) && typeof v === 'number' ? String(v) : v);
+        if (v === null) { row[k] = null; }
+        else if (TS_KEYS.has(k) && typeof v === 'string') row[k] = new Date(v);
+        else if (NUMERIC_KEYS.includes(k) && typeof v === 'number') row[k] = String(v);
+        else row[k] = v;
     }
     return row;
 }

@@ -101,6 +101,19 @@ describe('InvoicePgRepo', () => {
         const page = await inv().listOrgInvoicesPaginated({ orgId: 'org_1', limit: 50 });
         expect(page.items.map(i => i.invoiceId)).not.toContain('inv_pl');
     });
+
+    it('upsertInvoice accepts a Dynamo-shaped DTO with ISO-string timestamps (mirror/backfill path)', async () => {
+        // Regression: custom row mapper must convert string createdAt/updatedAt to Date.
+        await inv().upsertInvoice({
+            invoiceId: 'inv_mirror', orgId: 'org_1', sk: 'user_1#inv_mirror', createdBy: 'user_1',
+            invoiceNumber: 'MIR-1', status: 'SENT', totalAmount: 42,
+            createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-02T00:00:00.000Z',
+            items: [{ id: 'm1', description: 'x', quantity: 1, unitPrice: 42, total: 42, sortOrder: 0 }],
+        } as any);
+        const i = await inv().getInvoice('org_1', 'user_1', 'inv_mirror');
+        expect(i!.totalAmount).toBe(42);
+        expect(i!.createdAt).toBe('2026-07-01T00:00:00.000Z');
+    });
 });
 
 describe('InvoicePaymentPgRepo', () => {
