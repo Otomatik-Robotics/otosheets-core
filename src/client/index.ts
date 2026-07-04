@@ -1,3 +1,4 @@
 export * from './schema';
 export * from './repo';
-export { ddb, docClient } from '../ddbClient';
+export * from './repo.pg';
+export * from './factory';

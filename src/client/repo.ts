@@ -3,8 +3,39 @@ import { Tables } from '../tables';
 import { Client } from './schema';
 import { PaginatedResult } from '../types';
 
-export class ClientRepo {
+export interface ListClientsPaginatedParams {
+    orgId: string;
+    limit?: number;
+    exclusiveStartKey?: Record<string, any>;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+}
+
+/** Store-agnostic contract — implemented by ClientDynamoRepo and ClientPgRepo; ClientRepo (factory.ts) routes. */
+export interface IClientRepo {
+    getClient(orgId: string, clientId: string): Promise<Client | null>;
+    listClients(orgId: string): Promise<Client[]>;
+    listClientsPaginated(params: ListClientsPaginatedParams): Promise<PaginatedResult<Client>>;
+    findClientByEmail(orgId: string, email: string): Promise<Client | null>;
+    countClients(orgId: string): Promise<number>;
+    listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string; name: string }>>;
+    createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;
+    updateClient(orgId: string, clientId: string, updates: Record<string, any>): Promise<void>;
+    batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]>;
+    deleteClient(orgId: string, clientId: string): Promise<void>;
+    incrementPaymentLinkUsage(orgId: string, clientId: string): Promise<void>;
+    getTopByUsage(orgId: string, limit?: number): Promise<Client[]>;
+    /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
+    upsertClient(client: Client): Promise<void>;
+}
+
+export class ClientDynamoRepo implements IClientRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertClient(client: Client): Promise<void> {
+        await this.ddb.put(Tables.CLIENTS, client);
+    }
 
     async getClient(orgId: string, clientId: string): Promise<Client | null> {
         const { Item } = await this.ddb.getItem(Tables.CLIENTS, { orgId, clientId });

@@ -70,6 +70,30 @@ export function toKeyset(token: string, idAttribute: string): KeysetCursor | nul
 }
 
 /**
+ * Interpret a repo's `exclusiveStartKey` (the already-decoded object the
+ * handler passes, not a token string) as a keyset cursor. Accepts a pg-minted
+ * `{ v:2, createdAt, id }` or a Dynamo LastEvaluatedKey `{ createdAt, <idAttr>|sk }`
+ * — so an infinite-scroll session survives a flip mid-scroll (§6.4). Returns
+ * null when unusable (caller starts from page 1).
+ */
+export function keysetFromStartKey(startKey: any, idAttribute: string): KeysetCursor | null {
+    if (!startKey || typeof startKey !== 'object') return null;
+    if (startKey.v === 2 && startKey.createdAt && startKey.id) {
+        return { createdAt: startKey.createdAt, id: startKey.id };
+    }
+    const createdAt = startKey.createdAt;
+    let id: string | undefined = startKey[idAttribute];
+    if (!id && typeof startKey.sk === 'string') id = startKey.sk.split('#').pop();
+    if (typeof createdAt === 'string' && typeof id === 'string' && id) return { createdAt, id };
+    return null;
+}
+
+/** The `lastEvaluatedKey` a pg repo returns so the handler's Base64 wrap round-trips. */
+export function keysetStartKey(cursor: KeysetCursor): Record<string, any> {
+    return { v: 2, createdAt: cursor.createdAt, id: cursor.id };
+}
+
+/**
  * Interpret any token as a Dynamo LastEvaluatedKey (rollback direction).
  * `buildLek` reconstructs the store-specific key shape from a keyset cursor.
  */
