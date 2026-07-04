@@ -11,6 +11,16 @@ export interface TxnPage {
     nextToken: string | null;
 }
 
+/** One row of the per-category tally. All money is integer cents. */
+export interface CategorySummaryRow {
+    category: string;
+    inCents: number;   // credits (money in)
+    outCents: number;  // debits (money out, positive number)
+    gstCents: number;
+    txnCount: number;
+    confirmedCount: number;
+}
+
 export interface TxnListOptions {
     limit?: number;
     nextToken?: string | null;
@@ -199,6 +209,54 @@ export class StatementTransactionPgRepo {
         const rows = result.rows ?? result;
         if (!rows || rows.length === 0) return { found: false, hadReviewReason: false };
         return { found: true, hadReviewReason: rows[0].prev_review_reason != null };
+    }
+
+    /**
+     * Per-category tallies — the reporting payoff of the born-in-Postgres
+     * decision. Signed cents split into money-in/money-out so income and
+     * expense categories tally correctly; scoped by user OR org (advisor).
+     */
+    async summariseByCategory(scope: {
+        userId?: string;
+        organizationId?: string;
+        fy?: string;
+        statementId?: string;
+    }): Promise<CategorySummaryRow[]> {
+        if (!scope.userId && !scope.organizationId) {
+            throw new Error('summariseByCategory requires a userId or organizationId scope');
+        }
+        const conditions: any[] = [];
+        if (scope.userId) conditions.push(eq(statementTransactions.userId, scope.userId));
+        if (scope.statementId) conditions.push(eq(statementTransactions.statementId, scope.statementId));
+        if (scope.fy) conditions.push(eq(statementTransactions.fy, scope.fy));
+        if (scope.organizationId) {
+            conditions.push(sql`${statementTransactions.statementId} IN (
+                SELECT statement_id FROM statements WHERE organization_id = ${scope.organizationId}
+            )`);
+        }
+        const rows = await this.db.select({
+            category: sql<string>`COALESCE(${statementTransactions.category}, 'UNCATEGORIZED')`,
+            inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            outCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            gstCents: sql<number>`COALESCE(SUM(COALESCE(${statementTransactions.gstAmountCents}, 0)), 0)::bigint`,
+            txnCount: sql<number>`COUNT(*)::int`,
+            confirmedCount: sql<number>`SUM(CASE WHEN ${statementTransactions.reviewStatus} = 'CONFIRMED' THEN 1 ELSE 0 END)::int`,
+        })
+            .from(statementTransactions)
+            .where(and(...conditions))
+            .groupBy(sql`COALESCE(${statementTransactions.category}, 'UNCATEGORIZED')`)
+            .orderBy(sql`GREATEST(
+                COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)
+            ) DESC`);
+        return rows.map((r) => ({
+            category: r.category,
+            inCents: Number(r.inCents),
+            outCents: Number(r.outCents),
+            gstCents: Number(r.gstCents),
+            txnCount: Number(r.txnCount),
+            confirmedCount: Number(r.confirmedCount),
+        }));
     }
 
     /** Wipe a statement's transactions (reprocess path — FK cascade covers deletes). */

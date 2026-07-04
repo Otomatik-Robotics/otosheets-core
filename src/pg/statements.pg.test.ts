@@ -171,6 +171,45 @@ describe('StatementTransactionPgRepo', () => {
         expect(items).toHaveLength(0); // cascaded
     });
 
+    it('tallies categories with income/expense split', async () => {
+        const stmtRepo = new StatementPgRepo(db);
+        const sid = '01STATEMENTSUMMARY00000001';
+        await stmtRepo.createStatement({
+            statementId: sid, userId: 'tally_user', fy: '2025-26',
+            organizationId: 'org_tally', s3Key: `statements/tally_user/2025-26/${sid}.pdf`,
+        });
+        const t = (seq: number, overrides: Record<string, any>) => ({
+            ...txn(seq, overrides), txnId: statementTxnId(sid, seq), statementId: sid, userId: 'tally_user',
+        });
+        await repo().upsertTransactions([
+            t(1, { category: 'SALES', amountCents: 250000, direction: 'CREDIT', gstAmountCents: 22727, reviewStatus: 'CONFIRMED' }),
+            t(2, { category: 'SALES', amountCents: 110000, direction: 'CREDIT', gstAmountCents: 10000 }),
+            t(3, { category: 'OTHER_INCOME', amountCents: 1500, direction: 'CREDIT' }),
+            t(4, { category: 'OFFICE', amountCents: -18000, gstAmountCents: 1636 }),
+            t(5, { category: 'OFFICE', amountCents: -2000 }),
+            t(6, { category: null }),
+        ]);
+
+        const summary = await repo().summariseByCategory({ userId: 'tally_user', fy: '2025-26' });
+        const byCat = Object.fromEntries(summary.map((r) => [r.category, r]));
+
+        expect(byCat.SALES).toMatchObject({
+            inCents: 360000, outCents: 0, gstCents: 32727, txnCount: 2, confirmedCount: 1,
+        });
+        expect(byCat.OFFICE).toMatchObject({ inCents: 0, outCents: 20000, gstCents: 1636, txnCount: 2 });
+        expect(byCat.OTHER_INCOME).toMatchObject({ inCents: 1500, outCents: 0 });
+        expect(byCat.UNCATEGORIZED.txnCount).toBe(1); // null category folded in
+        expect(summary[0].category).toBe('SALES');    // biggest magnitude first
+
+        // Org scope (advisor path) sees the same rows; statement scope filters
+        const orgSummary = await repo().summariseByCategory({ organizationId: 'org_tally' });
+        expect(orgSummary.find((r) => r.category === 'SALES')?.inCents).toBe(360000);
+        const single = await repo().summariseByCategory({ userId: 'tally_user', statementId: sid });
+        expect(single.reduce((s, r) => s + r.txnCount, 0)).toBe(6);
+
+        await stmtRepo.deleteStatement('tally_user', sid);
+    });
+
     it('claims prospect rows into a real user', async () => {
         const stmtRepo = new StatementPgRepo(db);
         const prospect = 'prospect#p1';
