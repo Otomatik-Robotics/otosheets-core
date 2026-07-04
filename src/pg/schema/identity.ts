@@ -72,7 +72,11 @@ export const orgs = pgTable('orgs', {
     tradeName: text('trade_name'),
     slug: text('slug'),
     abn: text('abn'),
-    gstRegistered: boolean('gst_registered').notNull().default(false),
+    // Nullable, no default: DynamoDB stores this sparsely (top-level
+    // gstRegistered is vestigial — real GST lives in bookingSettings), so a
+    // NOT NULL DEFAULT would materialize `false` where Dynamo has nothing and
+    // generate perpetual shadow-read diffs. Preserve Dynamo's absence.
+    gstRegistered: boolean('gst_registered'),
     currency: text('currency').notNull().default('AUD'),
     taxRate: numeric('tax_rate', { precision: 6, scale: 3 }),
     logoUrl: text('logo_url'),
