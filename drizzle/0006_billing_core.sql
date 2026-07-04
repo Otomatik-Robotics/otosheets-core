@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS invoice_payments (
     payment_id  TEXT PRIMARY KEY,
     invoice_id  TEXT NOT NULL REFERENCES invoices(invoice_id) ON DELETE CASCADE,
     org_id      TEXT NOT NULL REFERENCES orgs(org_id),
-    user_id     TEXT NOT NULL,
+    user_id     TEXT,
     amount      NUMERIC(12,2) NOT NULL,
     method      TEXT NOT NULL,
     paid_date   TEXT,

@@ -39,3 +39,32 @@ export function getPg(): PgDb {
 export function setPgForTesting(db: PgDb | undefined): void {
     singleton = db;
 }
+
+/**
+ * Transaction-capable client (plan §5.4). The `neon-http` driver is
+ * single-statement and cannot run `db.transaction()`; repos that need atomic
+ * multi-statement writes (invoice + line items, payment + invoice update) use
+ * this WebSocket-backed drizzle instance over the pooler URL instead. PGlite
+ * (tests) supports `.transaction()` natively, so tests inject via setPgTxForTesting.
+ */
+let txSingleton: PgDb | undefined;
+
+export function getPgTx(): PgDb {
+    if (!txSingleton) {
+        const url = process.env.DATABASE_POOLER_URL || process.env.DATABASE_URL;
+        if (!url) {
+            throw new Error('DATABASE_URL/DATABASE_POOLER_URL not set — a transactional pg write was attempted before the Neon secret resolved');
+        }
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Pool } = require('@neondatabase/serverless');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { drizzle } = require('drizzle-orm/neon-serverless');
+        txSingleton = drizzle(new Pool({ connectionString: url })) as PgDb;
+    }
+    return txSingleton;
+}
+
+/** Test seam — inject a transaction-capable (PGlite) instance, or reset. */
+export function setPgTxForTesting(db: PgDb | undefined): void {
+    txSingleton = db;
+}

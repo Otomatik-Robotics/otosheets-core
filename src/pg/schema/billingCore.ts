@@ -123,7 +123,7 @@ export const invoicePayments = pgTable('invoice_payments', {
     paymentId: text('payment_id').primaryKey(),
     invoiceId: text('invoice_id').notNull().references(() => invoices.invoiceId, { onDelete: 'cascade' }),
     orgId: text('org_id').notNull().references(() => orgs.orgId),
-    userId: text('user_id').notNull(),
+    userId: text('user_id'),                   // nullable: Dynamo stores it sparsely
     amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
     method: text('method').notNull(),
     date: text('paid_date'),                   // DTO `date` — exact string

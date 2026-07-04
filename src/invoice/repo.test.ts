@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { InvoiceRepo } from './repo';
+import { InvoiceDynamoRepo } from './repo';
 import { sk } from '../keys';
 import type { IDdb } from '../ddbPort';
 
@@ -43,12 +43,12 @@ function makeStubDdb() {
 }
 
 describe('InvoiceRepo.findInvoiceByIdInOrg', () => {
-    let repo: InvoiceRepo;
+    let repo: InvoiceDynamoRepo;
     let store: Map<string, any>;
 
     beforeEach(() => {
         const stub = makeStubDdb();
-        repo = new InvoiceRepo(stub.ddb);
+        repo = new InvoiceDynamoRepo(stub.ddb);
         store = stub.store;
     });
 
@@ -85,12 +85,12 @@ describe('InvoiceRepo.findInvoiceByIdInOrg', () => {
 });
 
 describe('InvoiceRepo.updateInvoice', () => {
-    let repo: InvoiceRepo;
+    let repo: InvoiceDynamoRepo;
     let store: Map<string, any>;
 
     beforeEach(() => {
         const stub = makeStubDdb();
-        repo = new InvoiceRepo(stub.ddb);
+        repo = new InvoiceDynamoRepo(stub.ddb);
         store = stub.store;
     });
 
