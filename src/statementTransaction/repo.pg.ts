@@ -221,6 +221,9 @@ export class StatementTransactionPgRepo {
         organizationId?: string;
         fy?: string;
         statementId?: string;
+        /** Inclusive YYYY-MM-DD bounds on txn_date — BAS month/quarter/year views. */
+        dateFrom?: string;
+        dateTo?: string;
     }): Promise<CategorySummaryRow[]> {
         if (!scope.userId && !scope.organizationId) {
             throw new Error('summariseByCategory requires a userId or organizationId scope');
@@ -229,6 +232,8 @@ export class StatementTransactionPgRepo {
         if (scope.userId) conditions.push(eq(statementTransactions.userId, scope.userId));
         if (scope.statementId) conditions.push(eq(statementTransactions.statementId, scope.statementId));
         if (scope.fy) conditions.push(eq(statementTransactions.fy, scope.fy));
+        if (scope.dateFrom) conditions.push(sql`${statementTransactions.txnDate} >= ${scope.dateFrom}::date`);
+        if (scope.dateTo) conditions.push(sql`${statementTransactions.txnDate} <= ${scope.dateTo}::date`);
         if (scope.organizationId) {
             conditions.push(sql`${statementTransactions.statementId} IN (
                 SELECT statement_id FROM statements WHERE organization_id = ${scope.organizationId}

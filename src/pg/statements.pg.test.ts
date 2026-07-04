@@ -207,6 +207,16 @@ describe('StatementTransactionPgRepo', () => {
         const single = await repo().summariseByCategory({ userId: 'tally_user', statementId: sid });
         expect(single.reduce((s, r) => s + r.txnCount, 0)).toBe(6);
 
+        // Date-range scope (BAS period views) — txn dates are 2025-08-0X
+        const inPeriod = await repo().summariseByCategory({
+            userId: 'tally_user', dateFrom: '2025-07-01', dateTo: '2025-09-30',
+        });
+        expect(inPeriod.reduce((s, r) => s + r.txnCount, 0)).toBe(6);
+        const outOfPeriod = await repo().summariseByCategory({
+            userId: 'tally_user', dateFrom: '2025-10-01', dateTo: '2025-12-31',
+        });
+        expect(outOfPeriod).toHaveLength(0);
+
         await stmtRepo.deleteStatement('tally_user', sid);
     });
 
