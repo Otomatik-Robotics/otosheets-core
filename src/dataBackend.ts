@@ -11,7 +11,7 @@
  * are synchronous-fast after the first call per TTL window.
  */
 export type DataBackendState = 'dynamo' | 'dual_dynamo' | 'dual_pg' | 'pg';
-export type DataDomain = 'identity' | 'billing-core' | 'leads' | 'ops';
+export type DataDomain = 'identity' | 'billing-core' | 'leads' | 'ops' | 'voice-credit';
 
 const VALID_STATES: ReadonlySet<string> = new Set(['dynamo', 'dual_dynamo', 'dual_pg', 'pg']);
 const CACHE_TTL_MS = 60_000;

@@ -21,8 +21,24 @@ function isDuplicateLedgerWrite(err: any): boolean {
     return reasons.some((r) => r?.Code === 'ConditionalCheckFailed');
 }
 
-export class VoiceCreditRepo {
+/** Store-agnostic contract — VoiceCreditDynamoRepo + VoiceCreditPgRepo; VoiceCreditRepo (factory) routes. */
+export interface IVoiceCreditRepo {
+    getBalance(orgId: string): Promise<number>;
+    credit(orgId: string, amountCents: number, meta: { stripeSessionId: string; description?: string }): Promise<number>;
+    debit(orgId: string, amountCents: number, meta: { callId: string; description?: string }): Promise<number>;
+    grantMonthlyAllowance(orgId: string, period: string, amountCents: number): Promise<number>;
+    getPeriodGrant(orgId: string, period: string): Promise<number>;
+    listLedger(orgId: string, limit?: number): Promise<VoiceCreditLedgerEntry[]>;
+    /** Backfill/mirror: copy a Dynamo WALLET# item (balance or ledger) into the store. */
+    upsertWalletItem(item: Record<string, any>): Promise<void>;
+}
+
+export class VoiceCreditDynamoRepo implements IVoiceCreditRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertWalletItem(item: Record<string, any>): Promise<void> {
+        await this.ddb.put(Tables.CALL_RECORDS, item);
+    }
 
     /** Current balance in AUD cents (0 if the org has never had credit). */
     async getBalance(orgId: string): Promise<number> {

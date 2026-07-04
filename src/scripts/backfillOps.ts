@@ -29,7 +29,8 @@ async function run(label: string, table: string, keyOf: (i: any) => string, vali
     return c;
 }
 function req(i: any, f: string[]): void { const m = f.filter(k => i[k] === undefined || i[k] === null || i[k] === ''); if (m.length) throw new Error(`missing required (NOT NULL): ${m.join(', ')}`); }
-const skStrip = (i: any, extra: string[] = []) => { const { sk, ...rest } = i; return { ...rest, ownerId: ownerFromSk(i) }; };
+// Mirror the repos' STRIP: drop the storage-only sk and any derived *Sk keys.
+const skStrip = (i: any) => { const { sk, dateSk, scheduledDateSk, ...rest } = i; return { ...rest, ownerId: ownerFromSk(i) }; };
 
 export async function backfillOps(reportOnly: boolean): Promise<void> {
     const jobPg = new JobPgRepo(), tePg = new TimeEntryPgRepo(), pbPg = new PriceBookPgRepo(), rcPg = new ReceiptPgRepo(), trPg = new TripPgRepo();
