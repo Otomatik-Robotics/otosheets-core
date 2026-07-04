@@ -51,9 +51,22 @@ export class ClientPgRepo implements IClientRepo {
     }
 
     private toClient(row: any, contacts: ClientContact[]): Client {
-        const dto = fromRow<Client>(row, NUMERIC_KEYS);
-        if (contacts.length > 0) (dto as any).contacts = contacts;
-        return dto;
+        const dto = fromRow<Client>(row, NUMERIC_KEYS) as any;
+        // Remap the preserved legacy single-contact columns back to their DTO aliases.
+        if (dto.legacyContact != null) dto.contact = dto.legacyContact;
+        if (dto.legacyContactPerson != null) dto.contactPerson = dto.legacyContactPerson;
+        delete dto.legacyContact;
+        delete dto.legacyContactPerson;
+        if (contacts.length > 0) dto.contacts = contacts;
+        return dto as Client;
+    }
+
+    /** Map deprecated DTO `contact`/`contactPerson` onto the legacy columns before toRow. */
+    private splitLegacy(data: Record<string, any>): Record<string, any> {
+        const { contact, contactPerson, ...rest } = data;
+        if (contact !== undefined) rest.legacyContact = contact ?? null;
+        if (contactPerson !== undefined) rest.legacyContactPerson = contactPerson ?? null;
+        return rest;
     }
 
     async getClient(orgId: string, clientId: string): Promise<Client | null> {
@@ -131,7 +144,7 @@ export class ClientPgRepo implements IClientRepo {
     async createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void> {
         const now = new Date();
         const { contacts, ...rest } = data;
-        await this.db.insert(clients).values({ ...toRow(clients, rest, 'client'), orgId, clientId, createdAt: now, updatedAt: now } as any);
+        await this.db.insert(clients).values({ ...toRow(clients, this.splitLegacy(rest), 'client'), orgId, clientId, createdAt: now, updatedAt: now } as any);
         if (Array.isArray(contacts)) await this.replaceContacts(clientId, contacts);
     }
 
@@ -139,7 +152,7 @@ export class ClientPgRepo implements IClientRepo {
         const { contacts, ...rest } = updates;
         if (Object.keys(rest).length > 0) {
             await this.db.update(clients)
-                .set({ ...toRow(clients, rest, 'client'), updatedAt: new Date() } as any)
+                .set({ ...toRow(clients, this.splitLegacy(rest), 'client'), updatedAt: new Date() } as any)
                 .where(and(eq(clients.orgId, orgId), eq(clients.clientId, clientId)));
         }
         if (contacts !== undefined) await this.replaceContacts(clientId, contacts);
@@ -175,7 +188,7 @@ export class ClientPgRepo implements IClientRepo {
     /** Full-entity mirror upsert — last-writer-wins on updatedAt (§6.1). */
     async upsertClient(client: Client): Promise<void> {
         const { contacts, ...rest } = client as Record<string, any>;
-        const row = toRow(clients, rest, 'client');
+        const row = toRow(clients, this.splitLegacy(rest), 'client');
         await this.db.insert(clients).values(row as any)
             .onConflictDoUpdate({ target: clients.clientId, set: row as any, setWhere: sql`${clients.updatedAt} <= excluded.updated_at` });
         await this.replaceContacts(client.clientId, (contacts as ClientContact[]) ?? []);

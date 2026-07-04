@@ -36,6 +36,10 @@ export const InvoiceBaseSchema = z.object({
     linkExpiresAt: z.string().nullish(),
     fromTimeEntries: z.any().nullish(),
     followUpSequenceId: z.string().nullish(),
+    voidReason: z.string().nullish(),
+    revisedFrom: z.string().nullish(),
+    /** @deprecated legacy alias of `items` — preserved for lossless migration */
+    lineItems: z.any().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });

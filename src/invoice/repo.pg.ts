@@ -8,8 +8,9 @@ import type { IInvoiceRepo, ListInvoicesPaginatedParams } from './repo';
 
 // Money/number columns returned as strings by pg → numbers in the DTO.
 const NUMERIC_KEYS = ['subtotal', 'gstAmount', 'totalAmount', 'taxRate', 'paidAmount'];
-// Columns that exist in pg but are NOT part of the Dynamo Invoice DTO.
-const PG_ONLY = new Set(['ownerId', 'legacyClientSnapshot']);
+// Columns that exist in pg but are NOT surfaced directly under the same DTO key
+// (ownerId is internal; the legacy_* columns are remapped to their DTO aliases).
+const PG_ONLY = new Set(['ownerId', 'legacyClientSnapshot', 'legacyLineItems']);
 
 interface LineItemRow {
     lineItemId: string; description: string;
@@ -37,16 +38,18 @@ function toInvoiceDto(row: any, items: LineItemRow[]): Invoice {
     dto.sk = `${row.ownerId}#${row.invoiceId}`;
     if (row.dueDate) dto.dueDateSk = `${row.dueDate}#${row.invoiceId}`;
     if (row.legacyClientSnapshot != null) dto.clientSnapshot = row.legacyClientSnapshot;
+    if (row.legacyLineItems != null) dto.lineItems = row.legacyLineItems;
     dto.items = items.map(itemFromRow);
     return dto as Invoice;
 }
 
 /** Invoice DTO → column row (strips sk/dueDateSk/items/clientSnapshot; derives owner_id). */
 function toInvoiceRow(invoice: Record<string, any>): Record<string, any> {
-    const { sk, dueDateSk, items, clientSnapshot, ...rest } = invoice;
+    const { sk, dueDateSk, items, clientSnapshot, lineItems, ...rest } = invoice;
     const ownerId = typeof sk === 'string' ? sk.split('#')[0] : (rest.createdBy ?? '');
     const row: Record<string, any> = { ownerId };
     if (clientSnapshot !== undefined) row.legacyClientSnapshot = clientSnapshot ?? null;
+    if (lineItems !== undefined) row.legacyLineItems = lineItems ?? null;
     for (const [k, v] of Object.entries(rest)) {
         if (v === undefined) continue;
         row[k] = v === null ? null : (NUMERIC_KEYS.includes(k) && typeof v === 'number' ? String(v) : v);
