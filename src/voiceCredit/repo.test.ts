@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { VoiceCreditRepo } from './repo';
+import { VoiceCreditDynamoRepo } from './repo';
 import type { IDdb } from '../ddbPort';
 
 /**
@@ -77,10 +77,10 @@ function makeStubDdb() {
 }
 
 describe('VoiceCreditRepo', () => {
-    let repo: VoiceCreditRepo;
+    let repo: VoiceCreditDynamoRepo;
 
     beforeEach(() => {
-        repo = new VoiceCreditRepo(makeStubDdb().ddb);
+        repo = new VoiceCreditDynamoRepo(makeStubDdb().ddb);
     });
 
     it('getBalance defaults to 0', async () => {
