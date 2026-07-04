@@ -53,15 +53,19 @@ export class SocialPostRepo {
         return (Items as SocialPost[]) ?? [];
     }
 
-    async updateDraft(orgId: string, postId: string, updates: { caption?: string; scheduledAt?: string; mediaKey?: string }): Promise<void> {
+    async updateDraft(orgId: string, postId: string, updates: { caption?: string; scheduledAt?: string; mediaKey?: string; platform?: 'facebook' | 'instagram' }): Promise<void> {
         const sets: string[] = ['updatedAt = :now'];
+        const names: Record<string, string> = {};
         const values: Record<string, any> = { ':now': new Date().toISOString() };
         if (updates.caption !== undefined) { sets.push('caption = :c'); values[':c'] = updates.caption; }
         if (updates.scheduledAt !== undefined) { sets.push('scheduledAt = :s'); values[':s'] = updates.scheduledAt; }
         if (updates.mediaKey !== undefined) { sets.push('mediaKey = :m'); values[':m'] = updates.mediaKey; }
+        // `platform` is a reserved-ish name in some contexts — alias it to be safe.
+        if (updates.platform !== undefined) { sets.push('#pf = :pf'); names['#pf'] = 'platform'; values[':pf'] = updates.platform; }
         await this.ddb.update(Tables.SOCIAL_POSTS, { orgId, postId }, {
             UpdateExpression: `SET ${sets.join(', ')}`,
             ConditionExpression: 'attribute_exists(orgId)',
+            ...(Object.keys(names).length ? { ExpressionAttributeNames: names } : {}),
             ExpressionAttributeValues: values,
         });
     }
