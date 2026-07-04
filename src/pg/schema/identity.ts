@@ -53,7 +53,9 @@ export const users = pgTable('users', {
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
-    uniqueIndex('users_email_uq').on(t.email),
+    // Plain index, NOT unique: Cognito allows the same email across identity
+    // providers (federated + native are distinct subs) — found in dev data.
+    index('users_email_idx').on(t.email),
     uniqueIndex('users_slug_uq').on(t.slug).where(sqlNotNull(t.slug)),
 ]);
 
