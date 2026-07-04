@@ -57,10 +57,27 @@ export const SiteSchema = z.object({
     domainsPendingKey: z.string().optional(),
     /** Random token gating draft previews (?preview=1&t=...). Only handed out by the authed sites API. */
     previewToken: z.string().optional(),
+    /** Site asset library, keyed by deterministic assetId (idempotent ingest).
+     *  logo → branding; work/team photos → portfolio; documents → business material. */
+    assets: z.record(z.string(), z.object({
+        assetId: z.string(),
+        key: z.string(),
+        kind: z.enum(['logo', 'work_photo', 'team_photo', 'document']),
+        alt: z.string().optional(),
+        createdAt: z.string(),
+    })).optional(),
     publishedAt: z.string().optional(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });
+export interface SiteAsset {
+    assetId: string;
+    key: string;
+    kind: 'logo' | 'work_photo' | 'team_photo' | 'document';
+    alt?: string;
+    createdAt: string;
+}
+
 export interface Site {
     host: string;
     type: 'site' | 'alias';
@@ -74,6 +91,7 @@ export interface Site {
     customDomains: SiteCustomDomain[];
     domainsPendingKey?: string;
     previewToken?: string;
+    assets?: Record<string, SiteAsset>;
     publishedAt?: string;
     createdAt: string;
     updatedAt: string;

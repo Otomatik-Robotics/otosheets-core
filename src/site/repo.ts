@@ -1,6 +1,6 @@
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
-import { DOMAINS_PENDING_KEY, Site, SiteCustomDomain, SiteTemplateId } from './schema';
+import { DOMAINS_PENDING_KEY, Site, SiteAsset, SiteCustomDomain, SiteTemplateId } from './schema';
 
 export class SiteRepo {
     constructor(private ddb: IDdb) {}
@@ -101,6 +101,34 @@ export class SiteRepo {
             params.UpdateExpression = 'SET customDomains = :d, updatedAt = :now REMOVE domainsPendingKey';
         }
         await this.ddb.update(Tables.SITES, { host }, params);
+    }
+
+    /** Idempotent asset upsert — assetId is deterministic (derived from the S3 key). */
+    async putAsset(host: string, asset: SiteAsset): Promise<void> {
+        await this.ddb.update(Tables.SITES, { host }, {
+            UpdateExpression: 'SET assets = if_not_exists(assets, :empty), updatedAt = :now',
+            ConditionExpression: 'attribute_exists(host)',
+            ExpressionAttributeValues: { ':empty': {}, ':now': new Date().toISOString() },
+        });
+        await this.ddb.update(Tables.SITES, { host }, {
+            UpdateExpression: 'SET assets.#aid = if_not_exists(assets.#aid, :a), updatedAt = :now',
+            ConditionExpression: 'attribute_exists(host)',
+            ExpressionAttributeNames: { '#aid': asset.assetId },
+            ExpressionAttributeValues: { ':a': asset, ':now': new Date().toISOString() },
+        });
+    }
+
+    async removeAsset(host: string, assetId: string): Promise<void> {
+        try {
+            await this.ddb.update(Tables.SITES, { host }, {
+                UpdateExpression: 'REMOVE assets.#aid SET updatedAt = :now',
+                ConditionExpression: 'attribute_exists(host)',
+                ExpressionAttributeNames: { '#aid': assetId },
+                ExpressionAttributeValues: { ':now': new Date().toISOString() },
+            });
+        } catch (err: any) {
+            if (err?.name !== 'ConditionalCheckFailedException') throw err;
+        }
     }
 
     /** DNS-watcher scan surface: only sites with an in-flight custom domain (sparse GSI). */
