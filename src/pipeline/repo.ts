@@ -2,8 +2,24 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { Pipeline } from './schema';
 
-export class PipelineRepo {
+/** Store-agnostic contract — PipelineDynamoRepo + PipelinePgRepo; PipelineRepo (factory) routes. */
+export interface IPipelineRepo {
+    getPipeline(orgId: string, pipelineId: string): Promise<Pipeline | null>;
+    listPipelines(orgId: string): Promise<Pipeline[]>;
+    scanAllPipelines(): Promise<Pipeline[]>;
+    getDefaultPipeline(orgId: string): Promise<Pipeline | null>;
+    createPipeline(orgId: string, pipelineId: string, data: Record<string, any>): Promise<void>;
+    updatePipeline(orgId: string, pipelineId: string, updates: Record<string, any>): Promise<void>;
+    deletePipeline(orgId: string, pipelineId: string): Promise<void>;
+    upsertPipeline(pipeline: Pipeline): Promise<void>;
+}
+
+export class PipelineDynamoRepo implements IPipelineRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertPipeline(pipeline: Pipeline): Promise<void> {
+        await this.ddb.put(Tables.PIPELINES, pipeline);
+    }
 
     async getPipeline(orgId: string, pipelineId: string): Promise<Pipeline | null> {
         const { Item } = await this.ddb.getItem(Tables.PIPELINES, { orgId, pipelineId });

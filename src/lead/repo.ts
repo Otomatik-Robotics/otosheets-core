@@ -4,8 +4,30 @@ import { sk, orgStageKey } from '../keys';
 import { Lead } from './schema';
 import { PaginatedResult } from '../types';
 
-export class LeadRepo {
+/** Store-agnostic contract — LeadDynamoRepo + LeadPgRepo; LeadRepo (factory) routes. */
+export interface ILeadRepo {
+    getLead(orgId: string, userId: string, leadId: string): Promise<Lead | null>;
+    findLeadByIdInOrg(orgId: string, leadId: string): Promise<{ lead: Lead; ownerId: string } | null>;
+    listUserLeads(orgId: string, userId: string): Promise<Lead[]>;
+    listAllOrgLeads(orgId: string): Promise<Lead[]>;
+    listOrgLeadsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>>;
+    findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
+    countOrgLeads(orgId: string): Promise<number>;
+    listRecentLeads(orgId: string, since: string): Promise<Lead[]>;
+    findLeadsByPipelineId(orgId: string, pipelineId: string): Promise<Lead[]>;
+    listLeadsByStage(orgId: string, stage: string): Promise<Lead[]>;
+    createLead(orgId: string, userId: string, leadId: string, data: Record<string, any>): Promise<void>;
+    updateLead(orgId: string, userId: string, leadId: string, updates: Record<string, any>): Promise<void>;
+    deleteLead(orgId: string, userId: string, leadId: string): Promise<void>;
+    upsertLead(lead: Lead): Promise<void>;
+}
+
+export class LeadDynamoRepo implements ILeadRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertLead(lead: Lead): Promise<void> {
+        await this.ddb.put(Tables.LEADS, lead);
+    }
 
     async getLead(orgId: string, userId: string, leadId: string): Promise<Lead | null> {
         const { Item } = await this.ddb.getItem(Tables.LEADS, { orgId, sk: sk(userId, leadId) });

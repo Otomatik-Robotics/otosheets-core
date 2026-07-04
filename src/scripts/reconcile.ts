@@ -30,6 +30,11 @@ const DOMAINS: Record<string, Check[]> = {
         { label: 'invoices', dynamoTable: Tables.INVOICES, pgTable: 'invoices', sumAttr: 'totalAmount', pgSumCol: 'total_amount' },
         { label: 'payments', dynamoTable: Tables.INVOICE_PAYMENTS, pgTable: 'invoice_payments', sumAttr: 'amount', pgSumCol: 'amount' },
     ],
+    leads: [
+        { label: 'pipelines', dynamoTable: Tables.PIPELINES, pgTable: 'pipelines' },
+        { label: 'leads', dynamoTable: Tables.LEADS, pgTable: 'leads' },
+        { label: 'bookings', dynamoTable: Tables.BOOKINGS, pgTable: 'bookings' },
+    ],
 };
 
 async function dynamoCountAndSum(tableName: string, sumAttr?: string): Promise<{ count: number; sum: number }> {

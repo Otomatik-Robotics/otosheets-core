@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { LeadRepo } from './repo';
+import { LeadDynamoRepo } from './repo';
 import { sk } from '../keys';
 import type { IDdb } from '../ddbPort';
 
@@ -24,12 +24,12 @@ function makeStubDdb() {
 }
 
 describe('LeadRepo.deleteLead', () => {
-    let repo: LeadRepo;
+    let repo: LeadDynamoRepo;
     let store: Map<string, any>;
 
     beforeEach(() => {
         const stub = makeStubDdb();
-        repo = new LeadRepo(stub.ddb);
+        repo = new LeadDynamoRepo(stub.ddb);
         store = stub.store;
     });
 
