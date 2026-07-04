@@ -28,7 +28,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tinago95/otosheets-core.git"
+    "url": "git+https://github.com/Otomatik-Robotics/otosheets-core.git"
   },
   "license": "UNLICENSED",
   "peerDependencies": {

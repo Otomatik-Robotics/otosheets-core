@@ -111,7 +111,7 @@ Known violations (e.g. `invoicePayment/repo.ts` `recordPayment`, `org/repo.ts` `
 4. Export from `src/{entity}/index.ts` if not already
 5. `npm run build`
 6. Push, grab the commit hash
-7. Update consumers' `package.json`: `"@otosheets/core": "github:Tinago95/otosheets-core#<new-hash>"`
+7. Update consumers' `package.json`: `"@otosheets/core": "github:Otomatik-Robotics/otosheets-core#<new-hash>"`
 8. `npm install` in each consumer
 
 ---
@@ -170,6 +170,6 @@ Push source only. `dist/` is gitignored — consumers build it on install via th
 
 | Repo | How it's installed | What it uses |
 |------|--------------------|-------------|
-| `otosheets-app-backend` | `"@otosheets/core": "github:Tinago95/otosheets-core#<hash>"` | All repos — handler business logic |
+| `otosheets-app-backend` | `"@otosheets/core": "github:Otomatik-Robotics/otosheets-core#<hash>"` | All repos — handler business logic |
 | `otosheets-agents` | Same | WorkflowRunRepo, WorkflowApprovalRepo |
 | `otosheets-external-mcp` | Same | UserRepo (Gmail OAuth token lookup) |
