@@ -36,6 +36,7 @@ export * from './timeEntry';
 export * from './receipt';
 export * from './trip';
 export * from './statement';
+export * from './statementTransaction';
 export * from './lead';
 export * from './pipeline';
 export * from './pipelineInsights';
