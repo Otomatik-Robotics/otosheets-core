@@ -107,6 +107,15 @@ describe('StatementPgRepo', () => {
         expect(await repo().adjustNeedsReviewCount(STMT, -1)).toBe(0); // floor
         expect(await repo().adjustNeedsReviewCount('missing', -1)).toBeNull();
     });
+
+    it('stores calendar dates as plain YYYY-MM-DD, never a shifted timestamp', async () => {
+        await repo().setProcessingResult(STMT, {
+            status: 'VERIFIED', periodStart: '2025-08-02', periodEnd: '2025-08-31',
+        });
+        const stmt = await repo().getStatement(USER, STMT);
+        expect(stmt!.periodStart).toBe('2025-08-02'); // not '2025-08-01T16:00:00.000Z'
+        expect(stmt!.periodEnd).toBe('2025-08-31');
+    });
 });
 
 describe('StatementTransactionPgRepo', () => {
@@ -119,6 +128,7 @@ describe('StatementTransactionPgRepo', () => {
         expect(items).toHaveLength(3);
         expect(items[0].description).toBe('Vendor 1 v2'); // overwrite, not duplicate
         expect(items[0].bbox).toEqual({ x: 0.1, y: 0.1, w: 0.8, h: 0.02 });
+        expect(items[0].txnDate).toMatch(/^\d{4}-\d{2}-\d{2}$/); // plain date, no time/tz
     });
 
     it('paginates by seq and filters reviewOnly', async () => {

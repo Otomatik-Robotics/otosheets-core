@@ -31,8 +31,10 @@ export const statements = pgTable('statements', {
     textractJobId: text('textract_job_id'),
     bankName: text('bank_name'),
     accountLast4: text('account_last4'),
-    periodStart: date('period_start'),
-    periodEnd: date('period_end'),
+    // mode 'string' keeps calendar dates as plain 'YYYY-MM-DD' — never round-tripped
+    // through a JS Date, which would shift them across the local timezone.
+    periodStart: date('period_start', { mode: 'string' }),
+    periodEnd: date('period_end', { mode: 'string' }),
     verification: jsonb('verification'),
     txnCount: integer('txn_count'),
     needsReviewCount: integer('needs_review_count'),
@@ -61,7 +63,7 @@ export const statementTransactions = pgTable('statement_transactions', {
     bbox: jsonb('bbox'),                                      // normalised 0–1 {x,y,w,h}; null for CSV sources
     rawText: text('raw_text'),
     // parsed facts (immutable extraction layer; integer cents)
-    txnDate: date('txn_date'),
+    txnDate: date('txn_date', { mode: 'string' }), // 'YYYY-MM-DD', timezone-free
     description: text('description'),
     amountCents: bigint('amount_cents', { mode: 'number' }).notNull(), // signed: credit +, debit −
     direction: text('direction'),                             // DEBIT | CREDIT
