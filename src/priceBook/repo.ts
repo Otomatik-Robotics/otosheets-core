@@ -2,8 +2,22 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { PriceBookItem } from './schema';
 
-export class PriceBookRepo {
+/** Store-agnostic contract — PriceBookDynamoRepo + PriceBookPgRepo; PriceBookRepo (factory) routes. */
+export interface IPriceBookRepo {
+    getItem(orgId: string, itemId: string): Promise<PriceBookItem | null>;
+    listItems(orgId: string): Promise<PriceBookItem[]>;
+    putItem(item: PriceBookItem): Promise<void>;
+    putItems(items: PriceBookItem[]): Promise<void>;
+    deleteItem(orgId: string, itemId: string): Promise<void>;
+    upsertPriceBookItem(item: PriceBookItem): Promise<void>;
+}
+
+export class PriceBookDynamoRepo implements IPriceBookRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertPriceBookItem(item: PriceBookItem): Promise<void> {
+        await this.ddb.put(Tables.PRICE_BOOK, item);
+    }
 
     async getItem(orgId: string, itemId: string): Promise<PriceBookItem | null> {
         const { Item } = await this.ddb.getItem(Tables.PRICE_BOOK, { orgId, itemId });

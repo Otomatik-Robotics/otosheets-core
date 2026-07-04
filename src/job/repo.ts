@@ -4,8 +4,26 @@ import { sk, dateSk } from '../keys';
 import { Job } from './schema';
 import { PaginatedResult } from '../types';
 
-export class JobRepo {
+/** Store-agnostic contract — JobDynamoRepo + JobPgRepo; JobRepo (factory) routes. */
+export interface IJobRepo {
+    getJob(orgId: string, userId: string, jobId: string): Promise<Job | null>;
+    findJobByIdInOrg(orgId: string, jobId: string): Promise<{ job: Job; ownerId: string } | null>;
+    listUserJobs(orgId: string, userId: string): Promise<Job[]>;
+    listAllOrgJobs(orgId: string): Promise<Job[]>;
+    listJobsByDate(orgId: string, from: string, to: string): Promise<Job[]>;
+    listOrgJobsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; clientId?: string; search?: string; memberId?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Job>>;
+    createJob(orgId: string, userId: string, jobId: string, data: Record<string, any>): Promise<void>;
+    updateJob(orgId: string, userId: string, jobId: string, updates: Record<string, any>): Promise<void>;
+    deleteJob(orgId: string, userId: string, jobId: string): Promise<void>;
+    upsertJob(job: Job): Promise<void>;
+}
+
+export class JobDynamoRepo implements IJobRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertJob(job: Job): Promise<void> {
+        await this.ddb.put(Tables.JOBS, job);
+    }
 
     async getJob(orgId: string, userId: string, jobId: string): Promise<Job | null> {
         const { Item } = await this.ddb.getItem(Tables.JOBS, { orgId, sk: sk(userId, jobId) });

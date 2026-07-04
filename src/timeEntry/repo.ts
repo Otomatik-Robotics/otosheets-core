@@ -4,8 +4,25 @@ import { sk } from '../keys';
 import { TimeEntry } from './schema';
 import { PaginatedResult } from '../types';
 
-export class TimeEntryRepo {
+/** Store-agnostic contract — TimeEntryDynamoRepo + TimeEntryPgRepo; TimeEntryRepo (factory) routes. */
+export interface ITimeEntryRepo {
+    getTimeEntry(orgId: string, userId: string, timeEntryId: string): Promise<TimeEntry | null>;
+    findTimeEntryByIdInOrg(orgId: string, timeEntryId: string): Promise<{ timeEntry: TimeEntry; ownerId: string } | null>;
+    listAllOrgTimeEntries(orgId: string): Promise<TimeEntry[]>;
+    listTimeEntries(orgId: string, userId: string, opts?: { uninvoiced?: boolean }): Promise<TimeEntry[]>;
+    listOrgTimeEntriesPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string; }): Promise<PaginatedResult<TimeEntry>>;
+    createTimeEntry(orgId: string, userId: string, timeEntryId: string, data: Record<string, any>): Promise<void>;
+    updateTimeEntry(orgId: string, userId: string, timeEntryId: string, updates: Record<string, any>): Promise<void>;
+    deleteTimeEntry(orgId: string, userId: string, timeEntryId: string): Promise<void>;
+    upsertTimeEntry(timeEntry: TimeEntry): Promise<void>;
+}
+
+export class TimeEntryDynamoRepo implements ITimeEntryRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertTimeEntry(timeEntry: TimeEntry): Promise<void> {
+        await this.ddb.put(Tables.TIME_ENTRIES, timeEntry);
+    }
 
     async getTimeEntry(orgId: string, userId: string, timeEntryId: string): Promise<TimeEntry | null> {
         const { Item } = await this.ddb.getItem(Tables.TIME_ENTRIES, { orgId, sk: sk(userId, timeEntryId) });

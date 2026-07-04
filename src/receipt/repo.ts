@@ -3,8 +3,29 @@ import { Tables } from '../tables';
 import { sk, dateSk } from '../keys';
 import { Receipt } from './schema';
 
-export class ReceiptRepo {
+/** Store-agnostic contract — ReceiptDynamoRepo + ReceiptPgRepo; ReceiptRepo (factory) routes. */
+export interface IReceiptRepo {
+    getReceipt(orgId: string, userId: string, receiptId: string): Promise<Receipt | null>;
+    findReceiptByIdInOrg(orgId: string, receiptId: string): Promise<{ receipt: Receipt; ownerId: string } | null>;
+    findReceiptByDescriptionPrefix(orgId: string, prefix: string): Promise<Receipt | null>;
+    findReceiptByContentHash(orgId: string, contentHash: string): Promise<Receipt | null>;
+    findReceiptsByDuplicateOf(orgId: string, receiptId: string): Promise<Receipt[]>;
+    findReceiptsByVendorAndAmount(orgId: string, vendorName: string, amount: number): Promise<Receipt[]>;
+    listAllOrgReceipts(orgId: string): Promise<Receipt[]>;
+    listUserReceipts(orgId: string, userId: string): Promise<Receipt[]>;
+    listReceiptsByDate(orgId: string, from: string, to: string, projection?: string): Promise<Receipt[]>;
+    createReceipt(orgId: string, userId: string, receiptId: string, data: Record<string, any>): Promise<void>;
+    updateReceipt(orgId: string, userId: string, receiptId: string, updates: Record<string, any>): Promise<void>;
+    deleteReceipt(orgId: string, userId: string, receiptId: string): Promise<void>;
+    upsertReceipt(receipt: Receipt): Promise<void>;
+}
+
+export class ReceiptDynamoRepo implements IReceiptRepo {
     constructor(private ddb: IDdb) {}
+
+    async upsertReceipt(receipt: Receipt): Promise<void> {
+        await this.ddb.put(Tables.RECEIPTS, receipt);
+    }
 
     async getReceipt(orgId: string, userId: string, receiptId: string): Promise<Receipt | null> {
         const { Item } = await this.ddb.getItem(Tables.RECEIPTS, { orgId, sk: sk(userId, receiptId) });
