@@ -64,16 +64,17 @@ export async function backfillBillingCore(reportOnly: boolean): Promise<void> {
     const paymentPg = new InvoicePaymentPgRepo();
 
     // Offline validators mirroring the pg NOT NULL + strict toRow (unknown-attr) checks.
+    // Validators mirror the repos' row transform, including the legacy-field remaps.
     const vClient = (i: any) => {
         requireFields(i, ['clientId', 'orgId', 'createdBy', 'name']);
-        const { contacts, ...rest } = i;
-        toRow(pgSchema.clients, rest, 'client');
+        const { contacts, contact, contactPerson, ...rest } = i;
+        toRow(pgSchema.clients, { ...rest, legacyContact: contact ?? null, legacyContactPerson: contactPerson ?? null }, 'client');
     };
     const vInvoice = (i: any) => {
         requireFields(i, ['invoiceId', 'orgId', 'invoiceNumber']);
-        const { sk, dueDateSk, items, clientSnapshot, ...rest } = i;
+        const { sk, dueDateSk, items, clientSnapshot, lineItems, ...rest } = i;
         const ownerId = typeof sk === 'string' ? sk.split('#')[0] : i.createdBy;
-        toRow(pgSchema.invoices, { ...rest, ownerId, legacyClientSnapshot: clientSnapshot ?? null }, 'invoice');
+        toRow(pgSchema.invoices, { ...rest, ownerId, legacyClientSnapshot: clientSnapshot ?? null, legacyLineItems: lineItems ?? null }, 'invoice');
     };
     const vPayment = (i: any) => {
         requireFields(i, ['paymentId', 'invoiceId', 'orgId', 'amount', 'method']);

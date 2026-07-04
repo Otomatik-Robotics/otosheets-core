@@ -56,7 +56,11 @@ export function getPgTx(): PgDb {
             throw new Error('DATABASE_URL/DATABASE_POOLER_URL not set — a transactional pg write was attempted before the Neon secret resolved');
         }
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { Pool } = require('@neondatabase/serverless');
+        const { Pool, neonConfig } = require('@neondatabase/serverless');
+        // Node < 22 has no global WebSocket; the serverless Pool needs one.
+        if (!neonConfig.webSocketConstructor) {
+            try { neonConfig.webSocketConstructor = require('ws'); } catch { /* Node 22+ global WebSocket */ }
+        }
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { drizzle } = require('drizzle-orm/neon-serverless');
         txSingleton = drizzle(new Pool({ connectionString: url })) as PgDb;

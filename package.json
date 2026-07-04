@@ -41,6 +41,7 @@
     "@aws-sdk/lib-dynamodb": "^3.750.0",
     "@electric-sql/pglite": "^0.5.4",
     "@types/node": "^25.7.0",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
     "typescript": "^5.7.0",
     "vitest": "^3.2.6",
@@ -50,6 +51,7 @@
     "@aws-sdk/client-sqs": "^3.1079.0",
     "@aws-sdk/client-ssm": "^3.1079.0",
     "@neondatabase/serverless": "^1.1.0",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "ws": "^8.21.0"
   }
 }
