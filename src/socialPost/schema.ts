@@ -12,8 +12,11 @@ export const SocialPostSchema = z.object({
     pageId: z.string().optional(),
     /** Instagram business account id (required for platform=instagram). */
     igUserId: z.string().optional(),
-    /** S3 key in the storefront assets bucket (IG requires media; FB optional). */
+    /** Legacy single-image key. Prefer `mediaKeys`; kept for back-compat reads. */
     mediaKey: z.string().optional(),
+    /** Ordered S3 keys for the post's images (carousel / multi-photo). IG allows up
+     *  to 10 and requires at least one; FB posts them as a multi-photo post. */
+    mediaKeys: z.array(z.string()).optional(),
     scheduledAt: z.string(),
     status: z.enum(['draft', 'queued', 'published', 'failed']),
     /** Sparse GSI pk — set to SOCIAL_POST_DUE_KEY only while status === 'queued'. */
@@ -35,6 +38,7 @@ export interface SocialPost {
     pageId?: string;
     igUserId?: string;
     mediaKey?: string;
+    mediaKeys?: string[];
     scheduledAt: string;
     status: 'draft' | 'queued' | 'published' | 'failed';
     dueKey?: string;
