@@ -4,6 +4,7 @@ import { ddb } from '../ddbClient';
 import type { IDdb } from '../ddbPort';
 import { PaginatedResult } from '../types';
 import { Invoice } from './schema';
+import type { InvoiceSummary } from './summary';
 import { InvoiceDynamoRepo, type IInvoiceRepo, type ListInvoicesPaginatedParams } from './repo';
 import { InvoicePgRepo } from './repo.pg';
 
@@ -73,6 +74,12 @@ export class RoutingInvoiceRepo implements IInvoiceRepo {
         const route = await resolveRoute(DOMAIN);
         const result = await this.pick(route).listOverdueInvoices(orgId, beforeDate);
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listOverdueInvoices' }, result, () => this.pg.listOverdueInvoices(orgId, beforeDate));
+        return result;
+    }
+    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
+        const route = await resolveRoute(DOMAIN);
+        const result = await this.pick(route).getInvoiceSummary(orgId);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceSummary' }, result, () => this.pg.getInvoiceSummary(orgId));
         return result;
     }
 

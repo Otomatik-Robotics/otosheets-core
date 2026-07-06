@@ -4,6 +4,7 @@ import { invoices, invoiceLineItems } from '../pg/schema/billingCore';
 import { keysetFromStartKey, keysetStartKey } from '../pg/cursor';
 import { PaginatedResult } from '../types';
 import { Invoice } from './schema';
+import { composeInvoiceSummary, type InvoiceSummary, type InvoiceSummaryBucket } from './summary';
 import type { IInvoiceRepo, ListInvoicesPaginatedParams } from './repo';
 
 // Money/number columns returned as strings by pg → numbers in the DTO.
@@ -187,6 +188,44 @@ export class InvoicePgRepo implements IInvoiceRepo {
             .where(and(eq(invoices.orgId, orgId), lt(invoices.dueDate, beforeDate),
                 inArray(invoices.status, ['SENT', 'PARTIAL', 'OVERDUE'])));
         return this.hydrate(rows);
+    }
+
+    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
+        // One GROUP BY over (status, past-due) — the org_status_due index backs it.
+        // Past-due is derived here, not read from a maintained counter.
+        const today = new Date().toISOString().slice(0, 10);
+        // Raw, unqualified column text (single table in FROM) so the expression is
+        // byte-identical in SELECT and GROUP BY — Postgres matches grouped
+        // expressions textually, and drizzle qualifies column refs inconsistently
+        // across the two clauses.
+        const pastDue = sql<boolean>`(due_date is not null and due_date < ${today})`;
+        const rows = await this.db
+            .select({
+                status: invoices.status,
+                isPastDue: pastDue,
+                count: sql<number>`count(*)::int`,
+                totalAmount: sql<string>`coalesce(sum(${invoices.totalAmount}), 0)`,
+                paidAmount: sql<string>`coalesce(sum(${invoices.paidAmount}), 0)`,
+            })
+            .from(invoices)
+            .where(and(
+                eq(invoices.orgId, orgId),
+                or(sql`${invoices.isPaymentLink} IS NULL`, eq(invoices.isPaymentLink, false)),
+                or(sql`${invoices.isQuote} IS NULL`, eq(invoices.isQuote, false)),
+            ))
+            // Group by select-list ordinals (status = 1, past-due expr = 2): avoids
+            // re-emitting the parameterized expression, which Postgres would treat
+            // as a distinct expression ($1 vs $5) and reject.
+            .groupBy(sql`1`, sql`2`);
+
+        const buckets: InvoiceSummaryBucket[] = (rows as any[]).map((r) => ({
+            status: r.status ?? 'DRAFT',
+            isPastDue: r.isPastDue === true || r.isPastDue === 't' || r.isPastDue === 1,
+            count: Number(r.count) || 0,
+            totalAmount: Number(r.totalAmount) || 0,
+            paidAmount: Number(r.paidAmount) || 0,
+        }));
+        return composeInvoiceSummary(buckets);
     }
 
     async createInvoice(orgId: string, userId: string, invoiceId: string, data: Record<string, any>): Promise<void> {

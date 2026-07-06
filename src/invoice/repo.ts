@@ -2,6 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk, dueDateSk } from '../keys';
 import { Invoice } from './schema';
+import { composeInvoiceSummary, type InvoiceSummary, type InvoiceSummaryBucket } from './summary';
 import { PaginatedResult } from '../types';
 
 export interface ListInvoicesPaginatedParams {
@@ -28,6 +29,8 @@ export interface IInvoiceRepo {
     listAllOrgInvoices(orgId: string): Promise<Invoice[]>;
     listDraftInvoices(orgId: string): Promise<Invoice[]>;
     listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]>;
+    /** Live KPI-band aggregate (outstanding / overdue / awaiting / draft) for one org. */
+    getInvoiceSummary(orgId: string): Promise<InvoiceSummary>;
     createInvoice(orgId: string, userId: string, invoiceId: string, data: Record<string, any>): Promise<void>;
     updateInvoice(orgId: string, userId: string, invoiceId: string, updates: Record<string, any>): Promise<void>;
     deleteInvoice(orgId: string, userId: string, invoiceId: string): Promise<void>;
@@ -202,6 +205,40 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE' },
         });
         return (Items as Invoice[]) ?? [];
+    }
+
+    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
+        // Fallback path for orgs still on the Dynamo route. Bounded per-org read
+        // (paginated fully), bucketed by (status, past-due), then folded through
+        // the shared compose fn. Postgres does this in one GROUP BY instead.
+        const today = new Date().toISOString().slice(0, 10);
+        const buckets = new Map<string, InvoiceSummaryBucket>();
+        let exclusiveStartKey: Record<string, any> | undefined;
+        do {
+            const res = await this.ddb.query({
+                TableName: Tables.INVOICES,
+                IndexName: 'CreatedAtIndex',
+                KeyConditionExpression: 'orgId = :orgId',
+                FilterExpression:
+                    '(attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false) ' +
+                    'AND (attribute_not_exists(#isQuote) OR #isQuote = :false)',
+                ExpressionAttributeNames: { '#isPaymentLink': 'isPaymentLink', '#isQuote': 'isQuote' },
+                ExpressionAttributeValues: { ':orgId': orgId, ':false': false },
+                ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+            });
+            for (const item of (res.Items as Invoice[]) ?? []) {
+                const status = item.status ?? 'DRAFT';
+                const isPastDue = !!item.dueDate && item.dueDate < today;
+                const key = `${status}|${isPastDue}`;
+                const b = buckets.get(key) ?? { status, isPastDue, count: 0, totalAmount: 0, paidAmount: 0 };
+                b.count += 1;
+                b.totalAmount += Number(item.totalAmount) || 0;
+                b.paidAmount += Number(item.paidAmount) || 0;
+                buckets.set(key, b);
+            }
+            exclusiveStartKey = res.LastEvaluatedKey;
+        } while (exclusiveStartKey);
+        return composeInvoiceSummary([...buckets.values()]);
     }
 
     async createInvoice(orgId: string, userId: string, invoiceId: string, data: Record<string, any>): Promise<void> {

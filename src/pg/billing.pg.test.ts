@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { sql } from 'drizzle-orm';
 import { PGlite } from '@electric-sql/pglite';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -137,5 +138,39 @@ describe('InvoicePaymentPgRepo', () => {
         expect(await pay().listPayments('org_1', 'inv_pay')).toHaveLength(1);
         i = await invoiceRepo().getInvoice('org_1', 'user_1', 'inv_pay');
         expect(i!.paidAmount).toBe(60); // not clobbered by the replay
+    });
+});
+
+describe('InvoicePgRepo.getInvoiceSummary', () => {
+    // Fresh org so the KPI figures are deterministic (org_1 is dirtied by tests above).
+    const ORG = 'org_sum';
+    const inv = () => new InvoicePgRepo(db, db);
+    const past = '2020-01-01';   // safely before "today"
+    const future = '2999-01-01'; // safely after "today"
+
+    beforeAll(async () => {
+        await (db as any).execute(sql`INSERT INTO orgs (org_id, name) VALUES (${ORG}, 'Sum Co')`);
+        const mk = (id: string, data: Record<string, any>) =>
+            inv().createInvoice(ORG, 'user_1', id, { invoiceNumber: id, ...data });
+        await mk('s_await', { status: 'SENT', dueDate: future, totalAmount: 18922, paidAmount: 0 });
+        await mk('s_overdue', { status: 'OVERDUE', dueDate: past, totalAmount: 13988, paidAmount: 0 });
+        await mk('s_sent_pastdue', { status: 'SENT', dueDate: past, totalAmount: 1000, paidAmount: 0 });
+        await mk('s_partial', { status: 'PARTIAL', dueDate: future, totalAmount: 1000, paidAmount: 400 });
+        await mk('s_draft', { status: 'DRAFT', dueDate: future, totalAmount: 8370, paidAmount: 0 });
+        await mk('s_paid', { status: 'PAID', dueDate: past, totalAmount: 5000, paidAmount: 5000 });
+        await mk('s_link', { status: 'SENT', dueDate: past, totalAmount: 999, paidAmount: 0, isPaymentLink: true });
+        await mk('s_quote', { status: 'SENT', dueDate: past, totalAmount: 500, paidAmount: 0, isQuote: true });
+    });
+
+    it('aggregates outstanding / overdue / awaiting / draft, deriving past-due and excluding quotes+links+paid', async () => {
+        const s = await inv().getInvoiceSummary(ORG);
+        // draft: face value of the single draft
+        expect(s.draft).toEqual({ amount: 8370, count: 1 });
+        // overdue: stored OVERDUE (13988) + SENT-but-past-due (1000), derived
+        expect(s.overdue).toEqual({ amount: 14988, count: 2 });
+        // awaiting: future SENT (18922) + future PARTIAL remainder (600)
+        expect(s.awaiting).toEqual({ amount: 19522, count: 2 });
+        // outstanding is the sum of the two open buckets
+        expect(s.outstanding).toEqual({ amount: 34510, count: 4 });
     });
 });
