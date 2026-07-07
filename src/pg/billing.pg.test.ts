@@ -62,6 +62,27 @@ describe('ClientPgRepo', () => {
         const ids2 = page2.items.map(c => c.clientId);
         expect(ids1.filter(id => ids2.includes(id))).toHaveLength(0); // no overlap
     });
+
+    it('archived filter: active hides archived, archived shows only them, all shows both', async () => {
+        const r = new ClientPgRepo(db);
+        await r.createClient('org_1', 'arch_a', { createdBy: 'user_1', name: 'Active One' });
+        await r.createClient('org_1', 'arch_b', { createdBy: 'user_1', name: 'Gone Two' });
+        await r.updateClient('org_1', 'arch_b', { archived: true, archivedAt: '2026-07-07' });
+
+        const active = (await r.listClientsPaginated({ orgId: 'org_1', archived: 'active' })).items.map(c => c.clientId);
+        expect(active).toContain('arch_a');
+        expect(active).not.toContain('arch_b');
+
+        const archived = (await r.listClientsPaginated({ orgId: 'org_1', archived: 'archived' })).items.map(c => c.clientId);
+        expect(archived).toEqual(['arch_b']);
+
+        const all = (await r.listClientsPaginated({ orgId: 'org_1', archived: 'all' })).items.map(c => c.clientId);
+        expect(all).toEqual(expect.arrayContaining(['arch_a', 'arch_b']));
+
+        const back = await r.getClient('org_1', 'arch_b');
+        expect(back!.archived).toBe(true);
+        expect(back!.archivedAt).toBe('2026-07-07');
+    });
 });
 
 describe('InvoicePgRepo', () => {

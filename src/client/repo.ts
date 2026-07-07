@@ -10,6 +10,8 @@ export interface ListClientsPaginatedParams {
     search?: string;
     dateFrom?: string;
     dateTo?: string;
+    /** active (default) = hide archived; archived = only archived; all = both. */
+    archived?: 'active' | 'archived' | 'all';
 }
 
 /** Store-agnostic contract — implemented by ClientDynamoRepo and ClientPgRepo; ClientRepo (factory.ts) routes. */
@@ -58,12 +60,23 @@ export class ClientDynamoRepo implements IClientRepo {
         search?: string;
         dateFrom?: string;
         dateTo?: string;
+        archived?: 'active' | 'archived' | 'all';
     }): Promise<PaginatedResult<Client>> {
-        const { orgId, limit = 20, exclusiveStartKey, search, dateFrom, dateTo } = params;
+        const { orgId, limit = 20, exclusiveStartKey, search, dateFrom, dateTo, archived = 'active' } = params;
 
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
+
+        if (archived === 'active') {
+            filterParts.push('(attribute_not_exists(#archived) OR #archived = :false)');
+            names['#archived'] = 'archived';
+            values[':false'] = false;
+        } else if (archived === 'archived') {
+            filterParts.push('#archived = :true');
+            names['#archived'] = 'archived';
+            values[':true'] = true;
+        }
 
         if (search) {
             filterParts.push('(contains(#name, :search) OR contains(#email, :search) OR contains(#abn, :search))');
@@ -85,7 +98,7 @@ export class ClientDynamoRepo implements IClientRepo {
 
         // When searching, scan more items so FilterExpression has enough to work with —
         // DynamoDB applies Limit before FilterExpression, so a tight limit silently misses matches.
-        const scanLimit = search ? Math.max(limit, 500) : limit;
+        const scanLimit = (search || archived !== 'all') ? Math.max(limit, 500) : limit;
 
         const result = await this.ddb.query({
             TableName: Tables.CLIENTS,

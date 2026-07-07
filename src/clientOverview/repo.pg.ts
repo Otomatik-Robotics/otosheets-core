@@ -77,6 +77,18 @@ export class ClientOverviewPgRepo {
     }
 
     /**
+     * Count of ALL invoices referencing this client (payment links and quotes included)
+     * — the guard that blocks hard-deleting a client which would orphan invoices.
+     */
+    async clientInvoiceCount(orgId: string, clientId: string): Promise<number> {
+        const [r] = await this.db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(invoices)
+            .where(and(eq(invoices.orgId, orgId), eq(invoices.clientId, clientId)));
+        return r?.n ?? 0;
+    }
+
+    /**
      * Per-client money rollup for a page of list rows — one GROUP BY over the given
      * client ids, never a query per row. Clients with no real invoices are simply
      * absent from the result (the caller treats a miss as all-zero / "quiet").

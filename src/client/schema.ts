@@ -27,6 +27,8 @@ export const ClientBaseSchema = z.object({
     convertedFromLeadId: z.string().nullish(),
     convertedAt: z.string().nullish(),
     paymentLinkUsageCount: z.number().optional(),
+    archived: z.boolean().nullish(),
+    archivedAt: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });

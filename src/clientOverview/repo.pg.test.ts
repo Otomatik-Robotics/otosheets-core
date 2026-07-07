@@ -121,6 +121,13 @@ describe('ClientOverviewPgRepo', () => {
         expect(await repo().batchClientRollups('org_1', [])).toEqual([]);
     });
 
+    it('counts ALL invoices for a client (incl. payment links + quotes) for the delete guard', async () => {
+        // c_1 has i_1,i_2,i_3 (real) + i_4 (payment link) + i_5 (draft) = 5
+        expect(await repo().clientInvoiceCount('org_1', 'c_1')).toBe(5);
+        expect(await repo().clientInvoiceCount('org_1', 'c_2')).toBe(1);
+        expect(await repo().clientInvoiceCount('org_1', 'nobody')).toBe(0);
+    });
+
     it('builds a merged timeline sorted newest-first', async () => {
         const o = (await repo().getClientOverview('org_1', 'c_1'))!;
         const types = o.timeline.map((e) => e.type);

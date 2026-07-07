@@ -43,6 +43,8 @@ export const clients = pgTable('clients', {
     convertedFromLeadId: text('converted_from_lead_id'),   // soft ref (leads arrive phase 3)
     convertedAt: text('converted_at'),
     paymentLinkUsageCount: integer('payment_link_usage_count'),
+    archived: boolean('archived'),                         // soft-delete: hidden from active lists
+    archivedAt: text('archived_at'),
     // Deprecated single-contact fields (superseded by the contacts child table)
     // — preserved for lossless migration, mapped to/from DTO `contact`/`contactPerson`.
     legacyContact: jsonb('legacy_contact'),
