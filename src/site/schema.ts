@@ -9,6 +9,12 @@ export const SITE_TEMPLATE_IDS = [
     'minimal-studio',
     'fresh-bright',
     'night-shift',
+    'coastal-luxe',
+    'heritage-craft',
+    'electric-pop',
+    'terra-organic',
+    'noir-gold',
+    'nordic-frost',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
