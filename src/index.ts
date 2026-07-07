@@ -38,6 +38,8 @@ export * from './receipt';
 export * from './trip';
 export * from './statement';
 export * from './statementTransaction';
+export * from './bankAccount';
+export * from './bankTransaction';
 export * from './lead';
 export * from './pipeline';
 export * from './pipelineInsights';
