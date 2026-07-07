@@ -12,7 +12,20 @@
 
 ## 1. Project Purpose
 
-Shared DynamoDB data layer for the Otosheets platform. Provides repository classes, Zod schemas, and a ports-adapters DynamoDB client. Consumed by:
+Shared **data layer** for the Otosheets platform — repository classes, Zod schemas, and
+**two storage backends**: a Postgres (Neon) layer (Drizzle schema in `src/pg/`, migrations
+in `drizzle/`) and the original DynamoDB ports-adapters client (`ddbPort`/`ddbAdapter`/`ddb`).
+
+> **Postgres is the canonical source of truth for the relational core** (as of 2026-07-06,
+> `dual_pg` in dev + prod). Each domain repo (`UserRepo`, `InvoiceRepo`, …) is a **routing
+> wrapper** that reads a per-domain SSM flag (`/otosheets/{env}/data-backend/{domain}` via
+> `src/dataBackend.ts`) and dispatches to the Postgres impl (`*PgRepo`) or DynamoDB impl
+> (`*DynamoRepo`), mirroring writes to the other store. In `dual_pg`, Postgres is
+> authoritative and DynamoDB is the rollback mirror. Consumers call the same repo methods
+> and get the same DTOs regardless of backend. Full design:
+> `docs/POSTGRES_MIGRATION_PLAN.md` in the `otosheets` monorepo.
+
+Consumed by:
 
 - `otosheets-app-backend` — all handler business logic
 - `otosheets-agents` — workflow run/execution log persistence
@@ -22,22 +35,31 @@ Shared DynamoDB data layer for the Otosheets platform. Provides repository class
 
 ## 2. Architecture
 
+Each domain repo routes between two backends on the per-domain cutover flag:
+
 ```
-IDdb (port interface)
-  ^
-  |  implements
-DynamoDbAdapter (wraps DynamoDBDocumentClient)
-  ^
-  |  injected into
-Repos (UserRepo, InvoiceRepo, etc.)
+                 UserRepo / InvoiceRepo / …   (routing wrapper, factory.ts)
+                     |  resolveRoute(domain) → reads SSM flag (dataBackend.ts)
+        ┌────────────┴─────────────┐
+   *DynamoRepo                  *PgRepo
+   (repo.ts, IDdb adapter)      (repo.pg.ts, Drizzle over Neon)
+        └── mirror ◄── dual-write ──► mirror ──┘
 ```
+
+- **`dual_pg`** (current, dev+prod): `*PgRepo` authoritative for reads/writes; every write
+  mirrors to DynamoDB. **`dual_dynamo`**: the reverse. **`dynamo`/`pg`**: single-store.
+- Writes needing a transaction (invoice + line items, payment + invoice roll) use the
+  neon-serverless WebSocket driver via `getPgTx()`; other paths use the `neon-http` `getPg()`.
 
 Each domain folder (`src/user/`, `src/invoice/`, etc.) contains:
-- `schema.ts` — Zod schema + TypeScript type
-- `repo.ts` — Repository class
-- `index.ts` — Re-exports both
+- `schema.ts` — Zod DTO schema + TypeScript type (the store-agnostic contract)
+- `repo.ts` — `I{Entity}Repo` interface + `{Entity}DynamoRepo` (DynamoDB impl)
+- `repo.pg.ts` — `{Entity}PgRepo` (Postgres impl)
+- `factory.ts` — the routing `{Entity}Repo` wrapper + `get{Entity}Repo()`
+- `index.ts` — re-exports all of the above
 
-Table names are read from environment variables at runtime (see `src/tables.ts`).
+DynamoDB table names are read from env vars at runtime (`src/tables.ts`); the Postgres
+connection URL comes from `DATABASE_URL` (the consumer resolves the Neon secret and sets it).
 
 ---
 
@@ -105,11 +127,19 @@ Known violations (e.g. `invoicePayment/repo.ts` `recordPayment`, `org/repo.ts` `
 
 ## 5. Adding a New Repo Method
 
-1. Open `src/{entity}/repo.ts`
-2. Add the method to the repo class
-3. If you need a new Zod schema field, update `src/{entity}/schema.ts`
-4. Export from `src/{entity}/index.ts` if not already
-5. `npm run build`
+For a **migrated (routed) domain** add the method in FOUR places so both backends and the
+router agree: the `I{Entity}Repo` interface + `{Entity}DynamoRepo` (`repo.ts`), the
+`{Entity}PgRepo` (`repo.pg.ts`), and the routing `{Entity}Repo` wrapper (`factory.ts`).
+For a **DynamoDB-only** domain (messages, notifications, etc.) just the one `repo.ts` class.
+
+1. Open `src/{entity}/repo.ts` — add to the interface + Dynamo impl
+2. Add the same method to `src/{entity}/repo.pg.ts` (Drizzle) — return the identical DTO
+3. Add the routing passthrough in `src/{entity}/factory.ts` (read + shadow, or write + mirror)
+4. If you need a new Zod schema field, update `src/{entity}/schema.ts` **and** the Drizzle
+   column in `src/pg/schema/*` + a `drizzle/00NN_*.sql` migration (sparse-safe: no
+   `NOT NULL DEFAULT` on fields DynamoDB stores sparsely)
+5. Export from `src/{entity}/index.ts` if not already
+6. `npm run build` && `npx vitest run`
 6. Push, grab the commit hash
 7. Update consumers' `package.json`: `"@otosheets/core": "github:Otomatik-Robotics/otosheets-core#<new-hash>"`
 8. `npm install` in each consumer
@@ -118,12 +148,21 @@ Known violations (e.g. `invoicePayment/repo.ts` `recordPayment`, `org/repo.ts` `
 
 ## 6. Adding a New Entity / Repo
 
-1. Create `src/{entity}/schema.ts` with Zod schema + TypeScript type
-2. Create `src/{entity}/repo.ts` with the repository class (accepts `IDdb` in constructor)
-3. Create `src/{entity}/index.ts` that re-exports both
-4. Add the table name to `src/tables.ts`
-5. Export from `src/index.ts`
-6. `npm run build`
+**Decide the store first** (see the dividing rule in the monorepo CLAUDE.md "Source of
+Truth"): relational/joined/reported-on → Postgres-backed (routed); keyed/ephemeral/TTL →
+DynamoDB-only.
+
+DynamoDB-only entity:
+1. `src/{entity}/schema.ts` — Zod schema + type
+2. `src/{entity}/repo.ts` — repository class (accepts `IDdb` in constructor)
+3. `src/{entity}/index.ts` re-exporting both; add the table to `src/tables.ts`; export from `src/index.ts`; `npm run build`
+
+Postgres-backed (routed) entity — additionally:
+4. Drizzle table in `src/pg/schema/{group}.ts` (sparse-safe) + a `drizzle/00NN_*.sql` migration
+5. `src/{entity}/repo.ts` — extract an `I{Entity}Repo` interface; name the Dynamo class `{Entity}DynamoRepo`
+6. `src/{entity}/repo.pg.ts` — `{Entity}PgRepo` returning DTO-identical rows
+7. `src/{entity}/factory.ts` — routing `{Entity}Repo` wrapper on the domain flag + `get{Entity}Repo()`
+8. Add the domain to `DataDomain` in `src/dataBackend.ts`; PGlite tests in `src/pg/*.test.ts`
 
 ---
 
