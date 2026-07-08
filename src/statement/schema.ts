@@ -56,8 +56,33 @@ export const StatementVerificationSchema = z.object({
         expectedCents: z.number().int().nullish(),
         actualCents: z.number().int().nullish(),
     })).max(50).nullish(),
+    // Deterministic money-flow totals (sign + pattern derived, LLM-independent)
+    // and the reconciliation invariant Σflows == credits − debits.
+    flowTotals: z.object({
+        incomeCents: z.number().int(),
+        expenseCents: z.number().int(),      // positive number (money out)
+        transferInCents: z.number().int(),
+        transferOutCents: z.number().int(),  // positive number
+        refundCents: z.number().int(),
+    }).nullish(),
+    flowsReconciled: z.boolean().nullish(),
 });
 export type StatementVerification = z.infer<typeof StatementVerificationSchema>;
+
+// Provenance of a resolved statement period.
+export const STATEMENT_PERIOD_SOURCES = ['printed', 'derived', 'user'] as const;
+export const StatementPeriodSourceSchema = z.enum(STATEMENT_PERIOD_SOURCES);
+export type StatementPeriodSource = z.infer<typeof StatementPeriodSourceSchema>;
+
+// The two candidate ranges surfaced when the printed period and the derived
+// row-date range disagree (the disambiguation the user resolves). ISO YYYY-MM-DD.
+export const StatementPeriodConflictSchema = z.object({
+    rowStart: z.string(),
+    rowEnd: z.string(),
+    statementStart: z.string(),
+    statementEnd: z.string(),
+});
+export type StatementPeriodConflict = z.infer<typeof StatementPeriodConflictSchema>;
 
 export const StatementRecordSchema = z.object({
     statementId: z.string(),
@@ -75,6 +100,8 @@ export const StatementRecordSchema = z.object({
     accountLast4: z.string().nullish(),
     periodStart: z.string().nullish(),  // YYYY-MM-DD
     periodEnd: z.string().nullish(),
+    periodSource: StatementPeriodSourceSchema.nullish(),
+    periodConflict: StatementPeriodConflictSchema.nullish(),
     verification: StatementVerificationSchema.nullish(),
     txnCount: z.number().int().nullish(),
     needsReviewCount: z.number().int().nullish(),

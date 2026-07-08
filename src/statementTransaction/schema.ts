@@ -15,6 +15,14 @@ export type CategorySource = z.infer<typeof CategorySourceSchema>;
 export const GstTreatmentSchema = z.enum(['GST', 'GST_FREE', 'INPUT_TAXED', 'NOT_REPORTABLE']);
 export type GstTreatment = z.infer<typeof GstTreatmentSchema>;
 
+/**
+ * Deterministic money-flow class — sign + conservative description patterns,
+ * derived by the pipeline (never the LLM). Independent of `category`, which
+ * remains the richer LLM-assisted sub-classification.
+ */
+export const FlowClassSchema = z.enum(['INCOME', 'EXPENSE', 'TRANSFER', 'REFUND']);
+export type FlowClass = z.infer<typeof FlowClassSchema>;
+
 export const ReviewReasonSchema = z.enum([
     'CHAIN_BREAK', 'LOW_CONFIDENCE', 'UNPARSEABLE_AMOUNT', 'UNPARSEABLE_DATE', 'RULE_FLAG', 'UNCATEGORIZED',
 ]);
@@ -43,6 +51,7 @@ export const StatementTransactionSchema = z.object({
     balanceCents: z.number().int().nullish(),
     chainOk: z.boolean().nullish(),
     verificationFlags: z.array(z.string()).nullish(),
+    flowClass: FlowClassSchema.nullish(),  // null on pre-column rows until reprocess
     category: z.string().nullish(),
     categorySource: CategorySourceSchema.nullish(),
     categoryConfidence: z.number().min(0).max(1).nullish(),

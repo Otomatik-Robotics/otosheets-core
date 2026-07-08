@@ -35,6 +35,13 @@ export const statements = pgTable('statements', {
     // through a JS Date, which would shift them across the local timezone.
     periodStart: date('period_start', { mode: 'string' }),
     periodEnd: date('period_end', { mode: 'string' }),
+    // Provenance of periodStart/End: 'printed' (statement header), 'derived'
+    // (row-date range), or 'user' (manual disambiguation). Null pre-resolution.
+    periodSource: text('period_source'),
+    // When the printed period and the derived row-date range disagree, the two
+    // candidate ranges the user picks between: {rowStart,rowEnd,statementStart,statementEnd}.
+    // Null once resolved (or when they never conflicted).
+    periodConflict: jsonb('period_conflict'),
     verification: jsonb('verification'),
     txnCount: integer('txn_count'),
     needsReviewCount: integer('needs_review_count'),
@@ -71,6 +78,8 @@ export const statementTransactions = pgTable('statement_transactions', {
     // verification
     chainOk: boolean('chain_ok'),
     verificationFlags: jsonb('verification_flags'),           // string[] e.g. ['CHAIN_BREAK','UNPARSEABLE_AMOUNT']
+    // deterministic money-flow class (pattern/sign derived, LLM-independent)
+    flowClass: text('flow_class'),                            // INCOME | EXPENSE | TRANSFER | REFUND
     // categorisation (mutable annotation layer)
     category: text('category'),
     categorySource: text('category_source'),                  // RULE | AI | USER | ADVISOR

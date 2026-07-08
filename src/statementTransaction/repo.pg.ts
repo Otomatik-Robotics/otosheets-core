@@ -21,6 +21,48 @@ export interface CategorySummaryRow {
     confirmedCount: number;
 }
 
+/** Scope shared by the summary queries — user OR org, optionally narrowed. */
+export interface TxnSummaryScope {
+    userId?: string;
+    organizationId?: string;
+    fy?: string;
+    statementId?: string;
+    /** Inclusive YYYY-MM-DD bounds on txn_date — BAS month/quarter/year views. */
+    dateFrom?: string;
+    dateTo?: string;
+}
+
+/** One row of the deterministic money-flow tally. All money is integer cents. */
+export interface FlowSummaryRow {
+    /** INCOME | EXPENSE | TRANSFER | REFUND, or 'UNCLASSIFIED' for pre-column rows. */
+    flowClass: string;
+    inCents: number;   // credits (money in)
+    outCents: number;  // debits (money out, positive number)
+    txnCount: number;
+}
+
+/**
+ * One row of the categorisation-provenance rollup — quantifies how much of
+ * each dollar total is deterministic vs LLM vs unknown.
+ */
+export interface CoverageSummaryRow {
+    /** DETERMINISTIC (rule/user/advisor) | AI | UNCATEGORIZED */
+    bucket: string;
+    inCents: number;
+    outCents: number;
+    txnCount: number;
+    confirmedCount: number;
+}
+
+/** A transfer-class row, slim shape for cross-statement pairing. */
+export interface TransferRow {
+    txnId: string;
+    statementId: string;
+    txnDate: string | null;
+    amountCents: number;
+    description: string | null;
+}
+
 export interface TxnListOptions {
     limit?: number;
     nextToken?: string | null;
@@ -216,17 +258,10 @@ export class StatementTransactionPgRepo {
      * decision. Signed cents split into money-in/money-out so income and
      * expense categories tally correctly; scoped by user OR org (advisor).
      */
-    async summariseByCategory(scope: {
-        userId?: string;
-        organizationId?: string;
-        fy?: string;
-        statementId?: string;
-        /** Inclusive YYYY-MM-DD bounds on txn_date — BAS month/quarter/year views. */
-        dateFrom?: string;
-        dateTo?: string;
-    }): Promise<CategorySummaryRow[]> {
+    /** Build the shared WHERE conditions for the summary queries. */
+    private scopeConditions(scope: TxnSummaryScope, caller: string): any[] {
         if (!scope.userId && !scope.organizationId) {
-            throw new Error('summariseByCategory requires a userId or organizationId scope');
+            throw new Error(`${caller} requires a userId or organizationId scope`);
         }
         const conditions: any[] = [];
         if (scope.userId) conditions.push(eq(statementTransactions.userId, scope.userId));
@@ -239,6 +274,11 @@ export class StatementTransactionPgRepo {
                 SELECT statement_id FROM statements WHERE organization_id = ${scope.organizationId}
             )`);
         }
+        return conditions;
+    }
+
+    async summariseByCategory(scope: TxnSummaryScope): Promise<CategorySummaryRow[]> {
+        const conditions = this.scopeConditions(scope, 'summariseByCategory');
         const rows = await this.db.select({
             category: sql<string>`COALESCE(${statementTransactions.category}, 'UNCATEGORIZED')`,
             inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
@@ -261,6 +301,92 @@ export class StatementTransactionPgRepo {
             gstCents: Number(r.gstCents),
             txnCount: Number(r.txnCount),
             confirmedCount: Number(r.confirmedCount),
+        }));
+    }
+
+    /**
+     * Deterministic top-line tallies — GROUP BY flow_class, so the income /
+     * expenditure / transfer totals rest on the sign+pattern layer, never the
+     * LLM category. Rows extracted before the column existed group under
+     * 'UNCLASSIFIED' (a reprocess backfills them).
+     */
+    async summariseFlows(scope: TxnSummaryScope): Promise<FlowSummaryRow[]> {
+        const conditions = this.scopeConditions(scope, 'summariseFlows');
+        const flowExpr = sql`COALESCE(${statementTransactions.flowClass}, 'UNCLASSIFIED')`;
+        const rows = await this.db.select({
+            flowClass: sql<string>`${flowExpr}`,
+            inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            outCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            txnCount: sql<number>`COUNT(*)::int`,
+        })
+            .from(statementTransactions)
+            .where(and(...conditions))
+            .groupBy(flowExpr);
+        return rows.map((r) => ({
+            flowClass: r.flowClass,
+            inCents: Number(r.inCents),
+            outCents: Number(r.outCents),
+            txnCount: Number(r.txnCount),
+        }));
+    }
+
+    /**
+     * Categorisation-provenance rollup — what fraction of the money is
+     * deterministic (rule/user/advisor), LLM-assigned, or uncategorised.
+     * Makes the trust gaps in the semantic totals visible instead of hidden.
+     */
+    async summariseCoverage(scope: TxnSummaryScope): Promise<CoverageSummaryRow[]> {
+        const conditions = this.scopeConditions(scope, 'summariseCoverage');
+        const bucketExpr = sql`CASE
+            WHEN ${statementTransactions.category} IS NULL OR ${statementTransactions.category} = 'UNCATEGORIZED' THEN 'UNCATEGORIZED'
+            WHEN ${statementTransactions.categorySource} IN ('RULE', 'USER', 'ADVISOR') THEN 'DETERMINISTIC'
+            ELSE 'AI'
+        END`;
+        const rows = await this.db.select({
+            bucket: sql<string>`${bucketExpr}`,
+            inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            outCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            txnCount: sql<number>`COUNT(*)::int`,
+            confirmedCount: sql<number>`SUM(CASE WHEN ${statementTransactions.reviewStatus} = 'CONFIRMED' THEN 1 ELSE 0 END)::int`,
+        })
+            .from(statementTransactions)
+            .where(and(...conditions))
+            .groupBy(bucketExpr);
+        return rows.map((r) => ({
+            bucket: r.bucket,
+            inCents: Number(r.inCents),
+            outCents: Number(r.outCents),
+            txnCount: Number(r.txnCount),
+            confirmedCount: Number(r.confirmedCount),
+        }));
+    }
+
+    /**
+     * TRANSFER-class rows for cross-statement pairing (a transfer is a debit
+     * on one account and a credit on another). Transfers are a small subset,
+     * but the cap bounds the worst case; date-ordered so greedy pairing is
+     * deterministic.
+     */
+    async listTransferRows(scope: TxnSummaryScope, cap = 2000): Promise<TransferRow[]> {
+        const conditions = this.scopeConditions(scope, 'listTransferRows');
+        conditions.push(eq(statementTransactions.flowClass, 'TRANSFER'));
+        const rows = await this.db.select({
+            txnId: statementTransactions.txnId,
+            statementId: statementTransactions.statementId,
+            txnDate: statementTransactions.txnDate,
+            amountCents: statementTransactions.amountCents,
+            description: statementTransactions.description,
+        })
+            .from(statementTransactions)
+            .where(and(...conditions))
+            .orderBy(sql`COALESCE(${statementTransactions.txnDate}, ${EPOCH_DATE}::date)`, asc(statementTransactions.txnId))
+            .limit(cap);
+        return rows.map((r) => ({
+            txnId: r.txnId,
+            statementId: r.statementId,
+            txnDate: (r.txnDate as string | null) ?? null,
+            amountCents: Number(r.amountCents),
+            description: (r.description as string | null) ?? null,
         }));
     }
 
