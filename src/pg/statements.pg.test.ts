@@ -266,6 +266,46 @@ describe('StatementTransactionPgRepo', () => {
         await stmtRepo.deleteStatement('tally_user', sid);
     });
 
+    it('tallies deterministic flows, provenance coverage, and transfer rows', async () => {
+        const stmtRepo = new StatementPgRepo(db);
+        const sid = '01STATEMENTFLOWS0000000001';
+        await stmtRepo.createStatement({
+            statementId: sid, userId: 'flow_user', fy: '2025-26',
+            organizationId: 'org_flow', s3Key: `statements/flow_user/2025-26/${sid}.pdf`,
+        });
+        const t = (seq: number, overrides: Record<string, any>) => ({
+            ...txn(seq, overrides), txnId: statementTxnId(sid, seq), statementId: sid, userId: 'flow_user',
+        });
+        await repo().upsertTransactions([
+            t(1, { flowClass: 'INCOME', category: 'INCOME', categorySource: 'AI', amountCents: 250000, direction: 'CREDIT' }),
+            t(2, { flowClass: 'EXPENSE', category: 'OFFICE', categorySource: 'RULE', amountCents: -18000 }),
+            t(3, { flowClass: 'TRANSFER', category: 'TRANSFER', categorySource: 'AI', amountCents: -50000, description: 'TRANSFER TO SAVINGS' }),
+            t(4, { flowClass: 'TRANSFER', category: 'TRANSFER', categorySource: 'AI', amountCents: 50000, direction: 'CREDIT', description: 'TRANSFER FROM CHEQUE' }),
+            t(5, { flowClass: 'REFUND', category: 'INCOME', categorySource: 'USER', amountCents: 4500, direction: 'CREDIT', reviewStatus: 'CONFIRMED' }),
+            t(6, { flowClass: null, category: null, categorySource: null, amountCents: -900 }), // pre-column row
+        ]);
+
+        const flows = await repo().summariseFlows({ userId: 'flow_user', fy: '2025-26' });
+        const byFlow = Object.fromEntries(flows.map((r) => [r.flowClass, r]));
+        expect(byFlow.INCOME).toMatchObject({ inCents: 250000, outCents: 0, txnCount: 1 });
+        expect(byFlow.EXPENSE).toMatchObject({ inCents: 0, outCents: 18000, txnCount: 1 });
+        expect(byFlow.TRANSFER).toMatchObject({ inCents: 50000, outCents: 50000, txnCount: 2 });
+        expect(byFlow.REFUND).toMatchObject({ inCents: 4500, outCents: 0, txnCount: 1 });
+        expect(byFlow.UNCLASSIFIED).toMatchObject({ outCents: 900, txnCount: 1 });
+
+        const coverage = await repo().summariseCoverage({ userId: 'flow_user', fy: '2025-26' });
+        const byBucket = Object.fromEntries(coverage.map((r) => [r.bucket, r]));
+        expect(byBucket.AI).toMatchObject({ inCents: 300000, outCents: 50000, txnCount: 3 });
+        expect(byBucket.DETERMINISTIC).toMatchObject({ inCents: 4500, outCents: 18000, txnCount: 2, confirmedCount: 1 });
+        expect(byBucket.UNCATEGORIZED).toMatchObject({ outCents: 900, txnCount: 1 });
+
+        const transfers = await repo().listTransferRows({ organizationId: 'org_flow' });
+        expect(transfers).toHaveLength(2);
+        expect(transfers.map((r) => r.amountCents).sort((a, b) => a - b)).toEqual([-50000, 50000]);
+
+        await stmtRepo.deleteStatement('flow_user', sid);
+    });
+
     it('claims prospect rows into a real user', async () => {
         const stmtRepo = new StatementPgRepo(db);
         const prospect = 'prospect#p1';

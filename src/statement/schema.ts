@@ -56,6 +56,16 @@ export const StatementVerificationSchema = z.object({
         expectedCents: z.number().int().nullish(),
         actualCents: z.number().int().nullish(),
     })).max(50).nullish(),
+    // Deterministic money-flow totals (sign + pattern derived, LLM-independent)
+    // and the reconciliation invariant Σflows == credits − debits.
+    flowTotals: z.object({
+        incomeCents: z.number().int(),
+        expenseCents: z.number().int(),      // positive number (money out)
+        transferInCents: z.number().int(),
+        transferOutCents: z.number().int(),  // positive number
+        refundCents: z.number().int(),
+    }).nullish(),
+    flowsReconciled: z.boolean().nullish(),
 });
 export type StatementVerification = z.infer<typeof StatementVerificationSchema>;
 

@@ -78,6 +78,8 @@ export const statementTransactions = pgTable('statement_transactions', {
     // verification
     chainOk: boolean('chain_ok'),
     verificationFlags: jsonb('verification_flags'),           // string[] e.g. ['CHAIN_BREAK','UNPARSEABLE_AMOUNT']
+    // deterministic money-flow class (pattern/sign derived, LLM-independent)
+    flowClass: text('flow_class'),                            // INCOME | EXPENSE | TRANSFER | REFUND
     // categorisation (mutable annotation layer)
     category: text('category'),
     categorySource: text('category_source'),                  // RULE | AI | USER | ADVISOR
