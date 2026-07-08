@@ -116,6 +116,42 @@ describe('StatementPgRepo', () => {
         expect(stmt!.periodStart).toBe('2025-08-02'); // not '2025-08-01T16:00:00.000Z'
         expect(stmt!.periodEnd).toBe('2025-08-31');
     });
+
+    it('persists a period conflict, then a user resolution clears it', async () => {
+        // Conflict path: no period, source unset, candidate ranges stored for the modal.
+        await repo().setProcessingResult(STMT, {
+            status: 'NEEDS_REVIEW',
+            periodStart: null,
+            periodEnd: null,
+            periodSource: null,
+            periodConflict: {
+                rowStart: '2025-07-28', rowEnd: '2025-09-02',
+                statementStart: '2025-08-01', statementEnd: '2025-08-31',
+            },
+        });
+        let stmt = await repo().getStatement(USER, STMT);
+        expect(stmt!.periodStart).toBeNull();
+        expect(stmt!.periodConflict).toEqual({
+            rowStart: '2025-07-28', rowEnd: '2025-09-02',
+            statementStart: '2025-08-01', statementEnd: '2025-08-31',
+        });
+
+        // User picks a period → source 'user', conflict cleared, status flipped.
+        const ok = await repo().resolvePeriod(USER, STMT, {
+            periodStart: '2025-08-01', periodEnd: '2025-08-31', status: 'VERIFIED',
+        });
+        expect(ok).toBe(true);
+        stmt = await repo().getStatement(USER, STMT);
+        expect(stmt).toMatchObject({
+            periodStart: '2025-08-01', periodEnd: '2025-08-31',
+            periodSource: 'user', periodConflict: null, status: 'VERIFIED',
+        });
+
+        // Tenancy: another user cannot resolve someone else's statement.
+        expect(await repo().resolvePeriod('intruder', STMT, {
+            periodStart: '2025-08-01', periodEnd: '2025-08-31',
+        })).toBe(false);
+    });
 });
 
 describe('StatementTransactionPgRepo', () => {

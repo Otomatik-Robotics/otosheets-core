@@ -35,6 +35,13 @@ export const statements = pgTable('statements', {
     // through a JS Date, which would shift them across the local timezone.
     periodStart: date('period_start', { mode: 'string' }),
     periodEnd: date('period_end', { mode: 'string' }),
+    // Provenance of periodStart/End: 'printed' (statement header), 'derived'
+    // (row-date range), or 'user' (manual disambiguation). Null pre-resolution.
+    periodSource: text('period_source'),
+    // When the printed period and the derived row-date range disagree, the two
+    // candidate ranges the user picks between: {rowStart,rowEnd,statementStart,statementEnd}.
+    // Null once resolved (or when they never conflicted).
+    periodConflict: jsonb('period_conflict'),
     verification: jsonb('verification'),
     txnCount: integer('txn_count'),
     needsReviewCount: integer('needs_review_count'),

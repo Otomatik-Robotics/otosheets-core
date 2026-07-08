@@ -59,6 +59,21 @@ export const StatementVerificationSchema = z.object({
 });
 export type StatementVerification = z.infer<typeof StatementVerificationSchema>;
 
+// Provenance of a resolved statement period.
+export const STATEMENT_PERIOD_SOURCES = ['printed', 'derived', 'user'] as const;
+export const StatementPeriodSourceSchema = z.enum(STATEMENT_PERIOD_SOURCES);
+export type StatementPeriodSource = z.infer<typeof StatementPeriodSourceSchema>;
+
+// The two candidate ranges surfaced when the printed period and the derived
+// row-date range disagree (the disambiguation the user resolves). ISO YYYY-MM-DD.
+export const StatementPeriodConflictSchema = z.object({
+    rowStart: z.string(),
+    rowEnd: z.string(),
+    statementStart: z.string(),
+    statementEnd: z.string(),
+});
+export type StatementPeriodConflict = z.infer<typeof StatementPeriodConflictSchema>;
+
 export const StatementRecordSchema = z.object({
     statementId: z.string(),
     userId: z.string(),                 // Cognito sub or 'prospect#{prospectId}'
@@ -75,6 +90,8 @@ export const StatementRecordSchema = z.object({
     accountLast4: z.string().nullish(),
     periodStart: z.string().nullish(),  // YYYY-MM-DD
     periodEnd: z.string().nullish(),
+    periodSource: StatementPeriodSourceSchema.nullish(),
+    periodConflict: StatementPeriodConflictSchema.nullish(),
     verification: StatementVerificationSchema.nullish(),
     txnCount: z.number().int().nullish(),
     needsReviewCount: z.number().int().nullish(),

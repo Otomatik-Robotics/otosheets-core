@@ -3,7 +3,10 @@ import { getPg, type PgDb } from '../pg/client';
 import { statements } from '../pg/schema/statements';
 import { toRow, fromRow } from '../pg/rows';
 import { encodeKeysetToken, toKeyset } from '../pg/cursor';
-import type { StatementRecord, StatementStatus, StatementVerification, StatementCreate } from './schema';
+import type {
+    StatementRecord, StatementStatus, StatementVerification, StatementCreate,
+    StatementPeriodSource, StatementPeriodConflict,
+} from './schema';
 
 export interface StatementPage {
     items: StatementRecord[];
@@ -128,6 +131,8 @@ export class StatementPgRepo {
         confirmedCount?: number;
         periodStart?: string | null;
         periodEnd?: string | null;
+        periodSource?: StatementPeriodSource | null;
+        periodConflict?: StatementPeriodConflict | null;
         bankName?: string | null;
         accountLast4?: string | null;
     }): Promise<void> {
@@ -138,6 +143,34 @@ export class StatementPgRepo {
                 updatedAt: new Date(),
             } as any)
             .where(eq(statements.statementId, statementId));
+    }
+
+    /**
+     * Apply a user's manual period choice (disambiguation modal): set the period,
+     * mark its source 'user', clear the stored conflict, and — when supplied —
+     * flip the status (typically NEEDS_REVIEW → VERIFIED once the conflict is the
+     * last thing holding review open). Scoped to the owner for tenancy; returns
+     * false when no row matched.
+     */
+    async resolvePeriod(userId: string, statementId: string, input: {
+        periodStart: string;
+        periodEnd: string;
+        status?: StatementStatus;
+    }): Promise<boolean> {
+        const updated = await this.db.update(statements)
+            .set({
+                ...toRow(statements, {
+                    periodStart: input.periodStart,
+                    periodEnd: input.periodEnd,
+                    periodSource: 'user' as StatementPeriodSource,
+                    periodConflict: null,
+                    ...(input.status ? { status: input.status } : {}),
+                }, 'statement'),
+                updatedAt: new Date(),
+            } as any)
+            .where(and(eq(statements.statementId, statementId), eq(statements.userId, userId)))
+            .returning({ statementId: statements.statementId });
+        return updated.length > 0;
     }
 
     /**
