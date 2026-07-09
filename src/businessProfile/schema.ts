@@ -74,9 +74,50 @@ export type BusinessProfileCreateRequest = z.infer<typeof BusinessProfileCreateR
  * Fully-resolved profile — every consumer reads this shape via
  * `resolveBusinessProfile(orgId)`, with tax defaults applied so no downstream
  * fallback chains are needed.
+ *
+ * Declared as an explicit interface (not `extends BusinessProfile`): the
+ * `z.infer<>` alias does not always resolve its members across a package
+ * boundary, which would leave consumers seeing only the three defaulted fields.
  */
-export interface ResolvedBusinessProfile extends BusinessProfile {
-    taxLabel: string;      // defaulted to 'GST'
-    taxRate: number;       // defaulted to 10
-    gstRegistered: boolean; // defaulted to false
+export interface ResolvedBusinessProfile {
+    businessProfileId: string;
+    orgId: string;
+    // Identity
+    businessName?: string | null;
+    legalName?: string | null;
+    tradeName?: string | null;
+    abn?: string | null;
+    acn?: string | null;
+    // Tax (defaults applied)
+    gstRegistered: boolean;
+    taxRate: number;
+    taxLabel: string;
+    // Contact / address
+    phone?: string | null;
+    businessEmail?: string | null;
+    website?: string | null;
+    address?: string | null;
+    suburb?: string | null;
+    state?: string | null;
+    postcode?: string | null;
+    // Banking
+    bankDetails?: string | null;
+    // Branding
+    logoKey?: string | null;
+    brandColor?: string | null;
+    accentColor?: string | null;
+    template?: string | null;
+    footerText?: string | null;
+    paymentInstructions?: string | null;
+    // AI-knowledge / marketing
+    about?: string | null;
+    serviceAreas?: string[] | null;
+    targetCustomers?: string[] | null;
+    uniqueSellingPoints?: string[] | null;
+    commonQuestions?: { q: string; a: string }[] | null;
+    chatbotTone?: 'casual' | 'friendly' | 'professional' | 'formal' | null;
+    chatbotInstructions?: string | null;
+    googleReviewUrl?: string | null;
+    createdAt: string;
+    updatedAt: string;
 }
