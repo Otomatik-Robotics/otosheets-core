@@ -26,9 +26,10 @@ export class TripPgRepo implements ITripRepo {
     async listAllOrgTrips(o: string) { return (await this.db.select().from(trips).where(eq(trips.orgId, o))).map(toDto); }
     async listUserTrips(o: string, userId: string) { return (await this.db.select().from(trips).where(and(eq(trips.orgId, o), eq(trips.ownerId, userId)))).map(toDto); }
     async listTripsByDate(o: string, from: string, to: string) { return (await this.db.select().from(trips).where(and(eq(trips.orgId, o), gte(trips.date, from), lte(trips.date, to)))).map(toDto); }
-    async listOrgTripsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Trip>> {
-        const { orgId, limit = 20, exclusiveStartKey, search, purpose, dateFrom, dateTo } = params;
+    async listOrgTripsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Trip>> {
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, search, purpose, dateFrom, dateTo } = params;
         const conds: any[] = [eq(trips.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(trips.businessProfileId, businessProfileId));
         if (search) { const like = `%${search}%`; conds.push(or(sql`${trips.startAddress} ILIKE ${like}`, sql`${trips.endAddress} ILIKE ${like}`)); }
         if (purpose) conds.push(eq(trips.purpose, purpose));
         if (dateFrom) conds.push(gte(trips.date, dateFrom));

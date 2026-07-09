@@ -39,9 +39,10 @@ export class LeadPgRepo implements ILeadRepo {
         const rows = await this.db.select().from(leads).where(eq(leads.orgId, orgId));
         return rows.map(toDto);
     }
-    async listOrgLeadsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>> {
-        const { orgId, limit = 20, exclusiveStartKey, stage, source, search } = params;
+    async listOrgLeadsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>> {
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, stage, source, search } = params;
         const conds: any[] = [eq(leads.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(leads.businessProfileId, businessProfileId));
         if (stage) conds.push(eq(leads.stage, stage));
         if (source) conds.push(eq(leads.source, source));
         if (search) { const like = `%${search}%`; conds.push(or(sql`${leads.clientName} ILIKE ${like}`, sql`${leads.clientEmail} ILIKE ${like}`, sql`${leads.suburb} ILIKE ${like}`)); }

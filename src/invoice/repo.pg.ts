@@ -116,8 +116,9 @@ export class InvoicePgRepo implements IInvoiceRepo {
     }
 
     async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
-        const { orgId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo } = params;
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
         const conds: any[] = [eq(invoices.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(invoices.businessProfileId, businessProfileId));
 
         // isPaymentLink: default excludes them (legacy-safe: null counts as not-a-link)
         if (isPaymentLink === true) conds.push(eq(invoices.isPaymentLink, true));
@@ -137,6 +138,8 @@ export class InvoicePgRepo implements IInvoiceRepo {
         }
         if (dueDateFrom) conds.push(gte(invoices.dueDate, dueDateFrom));
         if (dueDateTo) conds.push(lte(invoices.dueDate, dueDateTo));
+        if (dateFrom) conds.push(gte(invoices.date, dateFrom));
+        if (dateTo) conds.push(lte(invoices.date, dateTo));
 
         const cursor = keysetFromStartKey(exclusiveStartKey, 'invoiceId');
         if (cursor) {

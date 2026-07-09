@@ -5,6 +5,8 @@ import { PaginatedResult } from '../types';
 
 export interface ListClientsPaginatedParams {
     orgId: string;
+    /** When set, scope the list to this business profile (multi-profile isolation). */
+    businessProfileId?: string;
     limit?: number;
     exclusiveStartKey?: Record<string, any>;
     search?: string;
