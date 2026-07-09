@@ -36,6 +36,7 @@ export type ClientBase = z.infer<typeof ClientBaseSchema>;
 
 export const ClientStoredSchema = ClientBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     createdBy: z.string(),
 });
 export type Client = z.infer<typeof ClientStoredSchema>;

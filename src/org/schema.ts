@@ -22,6 +22,8 @@ export const OrgStoredSchema = z.object({
     emailSignature: z.string().nullish(),
     bookingSettings: z.any().nullish(),
     tradeSettings: z.any().nullish(),
+    /** Active business profile (FK → business_profiles). Every consumer resolves through this. */
+    businessProfileId: z.string().nullish(),
     stripeAccountId: z.string().nullish(),
     // ─── Per-org subscription & seats ───────────────────────────
     // The org is the billable unit: tier drives the CASL entitlement

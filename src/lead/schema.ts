@@ -44,6 +44,7 @@ export type LeadBase = z.infer<typeof LeadBaseSchema>;
 
 export const LeadStoredSchema = LeadBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     createdBy: z.string(),
 });

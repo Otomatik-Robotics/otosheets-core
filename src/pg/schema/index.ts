@@ -1,4 +1,5 @@
 export * from './identity';
+export * from './businessProfile';
 export * from './statements';
 export * from './bankFeeds';
 export * from './billingCore';

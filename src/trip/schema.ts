@@ -18,6 +18,7 @@ export type TripBase = z.infer<typeof TripBaseSchema>;
 
 export const TripStoredSchema = TripBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     createdBy: z.string(),
     dateSk: z.string().nullish(),

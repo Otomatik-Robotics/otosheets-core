@@ -20,6 +20,7 @@ export type TimeEntryBase = z.infer<typeof TimeEntryBaseSchema>;
 
 export const TimeEntryStoredSchema = TimeEntryBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     createdBy: z.string(),
 });

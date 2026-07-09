@@ -17,6 +17,7 @@ export const StatementStoredSchema = StatementBaseSchema.extend({
     userId: z.string(),
     sk: z.string(),
     organizationId: z.string().nullish(),
+    businessProfileId: z.string().nullish(),   // profile scope (nullable — guest uploads have no org)
 });
 export type Statement = z.infer<typeof StatementStoredSchema>;
 

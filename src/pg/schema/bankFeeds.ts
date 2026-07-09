@@ -20,6 +20,9 @@ export const bankAccounts = pgTable('bank_accounts', {
     accountId: text('account_id').primaryKey(),               // provider account id — deterministic
     userId: text('user_id').notNull(),
     organizationId: text('organization_id'),
+    // Profile scope — NULLABLE (see statements.ts): backfilled from
+    // orgs.business_profile_id where organizationId is present.
+    businessProfileId: text('business_profile_id'),
     provider: text('provider').notNull().default('fiskil'),
     consentId: text('consent_id'),
     institutionId: text('institution_id'),
@@ -37,6 +40,7 @@ export const bankAccounts = pgTable('bank_accounts', {
 }, (t) => [
     index('bank_accounts_user').on(t.userId),
     index('bank_accounts_org').on(t.organizationId),
+    index('bank_accounts_profile').on(t.businessProfileId),
 ]);
 
 export const bankTransactions = pgTable('bank_transactions', {

@@ -26,6 +26,7 @@ export type BookingBase = z.infer<typeof BookingBaseSchema>;
 
 export const BookingStoredSchema = BookingBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     createdBy: z.string(),
     dateSk: z.string().nullish(),

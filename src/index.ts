@@ -23,10 +23,12 @@ export * as pgSchema from './pg/schema';
 // Entity modules — each exports Repo class + Zod schema + inferred type
 export * from './user';
 export * from './org';
+export * from './businessProfile';
 export * from './membership';
 export * from './team';
 export * from './integration';
 export * from './accountingSync';
+export * from './accountantReporting';
 export * from './invoice';
 export * from './invoicePayment';
 export * from './client';

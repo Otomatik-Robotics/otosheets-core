@@ -10,6 +10,7 @@ export const BankAccountSchema = z.object({
     accountId: z.string(),               // provider account id — deterministic PK
     userId: z.string(),
     organizationId: z.string().nullish(),
+    businessProfileId: z.string().nullish(),   // profile scope (nullable — see statements)
     provider: z.string(),                // 'fiskil'
     consentId: z.string().nullish(),
     institutionId: z.string().nullish(),

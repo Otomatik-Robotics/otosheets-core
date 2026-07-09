@@ -21,6 +21,10 @@ export const statements = pgTable('statements', {
     statementId: text('statement_id').primaryKey(),          // ULID
     userId: text('user_id').notNull(),
     organizationId: text('organization_id'),
+    // Profile scope — NULLABLE (unlike the org-scoped operational tables): guest
+    // uploads (`userId = prospect#…`) have no org and therefore no profile.
+    // Backfilled from orgs.business_profile_id where organizationId is present.
+    businessProfileId: text('business_profile_id'),
     fy: text('fy').notNull(),                                 // '2025-26' (AU financial year)
     fileName: text('file_name'),
     fileType: text('file_type'),
@@ -54,6 +58,7 @@ export const statements = pgTable('statements', {
 }, (t) => [
     index('statements_user_fy').on(t.userId, t.fy),
     index('statements_org').on(t.organizationId, t.fy),
+    index('statements_profile').on(t.businessProfileId, t.fy),
     uniqueIndex('statements_dedupe').on(t.userId, t.contentHash),
 ]);
 
