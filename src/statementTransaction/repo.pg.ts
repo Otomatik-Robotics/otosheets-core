@@ -43,7 +43,17 @@ export interface AccountSummaryRow {
     accountLast4: string | null;
     inCents: number;   // credits (money in)
     outCents: number;  // debits (money out, positive number)
-    netCents: number;  // signed Σ of all amounts (bank movement)
+    /**
+     * Bank movement. Anchored to the statement balances — the latest closing
+     * minus the earliest opening — when both are available (authoritative, and
+     * robust to any unparsed rows); falls back to the signed Σ of amounts only
+     * when a statement carries no verified balances.
+     */
+    netCents: number;
+    /** Earliest statement's opening balance; null if no statement carried one. */
+    openingBalanceCents: number | null;
+    /** Latest statement's closing balance; null if no statement carried one. */
+    closingBalanceCents: number | null;
     txnCount: number;
     statementCount: number;
 }
@@ -359,7 +369,12 @@ export class StatementTransactionPgRepo {
             accountLast4: statements.accountLast4,
             inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
             outCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
-            netCents: sql<number>`COALESCE(SUM(${statementTransactions.amountCents}), 0)::bigint`,
+            txnNetCents: sql<number>`COALESCE(SUM(${statementTransactions.amountCents}), 0)::bigint`,
+            // Statement balances live on the parent statement (verification json).
+            // Pick the earliest statement's opening and the latest's closing —
+            // FILTER drops statements with no verified balance, ORDER picks by period.
+            openingBalanceCents: sql<number | null>`(array_agg((${statements.verification} ->> 'openingBalanceCents')::bigint ORDER BY ${statements.periodStart} ASC NULLS LAST, ${statements.createdAt} ASC) FILTER (WHERE (${statements.verification} ->> 'openingBalanceCents') IS NOT NULL))[1]`,
+            closingBalanceCents: sql<number | null>`(array_agg((${statements.verification} ->> 'closingBalanceCents')::bigint ORDER BY ${statements.periodEnd} DESC NULLS LAST, ${statements.createdAt} DESC) FILTER (WHERE (${statements.verification} ->> 'closingBalanceCents') IS NOT NULL))[1]`,
             txnCount: sql<number>`COUNT(*)::int`,
             statementCount: sql<number>`COUNT(DISTINCT ${statementTransactions.statementId})::int`,
         })
@@ -368,15 +383,24 @@ export class StatementTransactionPgRepo {
             .where(and(...conditions))
             .groupBy(statements.bankName, statements.accountLast4)
             .orderBy(sql`COALESCE(SUM(${statementTransactions.amountCents}), 0) DESC`);
-        return rows.map((r) => ({
-            bankName: r.bankName ?? null,
-            accountLast4: r.accountLast4 ?? null,
-            inCents: Number(r.inCents),
-            outCents: Number(r.outCents),
-            netCents: Number(r.netCents),
-            txnCount: Number(r.txnCount),
-            statementCount: Number(r.statementCount),
-        }));
+        return rows.map((r) => {
+            const opening = r.openingBalanceCents != null ? Number(r.openingBalanceCents) : null;
+            const closing = r.closingBalanceCents != null ? Number(r.closingBalanceCents) : null;
+            const txnNet = Number(r.txnNetCents);
+            return {
+                bankName: r.bankName ?? null,
+                accountLast4: r.accountLast4 ?? null,
+                inCents: Number(r.inCents),
+                outCents: Number(r.outCents),
+                // Balance-anchored net (closing − opening) when we have both; the
+                // transaction sum is only the fallback.
+                netCents: opening != null && closing != null ? closing - opening : txnNet,
+                openingBalanceCents: opening,
+                closingBalanceCents: closing,
+                txnCount: Number(r.txnCount),
+                statementCount: Number(r.statementCount),
+            };
+        });
     }
 
     /**
