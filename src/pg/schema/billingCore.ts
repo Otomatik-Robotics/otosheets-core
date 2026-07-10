@@ -31,6 +31,7 @@ import { orgs } from './identity';
 export const clients = pgTable('clients', {
     clientId: text('client_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
+    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     createdBy: text('created_by').notNull(),
     isCompany: boolean('is_company'),
     firstName: text('first_name'),
@@ -53,6 +54,7 @@ export const clients = pgTable('clients', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('clients_org_created_idx').on(t.orgId, t.createdAt.desc()),
+    index('clients_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
     index('clients_name_trgm').using('gin', sql`${t.name} gin_trgm_ops`),
     index('clients_org_email_idx').on(t.orgId, t.email),   // plain, not unique (see identity email lesson)
     index('clients_org_usage_idx').on(t.orgId, t.paymentLinkUsageCount.desc()),  // replaces UsageCountIndex
@@ -75,6 +77,7 @@ export const clientContacts = pgTable('client_contacts', {
 export const invoices = pgTable('invoices', {
     invoiceId: text('invoice_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
+    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),       // Dynamo sk prefix — ownership source of truth
     createdBy: text('created_by').notNull(),
     invoiceNumber: text('invoice_number').notNull(),
@@ -107,6 +110,8 @@ export const invoices = pgTable('invoices', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('invoices_org_created_idx').on(t.orgId, t.createdAt.desc()),        // list default
+    index('invoices_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
+    index('invoices_profile_status_due_idx').on(t.businessProfileId, t.status, t.dueDate),
     index('invoices_org_status_due_idx').on(t.orgId, t.status, t.dueDate),    // overdue queries
     index('invoices_client_idx').on(t.clientId),
     index('invoices_number_trgm').using('gin', sql`${t.invoiceNumber} gin_trgm_ops`),
@@ -132,6 +137,7 @@ export const invoicePayments = pgTable('invoice_payments', {
     paymentId: text('payment_id').primaryKey(),
     invoiceId: text('invoice_id').notNull().references(() => invoices.invoiceId, { onDelete: 'cascade' }),
     orgId: text('org_id').notNull().references(() => orgs.orgId),
+    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     userId: text('user_id'),                   // nullable: Dynamo stores it sparsely
     amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
     method: text('method').notNull(),
@@ -142,6 +148,7 @@ export const invoicePayments = pgTable('invoice_payments', {
 }, (t) => [
     index('invoice_payments_invoice_idx').on(t.invoiceId),
     index('invoice_payments_org_date_idx').on(t.orgId, t.date.desc()),
+    index('invoice_payments_profile_date_idx').on(t.businessProfileId, t.date.desc()),
     // webhook idempotency: a Stripe payment intent can only be recorded once
     uniqueIndex('invoice_payments_stripe_pi_uq').on(t.stripePaymentIntentId)
         .where(sql`stripe_payment_intent_id IS NOT NULL`),

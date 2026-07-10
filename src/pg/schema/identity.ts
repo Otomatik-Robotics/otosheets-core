@@ -85,6 +85,10 @@ export const orgs = pgTable('orgs', {
     emailSignature: text('email_signature'),
     bookingSettings: jsonb('booking_settings'),
     tradeSettings: jsonb('trade_settings'),
+    // Active business profile — points at the business_profiles row every consumer
+    // resolves through. Plain column (no hard FK) to avoid the orgs↔business_profiles
+    // insert-order cycle; integrity is app-level. See businessProfile.ts.
+    businessProfileId: text('business_profile_id'),
     stripeAccountId: text('stripe_account_id'),
     subscriptionTier: text('subscription_tier').notNull().default('free'),
     subscriptionStatus: text('subscription_status'),

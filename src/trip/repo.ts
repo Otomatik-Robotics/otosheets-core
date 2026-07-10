@@ -11,7 +11,7 @@ export interface ITripRepo {
     listAllOrgTrips(orgId: string): Promise<Trip[]>;
     listUserTrips(orgId: string, userId: string): Promise<Trip[]>;
     listTripsByDate(orgId: string, from: string, to: string): Promise<Trip[]>;
-    listOrgTripsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Trip>>;
+    listOrgTripsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Trip>>;
     createTrip(orgId: string, userId: string, tripId: string, data: Record<string, any>): Promise<void>;
     deleteTrip(orgId: string, userId: string, tripId: string): Promise<void>;
     upsertTrip(trip: Trip): Promise<void>;

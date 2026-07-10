@@ -84,12 +84,13 @@ export class ClientPgRepo implements IClientRepo {
     }
 
     async listClientsPaginated(params: {
-        orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>;
+        orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>;
         search?: string; dateFrom?: string; dateTo?: string;
         archived?: 'active' | 'archived' | 'all';
     }): Promise<PaginatedResult<Client>> {
-        const { orgId, limit = 20, exclusiveStartKey, search, dateFrom, dateTo, archived = 'active' } = params;
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, search, dateFrom, dateTo, archived = 'active' } = params;
         const conds: any[] = [eq(clients.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(clients.businessProfileId, businessProfileId));
         if (archived === 'active') conds.push(sql`${clients.archived} IS NOT TRUE`);
         else if (archived === 'archived') conds.push(eq(clients.archived, true));
         if (search) {

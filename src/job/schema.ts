@@ -49,6 +49,7 @@ export type JobBase = z.infer<typeof JobBaseSchema>;
 
 export const JobStoredSchema = JobBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     createdBy: z.string(),
     scheduledDateSk: z.string().nullish(),

@@ -10,7 +10,7 @@ export interface ILeadRepo {
     findLeadByIdInOrg(orgId: string, leadId: string): Promise<{ lead: Lead; ownerId: string } | null>;
     listUserLeads(orgId: string, userId: string): Promise<Lead[]>;
     listAllOrgLeads(orgId: string): Promise<Lead[]>;
-    listOrgLeadsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>>;
+    listOrgLeadsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>>;
     findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
     countOrgLeads(orgId: string): Promise<number>;
     listRecentLeads(orgId: string, since: string): Promise<Lead[]>;

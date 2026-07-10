@@ -13,6 +13,7 @@ import { orgs } from './identity';
 export const pipelines = pgTable('pipelines', {
     pipelineId: text('pipeline_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
+    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     createdBy: text('created_by').notNull(),
     name: text('name').notNull(),
     description: text('description'),
@@ -24,11 +25,13 @@ export const pipelines = pgTable('pipelines', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('pipelines_org_idx').on(t.orgId),
+    index('pipelines_profile_idx').on(t.businessProfileId),
 ]);
 
 export const leads = pgTable('leads', {
     leadId: text('lead_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
+    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),       // Dynamo sk prefix (= createdBy)
     createdBy: text('created_by').notNull(),
     source: text('source'),
@@ -61,6 +64,8 @@ export const leads = pgTable('leads', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('leads_org_created_idx').on(t.orgId, t.createdAt.desc()),
+    index('leads_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
+    index('leads_profile_stage_idx').on(t.businessProfileId, t.stage, t.createdAt.desc()),
     index('leads_org_stage_idx').on(t.orgId, t.stage, t.createdAt.desc()),
     index('leads_org_source_idx').on(t.orgId, t.source),
     index('leads_sender_idx').on(t.orgId, t.senderId),
@@ -71,6 +76,7 @@ export const leads = pgTable('leads', {
 export const bookings = pgTable('bookings', {
     bookingId: text('booking_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
+    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),
     createdBy: text('created_by').notNull(),
     date: text('booking_date'),
@@ -91,6 +97,7 @@ export const bookings = pgTable('bookings', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('bookings_org_created_idx').on(t.orgId, t.createdAt.desc()),
+    index('bookings_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
     index('bookings_org_date_idx').on(t.orgId, t.date),
     index('bookings_lead_idx').on(t.leadId),
 ]);

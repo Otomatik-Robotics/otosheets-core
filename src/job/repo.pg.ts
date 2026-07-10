@@ -42,9 +42,10 @@ export class JobPgRepo implements IJobRepo {
         const r = await this.db.select().from(jobs).where(and(eq(jobs.orgId, orgId), gte(jobs.scheduledDate, from), lte(jobs.scheduledDate, to)));
         return r.map(toDto);
     }
-    async listOrgJobsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; clientId?: string; search?: string; memberId?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Job>> {
-        const { orgId, limit = 20, exclusiveStartKey, status, clientId, search, memberId, dateFrom, dateTo } = params;
+    async listOrgJobsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; clientId?: string; search?: string; memberId?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Job>> {
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status, clientId, search, memberId, dateFrom, dateTo } = params;
         const conds: any[] = [eq(jobs.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(jobs.businessProfileId, businessProfileId));
         if (status) conds.push(eq(jobs.status, status));
         if (clientId) conds.push(eq(jobs.clientId, clientId));
         if (search) { const like = `%${search}%`; conds.push(or(sql`${jobs.title} ILIKE ${like}`, sql`${jobs.address} ILIKE ${like}`)); }

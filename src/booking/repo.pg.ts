@@ -35,9 +35,10 @@ export class BookingPgRepo implements IBookingRepo {
         const rows = await this.db.select().from(bookings).where(eq(bookings.orgId, orgId));
         return rows.map(toDto);
     }
-    async listOrgBookingsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; }): Promise<PaginatedResult<Booking>> {
-        const { orgId, limit = 20, exclusiveStartKey, status } = params;
+    async listOrgBookingsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; }): Promise<PaginatedResult<Booking>> {
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status } = params;
         const conds: any[] = [eq(bookings.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(bookings.businessProfileId, businessProfileId));
         if (status) conds.push(eq(bookings.status, status));
         const cursor = keysetFromStartKey(exclusiveStartKey, 'bookingId');
         if (cursor) conds.push(or(lt(bookings.createdAt, new Date(cursor.createdAt)), and(eq(bookings.createdAt, new Date(cursor.createdAt)), lt(bookings.bookingId, cursor.id))));

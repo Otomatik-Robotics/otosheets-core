@@ -14,6 +14,7 @@ export type InvoicePaymentBase = z.infer<typeof InvoicePaymentBaseSchema>;
 
 export const InvoicePaymentStoredSchema = InvoicePaymentBaseSchema.extend({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     userId: z.string(),
 });

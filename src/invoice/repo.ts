@@ -7,6 +7,8 @@ import { PaginatedResult } from '../types';
 
 export interface ListInvoicesPaginatedParams {
     orgId: string;
+    /** When set, scope the list to this business profile (multi-profile isolation). */
+    businessProfileId?: string;
     limit?: number;
     exclusiveStartKey?: Record<string, any>;
     status?: string;
@@ -17,6 +19,9 @@ export interface ListInvoicesPaginatedParams {
     search?: string;
     dueDateFrom?: string;
     dueDateTo?: string;
+    /** Inclusive YYYY-MM-DD bounds on the invoice issue date (DTO `date`). */
+    dateFrom?: string;
+    dateTo?: string;
 }
 
 /** Store-agnostic contract — implemented by InvoiceDynamoRepo and InvoicePgRepo; InvoiceRepo (factory.ts) routes. */
@@ -67,7 +72,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
     }
 
     async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
-        const { orgId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo } = params;
+        const { orgId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
 
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
@@ -133,6 +138,17 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             if (!names['#dueDate']) names['#dueDate'] = 'dueDate';
             filterParts.push('#dueDate <= :dueDateTo');
             values[':dueDateTo'] = dueDateTo;
+        }
+
+        if (dateFrom) {
+            filterParts.push('#issueDate >= :issueDateFrom');
+            names['#issueDate'] = 'date';
+            values[':issueDateFrom'] = dateFrom;
+        }
+        if (dateTo) {
+            if (!names['#issueDate']) names['#issueDate'] = 'date';
+            filterParts.push('#issueDate <= :issueDateTo');
+            values[':issueDateTo'] = dateTo;
         }
 
         const result = await this.ddb.query({

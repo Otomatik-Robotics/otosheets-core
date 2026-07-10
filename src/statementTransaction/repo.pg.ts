@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, isNotNull, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
-import { statementTransactions } from '../pg/schema/statements';
+import { statementTransactions, statements } from '../pg/schema/statements';
 import { toRow, fromRow } from '../pg/rows';
 import type { StatementTransaction, StatementTransactionCategoryPatch } from './schema';
 
@@ -30,6 +30,22 @@ export interface TxnSummaryScope {
     /** Inclusive YYYY-MM-DD bounds on txn_date — BAS month/quarter/year views. */
     dateFrom?: string;
     dateTo?: string;
+}
+
+/**
+ * One bank account's rollup — transactions grouped by the parent statement's
+ * detected bank + account. `netCents` is the true movement (Σ of every amount,
+ * incl. transfers) = closing − opening across the account's statements. Rows
+ * with an undetected account (both fields null) collapse into one group.
+ */
+export interface AccountSummaryRow {
+    bankName: string | null;
+    accountLast4: string | null;
+    inCents: number;   // credits (money in)
+    outCents: number;  // debits (money out, positive number)
+    netCents: number;  // signed Σ of all amounts (bank movement)
+    txnCount: number;
+    statementCount: number;
 }
 
 /** One row of the deterministic money-flow tally. All money is integer cents. */
@@ -327,6 +343,39 @@ export class StatementTransactionPgRepo {
             inCents: Number(r.inCents),
             outCents: Number(r.outCents),
             txnCount: Number(r.txnCount),
+        }));
+    }
+
+    /**
+     * Per-account rollup — transactions grouped by the parent statement's
+     * detected bank + account (JOIN to statements). `netCents` is the true
+     * bank movement (signed Σ of every amount, incl. transfers). Ordered by
+     * net descending; an undetected account (both null) is one group.
+     */
+    async summariseByAccount(scope: TxnSummaryScope): Promise<AccountSummaryRow[]> {
+        const conditions = this.scopeConditions(scope, 'summariseByAccount');
+        const rows = await this.db.select({
+            bankName: statements.bankName,
+            accountLast4: statements.accountLast4,
+            inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            outCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
+            netCents: sql<number>`COALESCE(SUM(${statementTransactions.amountCents}), 0)::bigint`,
+            txnCount: sql<number>`COUNT(*)::int`,
+            statementCount: sql<number>`COUNT(DISTINCT ${statementTransactions.statementId})::int`,
+        })
+            .from(statementTransactions)
+            .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
+            .where(and(...conditions))
+            .groupBy(statements.bankName, statements.accountLast4)
+            .orderBy(sql`COALESCE(SUM(${statementTransactions.amountCents}), 0) DESC`);
+        return rows.map((r) => ({
+            bankName: r.bankName ?? null,
+            accountLast4: r.accountLast4 ?? null,
+            inCents: Number(r.inCents),
+            outCents: Number(r.outCents),
+            netCents: Number(r.netCents),
+            txnCount: Number(r.txnCount),
+            statementCount: Number(r.statementCount),
         }));
     }
 

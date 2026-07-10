@@ -9,7 +9,7 @@ export interface IBookingRepo {
     getBooking(orgId: string, userId: string, bookingId: string): Promise<Booking | null>;
     findBookingByIdInOrg(orgId: string, bookingId: string): Promise<{ booking: Booking; ownerId: string } | null>;
     listAllOrgBookings(orgId: string): Promise<Booking[]>;
-    listOrgBookingsPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; }): Promise<PaginatedResult<Booking>>;
+    listOrgBookingsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; }): Promise<PaginatedResult<Booking>>;
     listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]>;
     createBooking(orgId: string, userId: string, bookingId: string, data: Record<string, any>): Promise<void>;
     updateBooking(orgId: string, userId: string, bookingId: string, updates: Record<string, any>): Promise<void>;
