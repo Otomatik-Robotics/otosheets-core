@@ -13,6 +13,7 @@ export const LAUNCH_STEP_IDS = [
     'stripe_connected',
     'payment_links_created',
     // Phase C
+    'domain_purchase',
     'domain_requested',
     'domain_delegated',
     'domain_attached',
