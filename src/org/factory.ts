@@ -61,6 +61,18 @@ export class RoutingOrgRepo implements IOrgRepo {
         await this.mirrorEntity(route, orgId, 'updateOrg');
     }
 
+    async setBusinessProfileIdIfUnset(
+        orgId: string,
+        businessProfileId: string,
+    ): Promise<{ won: boolean; businessProfileId: string }> {
+        const route = await resolveRoute(DOMAIN);
+        const result = await this.pick(route).setBusinessProfileIdIfUnset(orgId, businessProfileId);
+        // Propagate the (possibly no-op) claim to the mirror by re-reading the
+        // primary's fresh org — converges the mirror on whichever id won.
+        await this.mirrorEntity(route, orgId, 'setBusinessProfileIdIfUnset');
+        return result;
+    }
+
     async upsertOrg(org: Organization): Promise<void> {
         const route = await resolveRoute(DOMAIN);
         await this.pick(route).upsertOrg(org);

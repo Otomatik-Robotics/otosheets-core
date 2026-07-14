@@ -8,6 +8,18 @@ export interface IOrgRepo {
     getOrgBySlug(slug: string): Promise<Organization | null>;
     createOrg(orgId: string, data: Record<string, any>): Promise<void>;
     updateOrg(orgId: string, updates: Record<string, any>): Promise<void>;
+    /**
+     * Atomically claim the org's active business profile — sets
+     * `businessProfileId` only if it is currently unset. Returns whether this
+     * call won the claim and the id that is now authoritative (on a loss, the
+     * winner's id). The lazy seeding path relies on this so concurrent first
+     * requests on a profile-less org converge on a single profile instead of
+     * each minting one (idempotency standard §2).
+     */
+    setBusinessProfileIdIfUnset(
+        orgId: string,
+        businessProfileId: string,
+    ): Promise<{ won: boolean; businessProfileId: string }>;
     /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
     upsertOrg(org: Organization): Promise<void>;
 }
@@ -63,5 +75,25 @@ export class OrgDynamoRepo implements IOrgRepo {
             ExpressionAttributeNames: names,
             ExpressionAttributeValues: values,
         });
+    }
+
+    async setBusinessProfileIdIfUnset(
+        orgId: string,
+        businessProfileId: string,
+    ): Promise<{ won: boolean; businessProfileId: string }> {
+        try {
+            await this.ddb.update(Tables.ORGANIZATIONS, { orgId }, {
+                UpdateExpression: 'SET #bp = :bp, #updatedAt = :updatedAt',
+                ConditionExpression: 'attribute_exists(orgId) AND attribute_not_exists(#bp)',
+                ExpressionAttributeNames: { '#bp': 'businessProfileId', '#updatedAt': 'updatedAt' },
+                ExpressionAttributeValues: { ':bp': businessProfileId, ':updatedAt': new Date().toISOString() },
+            });
+            return { won: true, businessProfileId };
+        } catch (err: any) {
+            // Lost the race (or already set) — re-read and defer to the winner.
+            if (err?.name !== 'ConditionalCheckFailedException') throw err;
+            const existing = await this.getOrg(orgId);
+            return { won: false, businessProfileId: existing?.businessProfileId ?? businessProfileId };
+        }
     }
 }

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { orgs } from '../pg/schema/identity';
 import { toRow, fromRow } from '../pg/rows';
@@ -38,6 +38,23 @@ export class OrgPgRepo implements IOrgRepo {
         await this.db.update(orgs)
             .set({ ...toRow(orgs, updates, 'org'), updatedAt: new Date() } as any)
             .where(eq(orgs.orgId, orgId));
+    }
+
+    async setBusinessProfileIdIfUnset(
+        orgId: string,
+        businessProfileId: string,
+    ): Promise<{ won: boolean; businessProfileId: string }> {
+        // Single atomic UPDATE ... WHERE business_profile_id IS NULL — only one
+        // concurrent caller's row matches, so exactly one wins the claim.
+        const updated = await this.db.update(orgs)
+            .set({ businessProfileId, updatedAt: new Date() })
+            .where(and(eq(orgs.orgId, orgId), isNull(orgs.businessProfileId)))
+            .returning({ businessProfileId: orgs.businessProfileId });
+        if (updated[0]?.businessProfileId) return { won: true, businessProfileId: updated[0].businessProfileId };
+        // Lost (already set) — re-read and defer to the winner's id.
+        const rows = await this.db.select({ businessProfileId: orgs.businessProfileId })
+            .from(orgs).where(eq(orgs.orgId, orgId)).limit(1);
+        return { won: false, businessProfileId: rows[0]?.businessProfileId ?? businessProfileId };
     }
 
     /** Full-entity mirror upsert — last-writer-wins on updatedAt (§6.1). */
