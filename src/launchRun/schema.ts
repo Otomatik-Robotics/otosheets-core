@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 /** Business Launcher steps. Order here is display order on the checklist. */
 export const LAUNCH_STEP_IDS = [
+    'name_check',
     'abn_verify',
     'profile_saved',
     'media_collected',
@@ -13,6 +14,7 @@ export const LAUNCH_STEP_IDS = [
     'stripe_connected',
     'payment_links_created',
     // Phase C
+    'domain_purchase',
     'domain_requested',
     'domain_delegated',
     'domain_attached',

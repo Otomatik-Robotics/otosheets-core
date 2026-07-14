@@ -66,3 +66,4 @@ export * from './priceBook';
 export * from './site';
 export * from './launchRun';
 export * from './socialPost';
+export * from './domainPurchase';

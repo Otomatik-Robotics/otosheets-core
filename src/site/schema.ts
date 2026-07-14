@@ -43,6 +43,55 @@ export interface SiteCustomDomain {
 /** Sparse-GSI marker value set while any custom domain is in a non-terminal state. */
 export const DOMAINS_PENDING_KEY = 'DOMAIN_PENDING';
 
+// ─── Site posts ("Updates" blog) ─────────────────────────────────────────────
+
+/** Post summary kept in the site row's `posts` registry — the public /updates
+ *  index and the owner's post list render from this map without touching the
+ *  post rows themselves (the site row is already loaded on every render). */
+export const SitePostSummarySchema = z.object({
+    postId: z.string(),
+    /** URL slug, unique per site — immutable after create (it IS the row key). */
+    slug: z.string(),
+    title: z.string(),
+    status: z.enum(['draft', 'published']),
+    heroImageUrl: z.string().optional(),
+    publishedAt: z.string().optional(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+});
+export interface SitePostSummary {
+    postId: string;
+    slug: string;
+    title: string;
+    status: 'draft' | 'published';
+    heroImageUrl?: string;
+    publishedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Full post row, stored in the sites table under postHostKey(siteSlug, slug).
+ *  The '#' in the key makes it collision-free with real hostnames, and
+ *  attribute_not_exists(host) on create gives per-site slug uniqueness. */
+export const SitePostSchema = SitePostSummarySchema.extend({
+    siteSlug: z.string(),
+    /** Structured content blocks — validated against the storefront block
+     *  schema at the handler boundary, exactly like Site.config. */
+    blocks: z.array(z.unknown()),
+});
+export interface SitePost extends SitePostSummary {
+    siteSlug: string;
+    blocks: unknown[];
+}
+
+/** Sites-table PK for a post row. */
+export function postHostKey(siteSlug: string, postSlug: string): string {
+    return `post#${siteSlug}#${postSlug}`;
+}
+
+/** Registry cap — a bounded map on the site item, like `assets`. */
+export const SITE_POSTS_MAX = 200;
+
 export const SiteSchema = z.object({
     /** PK. Canonical rows: the subdomain label (e.g. "joesmowing"). Alias rows: the full custom domain. */
     host: z.string(),
@@ -72,6 +121,8 @@ export const SiteSchema = z.object({
         alt: z.string().optional(),
         createdAt: z.string(),
     })).optional(),
+    /** Post registry, keyed by postId — summaries only; bodies live in post rows. */
+    posts: z.record(z.string(), SitePostSummarySchema).optional(),
     publishedAt: z.string().optional(),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -98,6 +149,7 @@ export interface Site {
     domainsPendingKey?: string;
     previewToken?: string;
     assets?: Record<string, SiteAsset>;
+    posts?: Record<string, SitePostSummary>;
     publishedAt?: string;
     createdAt: string;
     updatedAt: string;
