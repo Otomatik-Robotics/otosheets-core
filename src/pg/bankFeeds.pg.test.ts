@@ -4,7 +4,10 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { runMigrations, type SqlExecutor } from './migrate';
 import type { PgDb } from './client';
-import { BankAccountPgRepo } from '../bankAccount/repo.pg';
+import {
+    BankAccountPgRepo, matchStatementAccount, statementAccountId, last4Digits,
+} from '../bankAccount/repo.pg';
+import type { BankAccount } from '../bankAccount/schema';
 import { BankTransactionPgRepo } from '../bankTransaction/repo.pg';
 
 let db: PgDb;
@@ -80,6 +83,62 @@ describe('BankAccountPgRepo', () => {
         const acct = await repo().getAccount(USER, ACCT);
         expect(acct!.status).toBe('DISCONNECTED');
         await repo().upsertAccount(account()); // reconnect for later tests
+    });
+});
+
+describe('statement-account unification', () => {
+    const repo = () => new BankAccountPgRepo(db);
+
+    it('last4Digits normalises masked/formatted numbers', () => {
+        expect(last4Digits('xxxx1234')).toBe('1234');
+        expect(last4Digits('062-000 12345678')).toBe('5678');
+        expect(last4Digits('123')).toBeNull();
+        expect(last4Digits(null)).toBeNull();
+    });
+
+    it('matchStatementAccount: last-4 + institution containment, feed account preferred', () => {
+        const feed = { accountId: 'f1', provider: 'fiskil', institutionName: 'Commonwealth Bank', accountNumberMasked: 'xxxx1234', status: 'ACTIVE' } as BankAccount;
+        const stmt = { accountId: 's1', provider: 'statement', institutionName: 'Commonwealth Bank', accountNumberMasked: '1234', status: 'ACTIVE' } as BankAccount;
+        const other = { accountId: 'f2', provider: 'fiskil', institutionName: 'Westpac', accountNumberMasked: 'xxxx1234', status: 'ACTIVE' } as BankAccount;
+        const gone = { accountId: 'f3', provider: 'fiskil', institutionName: 'Commonwealth Bank', accountNumberMasked: 'xxxx1234', status: 'DISCONNECTED' } as BankAccount;
+
+        // Feed account wins over the statement-derived twin.
+        expect(matchStatementAccount([stmt, feed], { bankName: 'Commonwealth Bank', accountLast4: '1234' })?.accountId).toBe('f1');
+        // Same last-4 at a different institution never matches.
+        expect(matchStatementAccount([other], { bankName: 'Commonwealth Bank', accountLast4: '1234' })).toBeNull();
+        // Disconnected accounts are ignored; no last-4 → no keying.
+        expect(matchStatementAccount([gone], { bankName: 'Commonwealth Bank', accountLast4: '1234' })).toBeNull();
+        expect(matchStatementAccount([feed], { bankName: 'Commonwealth Bank', accountLast4: null })).toBeNull();
+        // Unknown bank on the statement side still matches on last-4 alone.
+        expect(matchStatementAccount([feed], { bankName: null, accountLast4: '1234' })?.accountId).toBe('f1');
+    });
+
+    it('findOrCreateStatementAccount reuses the feed account when it matches', async () => {
+        const acct = await repo().findOrCreateStatementAccount({
+            userId: USER, bankName: 'CommBank', accountLast4: '1234',
+        });
+        // 'commbank' ⊄ 'commonwealthbank' — different normalised names, so a NEW
+        // statement account is created rather than silently merging.
+        expect(acct?.provider).toBe('statement');
+
+        const exact = await repo().findOrCreateStatementAccount({
+            userId: USER, bankName: 'Commonwealth Bank', accountLast4: '1234',
+        });
+        expect(exact?.accountId).toBe(ACCT); // reused the fiskil account
+    });
+
+    it('creates a deterministic statement account and is idempotent', async () => {
+        const input = { userId: USER, bankName: 'Westpac', accountLast4: '9876', organizationId: 'org_1' };
+        const first = await repo().findOrCreateStatementAccount(input);
+        const second = await repo().findOrCreateStatementAccount(input);
+        expect(first?.accountId).toBe(statementAccountId(USER, { bankName: 'Westpac', accountLast4: '9876' }));
+        expect(second?.accountId).toBe(first?.accountId);
+        expect(first).toMatchObject({
+            provider: 'statement', institutionName: 'Westpac',
+            accountNumberMasked: '9876', organizationId: 'org_1', status: 'ACTIVE',
+        });
+        // Identity too weak to key on → null, nothing created.
+        expect(await repo().findOrCreateStatementAccount({ userId: USER, bankName: 'ANZ', accountLast4: null })).toBeNull();
     });
 });
 

@@ -35,6 +35,12 @@ export const statements = pgTable('statements', {
     textractJobId: text('textract_job_id'),
     bankName: text('bank_name'),
     accountLast4: text('account_last4'),
+    // Soft link to bank_accounts — the stable account identity behind the
+    // denormalised bankName/accountLast4 strings. Statement-derived accounts
+    // are provider 'statement' rows; a matching open-banking (fiskil) account
+    // is reused so both ingestion sources share one identity. Null when the
+    // account couldn't be detected (or for guest/prospect uploads).
+    accountId: text('account_id'),
     // mode 'string' keeps calendar dates as plain 'YYYY-MM-DD' — never round-tripped
     // through a JS Date, which would shift them across the local timezone.
     periodStart: date('period_start', { mode: 'string' }),
@@ -59,6 +65,7 @@ export const statements = pgTable('statements', {
     index('statements_user_fy').on(t.userId, t.fy),
     index('statements_org').on(t.organizationId, t.fy),
     index('statements_profile').on(t.businessProfileId, t.fy),
+    index('statements_account').on(t.accountId),
     uniqueIndex('statements_dedupe').on(t.userId, t.contentHash),
 ]);
 
@@ -85,6 +92,13 @@ export const statementTransactions = pgTable('statement_transactions', {
     verificationFlags: jsonb('verification_flags'),           // string[] e.g. ['CHAIN_BREAK','UNPARSEABLE_AMOUNT']
     // deterministic money-flow class (pattern/sign derived, LLM-independent)
     flowClass: text('flow_class'),                            // INCOME | EXPENSE | TRANSFER | REFUND
+    // Cross-statement reconciliation layer (both null for ordinary rows):
+    // duplicateOfTxnId — this row was already ingested for the same account by an
+    // overlapping statement; duplicates are excluded from every summary/tally.
+    duplicateOfTxnId: text('duplicate_of_txn_id'),
+    // transferPairId — persisted internal-transfer pairing: the debit leg on one
+    // account and the credit leg on another share one id (the debit's txnId).
+    transferPairId: text('transfer_pair_id'),
     // categorisation (mutable annotation layer)
     category: text('category'),
     categorySource: text('category_source'),                  // RULE | AI | USER | ADVISOR

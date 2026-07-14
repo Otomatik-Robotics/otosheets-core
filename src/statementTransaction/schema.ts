@@ -52,6 +52,13 @@ export const StatementTransactionSchema = z.object({
     chainOk: z.boolean().nullish(),
     verificationFlags: z.array(z.string()).nullish(),
     flowClass: FlowClassSchema.nullish(),  // null on pre-column rows until reprocess
+    // Cross-statement reconciliation layer: set at ingest, both null for
+    // ordinary rows. A duplicate row (same account, same date/amount/description
+    // already ingested by an overlapping statement) is excluded from every
+    // summary; a transfer pair id ties the two legs of an internal transfer
+    // across accounts (the debit leg's txnId is the shared id).
+    duplicateOfTxnId: z.string().nullish(),
+    transferPairId: z.string().nullish(),
     category: z.string().nullish(),
     categorySource: CategorySourceSchema.nullish(),
     categoryConfidence: z.number().min(0).max(1).nullish(),

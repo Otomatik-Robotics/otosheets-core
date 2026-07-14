@@ -325,3 +325,98 @@ describe('StatementTransactionPgRepo', () => {
         expect((await repo().listByStatement('user_real', sid)).items).toHaveLength(1);
     });
 });
+
+describe('cross-statement reconciliation layer', () => {
+    const stmtRepo = () => new StatementPgRepo(db);
+    const txnRepo = () => new StatementTransactionPgRepo(db);
+    const RUSER = 'recon_user';
+    const ACCT = `stmt#${RUSER}#anz#4821`;
+    const SA = '01STATEMENTRECONA000000001'; // July
+    const SB = '01STATEMENTRECONB000000001'; // August (overlapping upload)
+
+    it('stamps accountId and lists an account\'s statements by period', async () => {
+        for (const [sid, periodStart, periodEnd] of [
+            [SB, '2025-08-01', '2025-08-31'], [SA, '2025-07-01', '2025-07-31'],
+        ] as const) {
+            await stmtRepo().createStatement({
+                statementId: sid, userId: RUSER, fy: '2025-26',
+                s3Key: `statements/${RUSER}/2025-26/${sid}.pdf`,
+            });
+            await stmtRepo().updateStatement(sid, {
+                accountId: ACCT, bankName: 'ANZ', accountLast4: '4821', periodStart, periodEnd,
+            });
+        }
+        const stamped = await stmtRepo().getStatement(RUSER, SA);
+        expect(stamped?.accountId).toBe(ACCT);
+
+        const siblings = await stmtRepo().listStatementsByAccount(RUSER, ACCT, { excludeStatementId: SB });
+        expect(siblings.map((s) => s.statementId)).toEqual([SA]); // self excluded
+        const all = await stmtRepo().listStatementsByAccount(RUSER, ACCT);
+        expect(all.map((s) => s.statementId)).toEqual([SA, SB]); // periodStart ascending
+    });
+
+    it('duplicate rows are excluded from summaries and the dedupe candidate set', async () => {
+        const t = (sid: string, seq: number, overrides: Record<string, any>) => ({
+            ...txn(seq, overrides), txnId: statementTxnId(sid, seq), statementId: sid, userId: RUSER,
+        });
+        await txnRepo().upsertTransactions([
+            t(SA, 1, { txnDate: '2025-07-30', amountCents: -5000, category: 'OFFICE', flowClass: 'EXPENSE' }),
+            t(SA, 2, { txnDate: '2025-07-31', amountCents: 20000, direction: 'CREDIT', category: 'INCOME', flowClass: 'INCOME' }),
+        ]);
+        // Statement B re-ingests SA#2 (overlapping period) — marked duplicate at ingest.
+        await txnRepo().upsertTransactions([
+            t(SB, 1, {
+                txnDate: '2025-07-31', amountCents: 20000, direction: 'CREDIT',
+                category: 'INCOME', flowClass: 'INCOME', duplicateOfTxnId: statementTxnId(SA, 2),
+            }),
+            t(SB, 2, { txnDate: '2025-08-02', amountCents: -3000, category: 'OFFICE', flowClass: 'EXPENSE' }),
+        ]);
+
+        const dup = await txnRepo().getTransaction(RUSER, SB, 1);
+        expect(dup?.duplicateOfTxnId).toBe(statementTxnId(SA, 2));
+
+        // Income counted once despite being ingested twice.
+        const cats = await txnRepo().summariseByCategory({ userId: RUSER, fy: '2025-26' });
+        expect(cats.find((r) => r.category === 'INCOME')).toMatchObject({ inCents: 20000, txnCount: 1 });
+        const flows = await txnRepo().summariseFlows({ userId: RUSER, fy: '2025-26' });
+        expect(flows.find((r) => r.flowClass === 'INCOME')).toMatchObject({ inCents: 20000, txnCount: 1 });
+
+        // The candidate set for a fresh ingest never contains duplicate rows,
+        // and excludes the statement being processed.
+        const candidates = await txnRepo().listAccountRowsForDedupe(RUSER, ACCT, {
+            dateFrom: '2025-07-01', dateTo: '2025-08-31', excludeStatementId: SB,
+        });
+        expect(candidates.map((c) => c.txnId)).toEqual([statementTxnId(SA, 1), statementTxnId(SA, 2)]);
+        const fromA = await txnRepo().listAccountRowsForDedupe(RUSER, ACCT, {
+            dateFrom: '2025-07-01', dateTo: '2025-08-31', excludeStatementId: SA,
+        });
+        expect(fromA.map((c) => c.txnId)).toEqual([statementTxnId(SB, 2)]); // SB#1 is a duplicate
+
+        // Rows listing still shows the duplicate (annotated, for the review UI).
+        expect((await txnRepo().listByStatement(RUSER, SB)).items).toHaveLength(2);
+    });
+
+    it('persists transfer pairs on existing legs and filters unpaired transfer rows', async () => {
+        const t = (sid: string, seq: number, overrides: Record<string, any>) => ({
+            ...txn(seq, overrides), txnId: statementTxnId(sid, seq), statementId: sid, userId: RUSER,
+        });
+        await txnRepo().upsertTransactions([
+            t(SA, 3, { txnDate: '2025-07-15', amountCents: -40000, flowClass: 'TRANSFER', description: 'TRANSFER TO SAVINGS' }),
+            t(SB, 3, { txnDate: '2025-08-16', amountCents: 40000, direction: 'CREDIT', flowClass: 'TRANSFER', description: 'TRANSFER FROM CHEQUE' }),
+        ]);
+        const unpaired = await txnRepo().listTransferRows({ userId: RUSER }, { unpairedOnly: true });
+        expect(unpaired).toHaveLength(2);
+        expect(unpaired[0].accountId).toBe(ACCT); // joined from the parent statement
+
+        const pairId = statementTxnId(SA, 3);
+        await txnRepo().setTransferPairIds([
+            { txnId: statementTxnId(SA, 3), transferPairId: pairId },
+            { txnId: statementTxnId(SB, 3), transferPairId: pairId },
+        ]);
+        expect((await txnRepo().getTransaction(RUSER, SA, 3))?.transferPairId).toBe(pairId);
+        expect(await txnRepo().listTransferRows({ userId: RUSER }, { unpairedOnly: true })).toHaveLength(0);
+        expect(await txnRepo().listTransferRows(
+            { userId: RUSER }, { excludeStatementId: SB },
+        )).toHaveLength(1);
+    });
+});

@@ -67,6 +67,23 @@ export const StatementVerificationSchema = z.object({
         refundCents: z.number().int(),
     }).nullish(),
     flowsReconciled: z.boolean().nullish(),
+    // Cross-statement continuity for the statement's account, evaluated at
+    // processing time against the account's other statements: does this
+    // statement's opening balance equal the adjacent prior statement's closing,
+    // and does its period overlap any sibling? `ok` is false on an overlap or
+    // an opening/closing mismatch (either sends the statement to review).
+    continuity: z.object({
+        accountId: z.string().nullish(),
+        priorStatementId: z.string().nullish(),
+        priorClosingBalanceCents: z.number().int().nullish(),
+        openingMatchesPriorClosing: z.boolean().nullish(),
+        /** Calendar days between the prior statement's periodEnd and this periodStart (1 = contiguous). */
+        gapDaysFromPrior: z.number().int().nullish(),
+        overlapStatementIds: z.array(z.string()).max(20).nullish(),
+        /** Rows of this statement marked duplicate_of_txn_id at ingest. */
+        duplicateTxnCount: z.number().int().nullish(),
+        ok: z.boolean().nullish(),
+    }).nullish(),
 });
 export type StatementVerification = z.infer<typeof StatementVerificationSchema>;
 
@@ -99,6 +116,9 @@ export const StatementRecordSchema = z.object({
     textractJobId: z.string().nullish(),
     bankName: z.string().nullish(),
     accountLast4: z.string().nullish(),
+    // Stable account identity (bank_accounts.account_id) behind the two
+    // denormalised strings above. Null when undetected or for guest uploads.
+    accountId: z.string().nullish(),
     periodStart: z.string().nullish(),  // YYYY-MM-DD
     periodEnd: z.string().nullish(),
     periodSource: StatementPeriodSourceSchema.nullish(),

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { statementTransactions, statements } from '../pg/schema/statements';
 import { toRow, fromRow } from '../pg/rows';
@@ -82,6 +82,17 @@ export interface CoverageSummaryRow {
 
 /** A transfer-class row, slim shape for cross-statement pairing. */
 export interface TransferRow {
+    txnId: string;
+    statementId: string;
+    /** The parent statement's stable account identity (null when undetected). */
+    accountId: string | null;
+    txnDate: string | null;
+    amountCents: number;
+    description: string | null;
+}
+
+/** A slim existing row, the dedupe comparison set for a fresh ingest. */
+export interface DedupeCandidateRow {
     txnId: string;
     statementId: string;
     txnDate: string | null;
@@ -289,7 +300,9 @@ export class StatementTransactionPgRepo {
         if (!scope.userId && !scope.organizationId) {
             throw new Error(`${caller} requires a userId or organizationId scope`);
         }
-        const conditions: any[] = [];
+        // Duplicate rows (re-ingested by an overlapping statement) never count
+        // toward any summary — they exist only for provenance/audit.
+        const conditions: any[] = [isNull(statementTransactions.duplicateOfTxnId)];
         if (scope.userId) conditions.push(eq(statementTransactions.userId, scope.userId));
         if (scope.statementId) conditions.push(eq(statementTransactions.statementId, scope.statementId));
         if (scope.fy) conditions.push(eq(statementTransactions.fy, scope.fy));
@@ -440,9 +453,60 @@ export class StatementTransactionPgRepo {
      * but the cap bounds the worst case; date-ordered so greedy pairing is
      * deterministic.
      */
-    async listTransferRows(scope: TxnSummaryScope, cap = 2000): Promise<TransferRow[]> {
+    async listTransferRows(
+        scope: TxnSummaryScope,
+        opts: { unpairedOnly?: boolean; excludeStatementId?: string; cap?: number } = {},
+    ): Promise<TransferRow[]> {
         const conditions = this.scopeConditions(scope, 'listTransferRows');
         conditions.push(eq(statementTransactions.flowClass, 'TRANSFER'));
+        if (opts.unpairedOnly) conditions.push(isNull(statementTransactions.transferPairId));
+        if (opts.excludeStatementId) {
+            conditions.push(ne(statementTransactions.statementId, opts.excludeStatementId));
+        }
+        const rows = await this.db.select({
+            txnId: statementTransactions.txnId,
+            statementId: statementTransactions.statementId,
+            accountId: statements.accountId,
+            txnDate: statementTransactions.txnDate,
+            amountCents: statementTransactions.amountCents,
+            description: statementTransactions.description,
+        })
+            .from(statementTransactions)
+            .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
+            .where(and(...conditions))
+            .orderBy(sql`COALESCE(${statementTransactions.txnDate}, ${EPOCH_DATE}::date)`, asc(statementTransactions.txnId))
+            .limit(opts.cap ?? 2000);
+        return rows.map((r) => ({
+            txnId: r.txnId,
+            statementId: r.statementId,
+            accountId: (r.accountId as string | null) ?? null,
+            txnDate: (r.txnDate as string | null) ?? null,
+            amountCents: Number(r.amountCents),
+            description: (r.description as string | null) ?? null,
+        }));
+    }
+
+    /**
+     * Existing non-duplicate rows of one account inside a date window — the
+     * comparison set a fresh ingest dedupes against (same account, another
+     * statement). Slim shape, capped; ordered for deterministic matching.
+     */
+    async listAccountRowsForDedupe(userId: string, accountId: string, opts: {
+        dateFrom: string;
+        dateTo: string;
+        excludeStatementId?: string;
+        cap?: number;
+    }): Promise<DedupeCandidateRow[]> {
+        const conditions: any[] = [
+            eq(statementTransactions.userId, userId),
+            eq(statements.accountId, accountId),
+            isNull(statementTransactions.duplicateOfTxnId),
+            sql`${statementTransactions.txnDate} >= ${opts.dateFrom}::date`,
+            sql`${statementTransactions.txnDate} <= ${opts.dateTo}::date`,
+        ];
+        if (opts.excludeStatementId) {
+            conditions.push(ne(statementTransactions.statementId, opts.excludeStatementId));
+        }
         const rows = await this.db.select({
             txnId: statementTransactions.txnId,
             statementId: statementTransactions.statementId,
@@ -451,9 +515,10 @@ export class StatementTransactionPgRepo {
             description: statementTransactions.description,
         })
             .from(statementTransactions)
+            .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
             .where(and(...conditions))
-            .orderBy(sql`COALESCE(${statementTransactions.txnDate}, ${EPOCH_DATE}::date)`, asc(statementTransactions.txnId))
-            .limit(cap);
+            .orderBy(asc(statementTransactions.txnDate), asc(statementTransactions.txnId))
+            .limit(opts.cap ?? 5000);
         return rows.map((r) => ({
             txnId: r.txnId,
             statementId: r.statementId,
@@ -461,6 +526,28 @@ export class StatementTransactionPgRepo {
             amountCents: Number(r.amountCents),
             description: (r.description as string | null) ?? null,
         }));
+    }
+
+    /**
+     * Persist transfer-pair ids on EXISTING rows (the counterpart legs living
+     * in other statements) — the fresh statement's own legs carry theirs
+     * through the ingest upsert. Idempotent single UPDATE per chunk.
+     */
+    async setTransferPairIds(updates: Array<{ txnId: string; transferPairId: string }>): Promise<void> {
+        const CHUNK = 200;
+        for (let i = 0; i < updates.length; i += CHUNK) {
+            const chunk = updates.slice(i, i + CHUNK);
+            const values = sql.join(
+                chunk.map((u) => sql`(${u.txnId}, ${u.transferPairId})`),
+                sql`, `,
+            );
+            await this.db.execute(sql`
+                UPDATE statement_transactions AS t
+                SET transfer_pair_id = v.pair_id, updated_at = now()
+                FROM (VALUES ${values}) AS v(txn_id, pair_id)
+                WHERE t.txn_id = v.txn_id
+            `);
+        }
     }
 
     /** Wipe a statement's transactions (reprocess path — FK cascade covers deletes). */
