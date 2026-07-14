@@ -13,6 +13,16 @@ export const CommonQuestionSchema = z.object({
     a: z.string(),
 });
 
+/** One day's trading hours; `closed` true means shut that day. */
+export const OperatingHoursDaySchema = z.object({
+    day: z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']),
+    closed: z.boolean().optional(),
+    open: z.string().optional(),  // "09:00"
+    close: z.string().optional(), // "17:00"
+});
+export type OperatingHoursDay = z.infer<typeof OperatingHoursDaySchema>;
+export const OperatingHoursSchema = z.array(OperatingHoursDaySchema);
+
 export const BusinessProfileStoredSchema = z.object({
     businessProfileId: z.string(),
     orgId: z.string(),
@@ -49,7 +59,10 @@ export const BusinessProfileStoredSchema = z.object({
     footerText: z.string().nullish(),
     paymentInstructions: z.string().nullish(),
 
-    // AI-knowledge / marketing
+    // AI-knowledge / marketing (also feed the website builder)
+    industry: z.string().nullish(),
+    businessSize: z.string().nullish(),
+    operatingHours: OperatingHoursSchema.nullish(),
     about: z.string().nullish(),
     serviceAreas: z.array(z.string()).nullish(),
     targetCustomers: z.array(z.string()).nullish(),
@@ -124,7 +137,10 @@ export interface ResolvedBusinessProfile {
     template?: string | null;
     footerText?: string | null;
     paymentInstructions?: string | null;
-    // AI-knowledge / marketing
+    // AI-knowledge / marketing (also feed the website builder)
+    industry?: string | null;
+    businessSize?: string | null;
+    operatingHours?: OperatingHoursDay[] | null;
     about?: string | null;
     serviceAreas?: string[] | null;
     targetCustomers?: string[] | null;

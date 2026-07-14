@@ -53,7 +53,10 @@ export const businessProfiles = pgTable('business_profiles', {
     footerText: text('footer_text'),
     paymentInstructions: text('payment_instructions'),
 
-    // ─── AI-knowledge / marketing ───────────────────────────────
+    // ─── AI-knowledge / marketing (also feed the website builder) ─
+    industry: text('industry'),
+    businessSize: text('business_size'),
+    operatingHours: jsonb('operating_hours'),
     about: text('about'),
     serviceAreas: jsonb('service_areas'),
     targetCustomers: jsonb('target_customers'),
