@@ -140,6 +140,22 @@ describe('statement-account unification', () => {
         // Identity too weak to key on → null, nothing created.
         expect(await repo().findOrCreateStatementAccount({ userId: USER, bankName: 'ANZ', accountLast4: null })).toBeNull();
     });
+
+    it('lists slim feed rows for statement dedupe, bounded by the date window', async () => {
+        const txnRepo = new BankTransactionPgRepo(db);
+        await txnRepo.upsertTransactions([txn('dedupe_probe_1')]);
+        const rows = await txnRepo.listRowsForDedupe(USER, ACCT, {
+            dateFrom: '2025-08-01', dateTo: '2025-08-31',
+        });
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows[0]).toMatchObject({
+            txnId: expect.any(String), txnDate: expect.any(String), amountCents: expect.any(Number),
+        });
+        expect(await txnRepo.listRowsForDedupe(USER, ACCT, {
+            dateFrom: '2030-01-01', dateTo: '2030-12-31',
+        })).toHaveLength(0);
+        await pglite.query("DELETE FROM bank_transactions WHERE txn_id = 'dedupe_probe_1'");
+    });
 });
 
 describe('BankTransactionPgRepo', () => {

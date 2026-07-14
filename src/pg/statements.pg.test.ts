@@ -419,4 +419,28 @@ describe('cross-statement reconciliation layer', () => {
             { userId: RUSER }, { excludeStatementId: SB },
         )).toHaveLength(1);
     });
+
+    it('summariseByAccount groups by accountId and folds legacy null-accountId statements in', async () => {
+        // A legacy statement of the SAME account — processed before account_id
+        // existed, so it carries only the (bankName, last4) tuple.
+        const SC = '01STATEMENTRECONC000000001';
+        await stmtRepo().createStatement({
+            statementId: SC, userId: RUSER, fy: '2025-26',
+            s3Key: `statements/${RUSER}/2025-26/${SC}.pdf`,
+        });
+        await stmtRepo().updateStatement(SC, {
+            bankName: 'ANZ', accountLast4: '4821', periodStart: '2025-06-01', periodEnd: '2025-06-30',
+        });
+        await txnRepo().upsertTransactions([{
+            ...txn(1), txnId: statementTxnId(SC, 1), statementId: SC, userId: RUSER,
+            txnDate: '2025-06-10', amountCents: 1000, direction: 'CREDIT',
+        }]);
+
+        const accounts = await txnRepo().summariseByAccount({ userId: RUSER, fy: '2025-26' });
+        expect(accounts).toHaveLength(1); // one real account, never two cards mid-backfill
+        expect(accounts[0]).toMatchObject({ accountId: ACCT, bankName: 'ANZ', accountLast4: '4821' });
+        // SA#1..3 + SB#2..3 (SB#1 is a duplicate, excluded) + SC#1
+        expect(accounts[0].txnCount).toBe(6);
+        expect(accounts[0].statementCount).toBe(3);
+    });
 });

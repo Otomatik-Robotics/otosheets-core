@@ -48,6 +48,14 @@ function decodeToken(token: string): any {
 
 const EPOCH_DATE = '0001-01-01'; // sort-key stand-in for rows with no parseable date
 
+/** Slim feed row — the statement pipeline's dedupe comparison set. */
+export interface BankTxnDedupeRow {
+    txnId: string;
+    txnDate: string | null;
+    amountCents: number;
+    description: string | null;
+}
+
 /**
  * Postgres-only repo for open-banking feed transactions (born in Postgres).
  * Sibling of StatementTransactionPgRepo — same keyset pagination and per-category
@@ -83,6 +91,37 @@ export class BankTransactionPgRepo {
                     set: { ...setClause, updatedAt: new Date() } as any,
                 });
         }
+    }
+
+    /**
+     * Slim rows of one feed account in a date window — the statement pipeline
+     * dedupes a fresh upload against these when the statement resolved to the
+     * same (unified) account, so feed + statement never double-count.
+     */
+    async listRowsForDedupe(userId: string, accountId: string, opts: {
+        dateFrom: string; dateTo: string; cap?: number;
+    }): Promise<BankTxnDedupeRow[]> {
+        const rows = await this.db.select({
+            txnId: bankTransactions.txnId,
+            txnDate: bankTransactions.txnDate,
+            amountCents: bankTransactions.amountCents,
+            description: bankTransactions.description,
+        })
+            .from(bankTransactions)
+            .where(and(
+                eq(bankTransactions.userId, userId),
+                eq(bankTransactions.accountId, accountId),
+                sql`${bankTransactions.txnDate} >= ${opts.dateFrom}::date`,
+                sql`${bankTransactions.txnDate} <= ${opts.dateTo}::date`,
+            ))
+            .orderBy(sql`${bankTransactions.txnDate} ASC`, sql`${bankTransactions.txnId} ASC`)
+            .limit(opts.cap ?? 5000);
+        return rows.map((r) => ({
+            txnId: r.txnId,
+            txnDate: (r.txnDate as string | null) ?? null,
+            amountCents: Number(r.amountCents),
+            description: (r.description as string | null) ?? null,
+        }));
     }
 
     async getTransaction(userId: string, txnId: string): Promise<BankTransaction | null> {
