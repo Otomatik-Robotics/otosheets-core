@@ -67,6 +67,13 @@ export const BusinessProfileStoredSchema = z.object({
      */
     setupCompletedAt: z.string().nullish(),
 
+    /**
+     * Stamped (ISO) the first time the setup overview modal auto-opens on
+     * first login — cross-browser: once set, the modal never auto-opens
+     * again anywhere. Written via the setup-seen endpoint only.
+     */
+    setupModalSeenAt: z.string().nullish(),
+
     createdAt: z.string(),
     updatedAt: z.string(),
 });
@@ -127,6 +134,7 @@ export interface ResolvedBusinessProfile {
     chatbotInstructions?: string | null;
     googleReviewUrl?: string | null;
     setupCompletedAt?: string | null;
+    setupModalSeenAt?: string | null;
     createdAt: string;
     updatedAt: string;
 }

@@ -65,6 +65,8 @@ export const businessProfiles = pgTable('business_profiles', {
 
     // Stamped once when account setup first hits 100% — permanent (never unset).
     setupCompletedAt: timestamp('setup_completed_at', { withTimezone: true, mode: 'date' }),
+    // Stamped once when the setup modal first auto-opens (first login ever).
+    setupModalSeenAt: timestamp('setup_modal_seen_at', { withTimezone: true, mode: 'date' }),
 
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
