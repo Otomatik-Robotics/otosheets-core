@@ -59,6 +59,14 @@ export const BusinessProfileStoredSchema = z.object({
     chatbotInstructions: z.string().nullish(),
     googleReviewUrl: z.string().nullish(),
 
+    /**
+     * Stamped (ISO) the first time account setup reaches 100% complete —
+     * permanent: once set, the setup widget never renders again, even if a
+     * contributing field is later cleared. Written by the backend
+     * completeness endpoint, never by profile PUT merges.
+     */
+    setupCompletedAt: z.string().nullish(),
+
     createdAt: z.string(),
     updatedAt: z.string(),
 });
@@ -118,6 +126,7 @@ export interface ResolvedBusinessProfile {
     chatbotTone?: 'casual' | 'friendly' | 'professional' | 'formal' | null;
     chatbotInstructions?: string | null;
     googleReviewUrl?: string | null;
+    setupCompletedAt?: string | null;
     createdAt: string;
     updatedAt: string;
 }

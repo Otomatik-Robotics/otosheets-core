@@ -63,6 +63,9 @@ export const businessProfiles = pgTable('business_profiles', {
     chatbotInstructions: text('chatbot_instructions'),
     googleReviewUrl: text('google_review_url'),
 
+    // Stamped once when account setup first hits 100% — permanent (never unset).
+    setupCompletedAt: timestamp('setup_completed_at', { withTimezone: true, mode: 'date' }),
+
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
