@@ -62,6 +62,20 @@ export class BusinessProfilePgRepo {
             .where(eq(businessProfiles.businessProfileId, businessProfileId));
     }
 
+    /**
+     * Hard-delete a profile owned by the org. Callers must ensure it is NOT
+     * the org's active profile (the backend guards this) — operational rows
+     * attribute to profiles by id, so only unused/orphaned profiles should be
+     * deleted. Idempotent: deleting a missing row is a no-op.
+     */
+    async delete(orgId: string, businessProfileId: string): Promise<void> {
+        await this.db.delete(businessProfiles)
+            .where(and(
+                eq(businessProfiles.businessProfileId, businessProfileId),
+                eq(businessProfiles.orgId, orgId),
+            ));
+    }
+
     /** Full-entity upsert — last-writer-wins on updatedAt. */
     async upsert(profile: BusinessProfile): Promise<void> {
         const row = toRow(businessProfiles, profile as Record<string, any>, 'businessProfile');
