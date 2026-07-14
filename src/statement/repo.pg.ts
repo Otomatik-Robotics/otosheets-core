@@ -92,6 +92,23 @@ export class StatementPgRepo {
         return { items: page.map((r) => fromRow<StatementRecord>(r)), nextToken };
     }
 
+    /**
+     * All statements sharing one account identity — the continuity check's
+     * input (opening↔closing stitching, period-overlap detection). Ordered by
+     * periodStart (unresolved periods last). Bounded set per account; capped.
+     */
+    async listStatementsByAccount(
+        userId: string, accountId: string, opts: { excludeStatementId?: string; cap?: number } = {},
+    ): Promise<StatementRecord[]> {
+        const conditions = [eq(statements.userId, userId), eq(statements.accountId, accountId)];
+        if (opts.excludeStatementId) conditions.push(ne(statements.statementId, opts.excludeStatementId));
+        const rows = await this.db.select().from(statements)
+            .where(and(...conditions))
+            .orderBy(sql`${statements.periodStart} ASC NULLS LAST`, desc(statements.createdAt))
+            .limit(Math.min(opts.cap ?? 100, 200));
+        return rows.map((r) => fromRow<StatementRecord>(r));
+    }
+
     async findStatementByContentHash(
         userId: string, contentHash: string, excludeStatementId?: string,
     ): Promise<StatementRecord | null> {

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { statementTransactions, statements } from '../pg/schema/statements';
 import { toRow, fromRow } from '../pg/rows';
@@ -39,6 +39,8 @@ export interface TxnSummaryScope {
  * with an undetected account (both fields null) collapse into one group.
  */
 export interface AccountSummaryRow {
+    /** Stable account identity (bank_accounts.accountId); null for legacy statements not yet reprocessed. */
+    accountId: string | null;
     bankName: string | null;
     accountLast4: string | null;
     inCents: number;   // credits (money in)
@@ -82,6 +84,17 @@ export interface CoverageSummaryRow {
 
 /** A transfer-class row, slim shape for cross-statement pairing. */
 export interface TransferRow {
+    txnId: string;
+    statementId: string;
+    /** The parent statement's stable account identity (null when undetected). */
+    accountId: string | null;
+    txnDate: string | null;
+    amountCents: number;
+    description: string | null;
+}
+
+/** A slim existing row, the dedupe comparison set for a fresh ingest. */
+export interface DedupeCandidateRow {
     txnId: string;
     statementId: string;
     txnDate: string | null;
@@ -289,7 +302,9 @@ export class StatementTransactionPgRepo {
         if (!scope.userId && !scope.organizationId) {
             throw new Error(`${caller} requires a userId or organizationId scope`);
         }
-        const conditions: any[] = [];
+        // Duplicate rows (re-ingested by an overlapping statement) never count
+        // toward any summary — they exist only for provenance/audit.
+        const conditions: any[] = [isNull(statementTransactions.duplicateOfTxnId)];
         if (scope.userId) conditions.push(eq(statementTransactions.userId, scope.userId));
         if (scope.statementId) conditions.push(eq(statementTransactions.statementId, scope.statementId));
         if (scope.fy) conditions.push(eq(statementTransactions.fy, scope.fy));
@@ -365,6 +380,7 @@ export class StatementTransactionPgRepo {
     async summariseByAccount(scope: TxnSummaryScope): Promise<AccountSummaryRow[]> {
         const conditions = this.scopeConditions(scope, 'summariseByAccount');
         const rows = await this.db.select({
+            accountId: statements.accountId,
             bankName: statements.bankName,
             accountLast4: statements.accountLast4,
             inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
@@ -375,32 +391,84 @@ export class StatementTransactionPgRepo {
             // FILTER drops statements with no verified balance, ORDER picks by period.
             openingBalanceCents: sql<number | null>`(array_agg((${statements.verification} ->> 'openingBalanceCents')::bigint ORDER BY ${statements.periodStart} ASC NULLS LAST, ${statements.createdAt} ASC) FILTER (WHERE (${statements.verification} ->> 'openingBalanceCents') IS NOT NULL))[1]`,
             closingBalanceCents: sql<number | null>`(array_agg((${statements.verification} ->> 'closingBalanceCents')::bigint ORDER BY ${statements.periodEnd} DESC NULLS LAST, ${statements.createdAt} DESC) FILTER (WHERE (${statements.verification} ->> 'closingBalanceCents') IS NOT NULL))[1]`,
+            minPeriodStart: sql<string | null>`MIN(${statements.periodStart})::text`,
+            maxPeriodEnd: sql<string | null>`MAX(${statements.periodEnd})::text`,
             txnCount: sql<number>`COUNT(*)::int`,
             statementCount: sql<number>`COUNT(DISTINCT ${statementTransactions.statementId})::int`,
         })
             .from(statementTransactions)
             .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
             .where(and(...conditions))
-            .groupBy(statements.bankName, statements.accountLast4)
+            .groupBy(statements.accountId, statements.bankName, statements.accountLast4)
             .orderBy(sql`COALESCE(SUM(${statementTransactions.amountCents}), 0) DESC`);
-        return rows.map((r) => {
-            const opening = r.openingBalanceCents != null ? Number(r.openingBalanceCents) : null;
-            const closing = r.closingBalanceCents != null ? Number(r.closingBalanceCents) : null;
-            const txnNet = Number(r.txnNetCents);
-            return {
-                bankName: r.bankName ?? null,
-                accountLast4: r.accountLast4 ?? null,
-                inCents: Number(r.inCents),
-                outCents: Number(r.outCents),
+
+        interface Group {
+            accountId: string | null; bankName: string | null; accountLast4: string | null;
+            inCents: number; outCents: number; txnNetCents: number;
+            openingBalanceCents: number | null; closingBalanceCents: number | null;
+            minPeriodStart: string | null; maxPeriodEnd: string | null;
+            txnCount: number; statementCount: number;
+        }
+        const groups: Group[] = rows.map((r) => ({
+            accountId: r.accountId ?? null,
+            bankName: r.bankName ?? null,
+            accountLast4: r.accountLast4 ?? null,
+            inCents: Number(r.inCents),
+            outCents: Number(r.outCents),
+            txnNetCents: Number(r.txnNetCents),
+            openingBalanceCents: r.openingBalanceCents != null ? Number(r.openingBalanceCents) : null,
+            closingBalanceCents: r.closingBalanceCents != null ? Number(r.closingBalanceCents) : null,
+            minPeriodStart: r.minPeriodStart ?? null,
+            maxPeriodEnd: r.maxPeriodEnd ?? null,
+            txnCount: Number(r.txnCount),
+            statementCount: Number(r.statementCount),
+        }));
+
+        // Grouping is by stable accountId, but legacy statements (processed
+        // before the column existed) carry a null accountId. Merge each null
+        // group into the identified group sharing its (bankName, last4) tuple
+        // so one real account never renders as two cards mid-backfill.
+        const identified = groups.filter((g) => g.accountId != null);
+        const merged: Group[] = [...identified];
+        for (const legacy of groups.filter((g) => g.accountId == null)) {
+            const home = identified.find((g) =>
+                g.bankName === legacy.bankName && g.accountLast4 === legacy.accountLast4);
+            if (!home) { merged.push(legacy); continue; }
+            home.inCents += legacy.inCents;
+            home.outCents += legacy.outCents;
+            home.txnNetCents += legacy.txnNetCents;
+            home.txnCount += legacy.txnCount;
+            home.statementCount += legacy.statementCount;
+            // Bookends follow the periods: earliest opening, latest closing.
+            if (legacy.openingBalanceCents != null && (home.openingBalanceCents == null
+                || (legacy.minPeriodStart ?? '9999') < (home.minPeriodStart ?? '9999'))) {
+                home.openingBalanceCents = legacy.openingBalanceCents;
+            }
+            if (legacy.closingBalanceCents != null && (home.closingBalanceCents == null
+                || (legacy.maxPeriodEnd ?? '0000') > (home.maxPeriodEnd ?? '0000'))) {
+                home.closingBalanceCents = legacy.closingBalanceCents;
+            }
+            if ((legacy.minPeriodStart ?? '9999') < (home.minPeriodStart ?? '9999')) home.minPeriodStart = legacy.minPeriodStart;
+            if ((legacy.maxPeriodEnd ?? '0000') > (home.maxPeriodEnd ?? '0000')) home.maxPeriodEnd = legacy.maxPeriodEnd;
+        }
+
+        return merged
+            .map((g) => ({
+                accountId: g.accountId,
+                bankName: g.bankName,
+                accountLast4: g.accountLast4,
+                inCents: g.inCents,
+                outCents: g.outCents,
                 // Balance-anchored net (closing − opening) when we have both; the
                 // transaction sum is only the fallback.
-                netCents: opening != null && closing != null ? closing - opening : txnNet,
-                openingBalanceCents: opening,
-                closingBalanceCents: closing,
-                txnCount: Number(r.txnCount),
-                statementCount: Number(r.statementCount),
-            };
-        });
+                netCents: g.openingBalanceCents != null && g.closingBalanceCents != null
+                    ? g.closingBalanceCents - g.openingBalanceCents : g.txnNetCents,
+                openingBalanceCents: g.openingBalanceCents,
+                closingBalanceCents: g.closingBalanceCents,
+                txnCount: g.txnCount,
+                statementCount: g.statementCount,
+            }))
+            .sort((a, b) => b.netCents - a.netCents);
     }
 
     /**
@@ -440,9 +508,60 @@ export class StatementTransactionPgRepo {
      * but the cap bounds the worst case; date-ordered so greedy pairing is
      * deterministic.
      */
-    async listTransferRows(scope: TxnSummaryScope, cap = 2000): Promise<TransferRow[]> {
+    async listTransferRows(
+        scope: TxnSummaryScope,
+        opts: { unpairedOnly?: boolean; excludeStatementId?: string; cap?: number } = {},
+    ): Promise<TransferRow[]> {
         const conditions = this.scopeConditions(scope, 'listTransferRows');
         conditions.push(eq(statementTransactions.flowClass, 'TRANSFER'));
+        if (opts.unpairedOnly) conditions.push(isNull(statementTransactions.transferPairId));
+        if (opts.excludeStatementId) {
+            conditions.push(ne(statementTransactions.statementId, opts.excludeStatementId));
+        }
+        const rows = await this.db.select({
+            txnId: statementTransactions.txnId,
+            statementId: statementTransactions.statementId,
+            accountId: statements.accountId,
+            txnDate: statementTransactions.txnDate,
+            amountCents: statementTransactions.amountCents,
+            description: statementTransactions.description,
+        })
+            .from(statementTransactions)
+            .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
+            .where(and(...conditions))
+            .orderBy(sql`COALESCE(${statementTransactions.txnDate}, ${EPOCH_DATE}::date)`, asc(statementTransactions.txnId))
+            .limit(opts.cap ?? 2000);
+        return rows.map((r) => ({
+            txnId: r.txnId,
+            statementId: r.statementId,
+            accountId: (r.accountId as string | null) ?? null,
+            txnDate: (r.txnDate as string | null) ?? null,
+            amountCents: Number(r.amountCents),
+            description: (r.description as string | null) ?? null,
+        }));
+    }
+
+    /**
+     * Existing non-duplicate rows of one account inside a date window — the
+     * comparison set a fresh ingest dedupes against (same account, another
+     * statement). Slim shape, capped; ordered for deterministic matching.
+     */
+    async listAccountRowsForDedupe(userId: string, accountId: string, opts: {
+        dateFrom: string;
+        dateTo: string;
+        excludeStatementId?: string;
+        cap?: number;
+    }): Promise<DedupeCandidateRow[]> {
+        const conditions: any[] = [
+            eq(statementTransactions.userId, userId),
+            eq(statements.accountId, accountId),
+            isNull(statementTransactions.duplicateOfTxnId),
+            sql`${statementTransactions.txnDate} >= ${opts.dateFrom}::date`,
+            sql`${statementTransactions.txnDate} <= ${opts.dateTo}::date`,
+        ];
+        if (opts.excludeStatementId) {
+            conditions.push(ne(statementTransactions.statementId, opts.excludeStatementId));
+        }
         const rows = await this.db.select({
             txnId: statementTransactions.txnId,
             statementId: statementTransactions.statementId,
@@ -451,9 +570,10 @@ export class StatementTransactionPgRepo {
             description: statementTransactions.description,
         })
             .from(statementTransactions)
+            .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
             .where(and(...conditions))
-            .orderBy(sql`COALESCE(${statementTransactions.txnDate}, ${EPOCH_DATE}::date)`, asc(statementTransactions.txnId))
-            .limit(cap);
+            .orderBy(asc(statementTransactions.txnDate), asc(statementTransactions.txnId))
+            .limit(opts.cap ?? 5000);
         return rows.map((r) => ({
             txnId: r.txnId,
             statementId: r.statementId,
@@ -461,6 +581,28 @@ export class StatementTransactionPgRepo {
             amountCents: Number(r.amountCents),
             description: (r.description as string | null) ?? null,
         }));
+    }
+
+    /**
+     * Persist transfer-pair ids on EXISTING rows (the counterpart legs living
+     * in other statements) — the fresh statement's own legs carry theirs
+     * through the ingest upsert. Idempotent single UPDATE per chunk.
+     */
+    async setTransferPairIds(updates: Array<{ txnId: string; transferPairId: string }>): Promise<void> {
+        const CHUNK = 200;
+        for (let i = 0; i < updates.length; i += CHUNK) {
+            const chunk = updates.slice(i, i + CHUNK);
+            const values = sql.join(
+                chunk.map((u) => sql`(${u.txnId}, ${u.transferPairId})`),
+                sql`, `,
+            );
+            await this.db.execute(sql`
+                UPDATE statement_transactions AS t
+                SET transfer_pair_id = v.pair_id, updated_at = now()
+                FROM (VALUES ${values}) AS v(txn_id, pair_id)
+                WHERE t.txn_id = v.txn_id
+            `);
+        }
     }
 
     /** Wipe a statement's transactions (reprocess path — FK cascade covers deletes). */

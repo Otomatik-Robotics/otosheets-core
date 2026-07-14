@@ -66,6 +66,29 @@ describe('OrgPgRepo', () => {
     it('rejects unknown attributes loudly', async () => {
         await expect(repo().updateOrg('org_1', { notAColumn: 1 })).rejects.toThrow(/unknown attribute/);
     });
+
+    describe('setBusinessProfileIdIfUnset — atomic active-profile claim', () => {
+        it('first claim wins; a second concurrent claim loses and defers to the winner', async () => {
+            await repo().createOrg('org_claim', { name: 'Claimant Co' });
+
+            const first = await repo().setBusinessProfileIdIfUnset('org_claim', 'bp-A');
+            expect(first).toEqual({ won: true, businessProfileId: 'bp-A' });
+
+            // A racing caller that already minted its own candidate must not
+            // overwrite the winner — it loses and gets told the winner's id.
+            const second = await repo().setBusinessProfileIdIfUnset('org_claim', 'bp-B');
+            expect(second).toEqual({ won: false, businessProfileId: 'bp-A' });
+
+            expect((await repo().getOrg('org_claim'))?.businessProfileId).toBe('bp-A');
+        });
+
+        it('re-claiming with the same id is idempotent (still reports the winner)', async () => {
+            await repo().createOrg('org_claim2', { name: 'Idempotent Co' });
+            await repo().setBusinessProfileIdIfUnset('org_claim2', 'bp-X');
+            const again = await repo().setBusinessProfileIdIfUnset('org_claim2', 'bp-X');
+            expect(again).toEqual({ won: false, businessProfileId: 'bp-X' });
+        });
+    });
 });
 
 describe('UserPgRepo', () => {
