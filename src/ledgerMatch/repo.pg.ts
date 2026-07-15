@@ -8,7 +8,7 @@ import { receipts } from '../pg/schema/opsEntities';
 import type {
     MatchableLedgerRow, OpenInvoiceForMatching, UnlinkedReceiptForMatching,
     MatchRejectionRow, MatchSource, MatchTargetType, UnmatchedIncomeRow,
-    InvoiceDepositCheck, InvoiceChipInfo, ReceiptChipInfo,
+    InvoiceDepositCheck, InvoiceChipInfo, ReceiptChipInfo, UnmatchedIncomePage,
 } from './schema';
 
 /** Dollars-NUMERIC → integer cents (invoices/receipts store dollars; bank rows store cents). */
@@ -289,70 +289,115 @@ export class LedgerMatchPgRepo {
      * duplicates and already-matched rows excluded; statement and feed rows
      * UNIONed with a display label for the account the money landed in.
      * `olderThan` is a YYYY-MM-DD cutoff supplied by the caller.
+     *
+     * Noise a real bank account carries that is NEVER invoice income is
+     * filtered here — this predicate is the single definition of "unmatched
+     * income" for the whole platform:
+     *   - credits under `minCents` (default $50 — bank interest cents),
+     *   - payroll/salary/wages deposits, interest, and reversed direct
+     *     debits ("Return … Direct Debit"), by descriptor.
+     * Keyset-paginated on (txn_date, txn_id) with a total for the entry pill.
      */
-    async listUnmatchedIncome(userId: string, opts: { olderThan: string; limit?: number }): Promise<UnmatchedIncomeRow[]> {
+    async listUnmatchedIncome(userId: string, opts: {
+        olderThan: string; limit?: number; nextToken?: string | null; minCents?: number;
+    }): Promise<UnmatchedIncomePage> {
         const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+        const minCents = opts.minCents ?? 5000;
+        let cursor: { d: string; id: string } | null = null;
+        if (opts.nextToken) {
+            try {
+                const parsed = JSON.parse(Buffer.from(opts.nextToken, 'base64').toString('utf-8'));
+                if (typeof parsed?.d === 'string' && typeof parsed?.id === 'string') cursor = parsed;
+            } catch { /* bad token → first page */ }
+        }
+        const unified = sql`
+            SELECT
+                st.txn_id            AS txn_id,
+                'statement'          AS source,
+                st.statement_id      AS statement_id,
+                st.seq               AS seq,
+                NULL                 AS account_id,
+                st.txn_date::text    AS txn_date,
+                st.description       AS description,
+                st.amount_cents      AS amount_cents,
+                NULLIF(TRIM(CONCAT(COALESCE(s.bank_name, ''),
+                    CASE WHEN s.account_last4 IS NOT NULL THEN CONCAT(' •• ', s.account_last4) ELSE '' END)), '')
+                                     AS account_label
+            FROM statement_transactions st
+            JOIN statements s ON s.statement_id = st.statement_id
+            WHERE st.user_id = ${userId}
+              AND st.amount_cents >= ${minCents}
+              AND (st.direction IS NULL OR st.direction = 'CREDIT')
+              AND (st.flow_class IS NULL OR st.flow_class = 'INCOME')
+              AND st.duplicate_of_txn_id IS NULL
+              AND st.transfer_pair_id IS NULL
+              AND st.matched_invoice_id IS NULL
+              AND st.txn_date IS NOT NULL AND st.txn_date <= ${opts.olderThan}::date
+              AND (st.description IS NULL OR (
+                    st.description !~* '\\m(interest|payroll|salary|wages|reversal)\\M'
+                AND st.description !~* 'return.*direct debit'))
+            UNION ALL
+            SELECT
+                bt.txn_id            AS txn_id,
+                'feed'               AS source,
+                NULL                 AS statement_id,
+                NULL                 AS seq,
+                bt.account_id        AS account_id,
+                bt.txn_date::text    AS txn_date,
+                bt.description       AS description,
+                bt.amount_cents      AS amount_cents,
+                NULLIF(TRIM(CONCAT(COALESCE(ba.institution_name, ba.name, ''),
+                    CASE WHEN ba.account_number_masked IS NOT NULL THEN CONCAT(' •• ', RIGHT(ba.account_number_masked, 4)) ELSE '' END)), '')
+                                     AS account_label
+            FROM bank_transactions bt
+            JOIN bank_accounts ba ON ba.account_id = bt.account_id
+            WHERE bt.user_id = ${userId}
+              AND bt.amount_cents >= ${minCents}
+              AND (bt.direction IS NULL OR bt.direction = 'CREDIT')
+              AND bt.duplicate_of_txn_id IS NULL
+              AND bt.matched_invoice_id IS NULL
+              AND bt.txn_date IS NOT NULL AND bt.txn_date <= ${opts.olderThan}::date
+              AND (bt.description IS NULL OR (
+                    bt.description !~* '\\m(interest|payroll|salary|wages|reversal)\\M'
+                AND bt.description !~* 'return.*direct debit'))
+        `;
         const result: any = await this.db.execute(sql`
-            SELECT * FROM (
-                SELECT
-                    st.txn_id            AS txn_id,
-                    'statement'          AS source,
-                    st.statement_id      AS statement_id,
-                    st.seq               AS seq,
-                    NULL                 AS account_id,
-                    st.txn_date::text    AS txn_date,
-                    st.description       AS description,
-                    st.amount_cents      AS amount_cents,
-                    NULLIF(TRIM(CONCAT(COALESCE(s.bank_name, ''),
-                        CASE WHEN s.account_last4 IS NOT NULL THEN CONCAT(' •• ', s.account_last4) ELSE '' END)), '')
-                                         AS account_label
-                FROM statement_transactions st
-                JOIN statements s ON s.statement_id = st.statement_id
-                WHERE st.user_id = ${userId}
-                  AND st.amount_cents > 0
-                  AND (st.direction IS NULL OR st.direction = 'CREDIT')
-                  AND (st.flow_class IS NULL OR st.flow_class = 'INCOME')
-                  AND st.duplicate_of_txn_id IS NULL
-                  AND st.transfer_pair_id IS NULL
-                  AND st.matched_invoice_id IS NULL
-                  AND st.txn_date IS NOT NULL AND st.txn_date <= ${opts.olderThan}::date
-                UNION ALL
-                SELECT
-                    bt.txn_id            AS txn_id,
-                    'feed'               AS source,
-                    NULL                 AS statement_id,
-                    NULL                 AS seq,
-                    bt.account_id        AS account_id,
-                    bt.txn_date::text    AS txn_date,
-                    bt.description       AS description,
-                    bt.amount_cents      AS amount_cents,
-                    NULLIF(TRIM(CONCAT(COALESCE(ba.institution_name, ba.name, ''),
-                        CASE WHEN ba.account_number_masked IS NOT NULL THEN CONCAT(' •• ', RIGHT(ba.account_number_masked, 4)) ELSE '' END)), '')
-                                         AS account_label
-                FROM bank_transactions bt
-                JOIN bank_accounts ba ON ba.account_id = bt.account_id
-                WHERE bt.user_id = ${userId}
-                  AND bt.amount_cents > 0
-                  AND (bt.direction IS NULL OR bt.direction = 'CREDIT')
-                  AND bt.duplicate_of_txn_id IS NULL
-                  AND bt.matched_invoice_id IS NULL
-                  AND bt.txn_date IS NOT NULL AND bt.txn_date <= ${opts.olderThan}::date
-            ) unified
+            WITH unified AS (${unified})
+            SELECT *, (SELECT COUNT(*) FROM unified)::int AS total_count
+            FROM unified
+            ${cursor ? sql`WHERE (txn_date::date, txn_id) > (${cursor.d}::date, ${cursor.id})` : sql``}
             ORDER BY txn_date ASC, txn_id ASC
-            LIMIT ${limit}
+            LIMIT ${limit + 1}
         `);
         const rows: any[] = result.rows ?? result;
-        return rows.map((r) => ({
-            txnId: r.txn_id,
-            source: r.source as 'statement' | 'feed',
-            statementId: r.statement_id ?? null,
-            seq: r.seq != null ? Number(r.seq) : null,
-            accountId: r.account_id ?? null,
-            txnDate: r.txn_date ?? null,
-            description: r.description ?? null,
-            amountCents: Number(r.amount_cents),
-            accountLabel: r.account_label ?? null,
-        }));
+        // totalCount rides on each row; a fully-filtered result set needs its own count.
+        let totalCount = rows.length > 0 ? Number(rows[0].total_count) : 0;
+        if (rows.length === 0 && !cursor) totalCount = 0;
+        else if (rows.length === 0 && cursor) {
+            const countResult: any = await this.db.execute(sql`
+                WITH unified AS (${unified}) SELECT COUNT(*)::int AS n FROM unified`);
+            totalCount = Number((countResult.rows ?? countResult)[0]?.n ?? 0);
+        }
+        const page = rows.slice(0, limit);
+        const last = page[page.length - 1];
+        const nextToken = rows.length > limit && last
+            ? Buffer.from(JSON.stringify({ d: last.txn_date, id: last.txn_id })).toString('base64')
+            : null;
+        return {
+            items: page.map((r) => ({
+                txnId: r.txn_id,
+                source: r.source as 'statement' | 'feed',
+                statementId: r.statement_id ?? null,
+                seq: r.seq != null ? Number(r.seq) : null,
+                accountId: r.account_id ?? null,
+                txnDate: r.txn_date ?? null,
+                description: r.description ?? null,
+                amountCents: Number(r.amount_cents),
+                accountLabel: r.account_label ?? null,
+            })),
+            nextToken,
+            totalCount,
+        };
     }
 
     /** Live chip facts for already-matched invoices (any status — incl. PAID). */

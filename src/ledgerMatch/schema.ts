@@ -55,7 +55,15 @@ export interface MatchRejectionRow {
     targetId: string;
 }
 
-/** A confirmed old credit no invoice explains — the Statements-page watchlist. */
+/** One page of unmatched-income rows (keyset pagination + total for the entry pill). */
+export interface UnmatchedIncomePage {
+    items: UnmatchedIncomeRow[];
+    nextToken: string | null;
+    /** Total rows matching the filters (not just this page). */
+    totalCount: number;
+}
+
+/** A confirmed old credit no invoice explains — the unmatched-income view. */
 export interface UnmatchedIncomeRow {
     txnId: string;
     source: 'statement' | 'feed';

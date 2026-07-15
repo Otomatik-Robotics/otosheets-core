@@ -149,17 +149,48 @@ describe('rejections', () => {
 });
 
 describe('listUnmatchedIncome', () => {
-    it('returns old unexplained credits from both sources with account labels', async () => {
-        const rows = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01' });
+    it('returns old unexplained credits from both sources with account labels + total', async () => {
+        const page = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01' });
         // stmt_1#00001 (unmatched credit) + feed_1; matched/transfer/duplicate rows excluded.
-        expect(rows.map((r) => r.txnId)).toEqual(['stmt_1#00001', 'feed_1']);
-        expect(rows[0]).toMatchObject({ source: 'statement', statementId: 'stmt_1', seq: 1, accountLabel: 'CBA •• 4021', amountCents: 240000 });
-        expect(rows[1]).toMatchObject({ source: 'feed', accountId: 'acct_1', accountLabel: 'Westpac •• 8330' });
+        expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00001', 'feed_1']);
+        expect(page.items[0]).toMatchObject({ source: 'statement', statementId: 'stmt_1', seq: 1, accountLabel: 'CBA •• 4021', amountCents: 240000 });
+        expect(page.items[1]).toMatchObject({ source: 'feed', accountId: 'acct_1', accountLabel: 'Westpac •• 8330' });
+        expect(page.totalCount).toBe(2);
+        expect(page.nextToken).toBeNull();
     });
 
     it('respects the cutoff — nothing newer than olderThan', async () => {
-        const rows = await repo.listUnmatchedIncome(USER, { olderThan: '2026-02-01' });
-        expect(rows).toHaveLength(0);
+        const page = await repo.listUnmatchedIncome(USER, { olderThan: '2026-02-01' });
+        expect(page.items).toHaveLength(0);
+        expect(page.totalCount).toBe(0);
+    });
+
+    it('paginates with a keyset token', async () => {
+        const first = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01', limit: 1 });
+        expect(first.items.map((r) => r.txnId)).toEqual(['stmt_1#00001']);
+        expect(first.totalCount).toBe(2);
+        expect(first.nextToken).not.toBeNull();
+        const second = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01', limit: 1, nextToken: first.nextToken });
+        expect(second.items.map((r) => r.txnId)).toEqual(['feed_1']);
+        expect(second.nextToken).toBeNull();
+    });
+
+    it('filters bank-account noise that is never invoice income', async () => {
+        const stx = (o: any) => db.insert(statementTransactions).values({
+            userId: USER, statementId: 'stmt_1', fy: '2025-26', direction: 'CREDIT',
+            flowClass: 'INCOME', reviewStatus: 'CONFIRMED',
+            createdAt: D('2026-04-01T00:00:00Z'), updatedAt: D('2026-04-01T00:00:00Z'), ...o,
+        });
+        await stx({ txnId: 'stmt_1#00050', seq: 50, txnDate: '2026-01-05', description: 'Credit Interest', amountCents: 6300 });
+        await stx({ txnId: 'stmt_1#00051', seq: 51, txnDate: '2026-01-06', description: 'Direct Credit 364049 The S&C Perth Di Payroll 1200', amountCents: 981200 });
+        await stx({ txnId: 'stmt_1#00052', seq: 52, txnDate: '2026-01-07', description: 'Return 13/01/26 Direct Debit 372582 Nissan Financial', amountCents: 47644 });
+        await stx({ txnId: 'stmt_1#00053', seq: 53, txnDate: '2026-01-08', description: 'Interest Payment (effective 01 Feb)', amountCents: 220 });
+        await stx({ txnId: 'stmt_1#00054', seq: 54, txnDate: '2026-01-09', description: 'OSKO DEPOSIT REF 4471', amountCents: 900 }); // under $50 floor
+        await stx({ txnId: 'stmt_1#00055', seq: 55, txnDate: '2026-01-10', description: 'CASH DEPOSIT CBA ATM MIDLAND', amountCents: 120000 }); // stays — takings need explaining
+
+        const page = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01' });
+        expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00055', 'stmt_1#00001', 'feed_1']);
+        expect(page.totalCount).toBe(3);
     });
 });
 
