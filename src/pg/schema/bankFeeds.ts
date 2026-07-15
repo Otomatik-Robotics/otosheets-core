@@ -60,6 +60,9 @@ export const bankTransactions = pgTable('bank_transactions', {
     merchantName: text('merchant_name'),
     providerCategory: text('provider_category'),              // CDR category string from the provider
     raw: jsonb('raw'),                                        // provider payload for later enrichment
+    // Set when a statement of the same (unified) account already ingested this
+    // row — excluded from every summary. Sync upserts never touch this column.
+    duplicateOfTxnId: text('duplicate_of_txn_id'),
     // categorisation (mutable annotation layer — mirrors statement_transactions;
     // sync upserts must never touch these columns)
     category: text('category'),

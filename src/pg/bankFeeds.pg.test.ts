@@ -201,4 +201,22 @@ describe('BankTransactionPgRepo', () => {
         const ids = new Set([...first.items, ...second.items].map((t) => t.txnId));
         expect(ids.size).toBe(first.items.length + second.items.length); // no overlap
     });
+
+    it('duplicate-marked feed rows drop out of summaries and the dedupe set; sync never clears the mark', async () => {
+        await repo().upsertTransactions([txn('dup1', { txnDate: '2025-08-20', amountCents: -7700, description: 'DUP PROBE' })]);
+        const before = await repo().summariseByCategory({ userId: USER, fy: '2025-26' });
+        const outBefore = before.reduce((s, r) => s + r.outCents, 0);
+
+        await repo().markDuplicates([{ txnId: 'dup1', duplicateOfTxnId: 'STMT#00001' }]);
+        expect((await repo().getTransaction(USER, 'dup1'))?.duplicateOfTxnId).toBe('STMT#00001');
+
+        const after = await repo().summariseByCategory({ userId: USER, fy: '2025-26' });
+        expect(after.reduce((s, r) => s + r.outCents, 0)).toBe(outBefore - 7700);
+        const dedupeSet = await repo().listRowsForDedupe(USER, ACCT, { dateFrom: '2025-08-20', dateTo: '2025-08-20' });
+        expect(dedupeSet.find((r) => r.txnId === 'dup1')).toBeUndefined();
+
+        // A re-sync of the same provider row must not clear the marker.
+        await repo().upsertTransactions([txn('dup1', { txnDate: '2025-08-20', amountCents: -7700, description: 'DUP PROBE' })]);
+        expect((await repo().getTransaction(USER, 'dup1'))?.duplicateOfTxnId).toBe('STMT#00001');
+    });
 });
