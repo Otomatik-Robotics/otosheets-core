@@ -447,7 +447,7 @@ export class StatementTransactionPgRepo {
         const conditions = this.scopeConditions(scope, 'summariseCoverage');
         const bucketExpr = sql`CASE
             WHEN ${statementTransactions.category} IS NULL OR ${statementTransactions.category} = 'UNCATEGORIZED' THEN 'UNCATEGORIZED'
-            WHEN ${statementTransactions.categorySource} IN ('RULE', 'USER', 'ADVISOR') THEN 'DETERMINISTIC'
+            WHEN ${statementTransactions.categorySource} IN ('RULE', 'SHARED', 'USER', 'ADVISOR') THEN 'DETERMINISTIC'
             ELSE 'AI'
         END`;
         const rows = await this.db.select({

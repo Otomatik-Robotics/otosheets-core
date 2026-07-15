@@ -7,3 +7,4 @@ export * from './billingCore';
 export * from './leadsPipelines';
 export * from './opsEntities';
 export * from './voiceCredit';
+export * from './merchantCategories';
