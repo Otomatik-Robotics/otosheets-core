@@ -1,12 +1,14 @@
 import { z } from 'zod';
 
 /** Who created a bank ↔ ledger link. Today only USER (explicit accept);
- *  AUTO is reserved for future auto-matching and is never written yet. */
+ *  AUTO is reserved for future auto-matching and is never written yet.
+ *  Literal unions (not z.infer) so consumers with a different zod version
+ *  still see plain strings in the published d.ts. */
+export type MatchSource = 'AUTO' | 'USER';
 export const MatchSourceSchema = z.enum(['AUTO', 'USER']);
-export type MatchSource = z.infer<typeof MatchSourceSchema>;
 
+export type MatchTargetType = 'INVOICE' | 'RECEIPT';
 export const MatchTargetTypeSchema = z.enum(['INVOICE', 'RECEIPT']);
-export type MatchTargetType = z.infer<typeof MatchTargetTypeSchema>;
 
 /** Slim bank-money row (statement- or feed-sourced) fed to the matching engine. */
 export interface MatchableLedgerRow {
