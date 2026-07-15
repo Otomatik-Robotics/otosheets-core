@@ -127,6 +127,11 @@ export const StatementRecordSchema = z.object({
     txnCount: z.number().int().nullish(),
     needsReviewCount: z.number().int().nullish(),
     confirmedCount: z.number().int().nullish(),
+    // How many times the processing worker has picked this statement up (SQS
+    // ApproximateReceiveCount). >1 means a prior attempt threw and it's being
+    // retried — surfaced as "Retry N/…" in the processing-queue UI. Null/1 on
+    // a clean first pass.
+    processingAttempt: z.number().int().nullish(),
     errorMessage: z.string().nullish(),
     duplicateOfStatementId: z.string().nullish(),
     createdAt: z.string(),

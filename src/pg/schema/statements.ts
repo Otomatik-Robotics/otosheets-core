@@ -56,6 +56,8 @@ export const statements = pgTable('statements', {
     txnCount: integer('txn_count'),
     needsReviewCount: integer('needs_review_count'),
     confirmedCount: integer('confirmed_count'),
+    // Worker pick-up count (SQS ApproximateReceiveCount); >1 = a retry in flight.
+    processingAttempt: integer('processing_attempt'),
     errorMessage: text('error_message'),
     duplicateOfStatementId: text('duplicate_of_statement_id'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
