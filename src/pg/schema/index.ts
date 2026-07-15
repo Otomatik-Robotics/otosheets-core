@@ -2,6 +2,7 @@ export * from './identity';
 export * from './businessProfile';
 export * from './statements';
 export * from './bankFeeds';
+export * from './ledgerMatch';
 export * from './billingCore';
 export * from './leadsPipelines';
 export * from './opsEntities';

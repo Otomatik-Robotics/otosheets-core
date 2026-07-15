@@ -99,6 +99,12 @@ export const statementTransactions = pgTable('statement_transactions', {
     // transferPairId — persisted internal-transfer pairing: the debit leg on one
     // account and the credit leg on another share one id (the debit's txnId).
     transferPairId: text('transfer_pair_id'),
+    // Bank ↔ ledger matching layer — a user-accepted link from this bank-money
+    // row to the business ledger. Only ever written on explicit user accept
+    // (matchSource USER; AUTO reserved). Reprocess upserts never touch these.
+    matchedInvoiceId: text('matched_invoice_id'),
+    matchedReceiptId: text('matched_receipt_id'),
+    matchSource: text('match_source'),                        // AUTO | USER
     // categorisation (mutable annotation layer)
     category: text('category'),
     categorySource: text('category_source'),                  // RULE | AI | USER | ADVISOR

@@ -155,6 +155,9 @@ export class StatementTransactionPgRepo {
             const { txnId, createdAt, ...rest } = rows[0];
             const setClause: Record<string, any> = {};
             for (const key of Object.keys(rest)) {
+                // The matching layer is user-owned: a reprocess upsert of the same
+                // deterministic txnId must never clobber an accepted link.
+                if (key === 'matchedInvoiceId' || key === 'matchedReceiptId' || key === 'matchSource') continue;
                 setClause[key] = sql.raw(`excluded.${(statementTransactions as any)[key].name}`);
             }
             await this.db.insert(statementTransactions)

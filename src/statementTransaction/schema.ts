@@ -59,6 +59,12 @@ export const StatementTransactionSchema = z.object({
     // across accounts (the debit leg's txnId is the shared id).
     duplicateOfTxnId: z.string().nullish(),
     transferPairId: z.string().nullish(),
+    // Bank ↔ ledger matching layer — a user-accepted link from this row to the
+    // business ledger. Only written on explicit accept (matchSource USER; AUTO
+    // reserved for future auto-matching). Reprocessing never clears these.
+    matchedInvoiceId: z.string().nullish(),
+    matchedReceiptId: z.string().nullish(),
+    matchSource: z.enum(['AUTO', 'USER']).nullish(),
     category: z.string().nullish(),
     categorySource: CategorySourceSchema.nullish(),
     categoryConfidence: z.number().min(0).max(1).nullish(),

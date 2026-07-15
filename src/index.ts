@@ -42,6 +42,7 @@ export * from './statement';
 export * from './statementTransaction';
 export * from './bankAccount';
 export * from './bankTransaction';
+export * from './ledgerMatch';
 export * from './lead';
 export * from './pipeline';
 export * from './pipelineInsights';
