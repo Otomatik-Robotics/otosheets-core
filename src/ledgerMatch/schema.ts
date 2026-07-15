@@ -73,6 +73,8 @@ export interface UnmatchedIncomeRow {
     txnDate: string | null;
     description: string | null;
     amountCents: number;
+    /** Current (machine-assigned) category — human-touched rows are filtered out. */
+    category: string | null;
     /** Display label of the money's account, e.g. 'CBA •• 4021'. */
     accountLabel: string | null;
 }

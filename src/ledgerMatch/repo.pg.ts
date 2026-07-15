@@ -322,6 +322,7 @@ export class LedgerMatchPgRepo {
                 st.txn_date::text    AS txn_date,
                 st.description       AS description,
                 st.amount_cents      AS amount_cents,
+                st.category          AS category,
                 NULLIF(TRIM(CONCAT(COALESCE(s.bank_name, ''),
                     CASE WHEN s.account_last4 IS NOT NULL THEN CONCAT(' •• ', s.account_last4) ELSE '' END)), '')
                                      AS account_label
@@ -349,6 +350,7 @@ export class LedgerMatchPgRepo {
                 bt.txn_date::text    AS txn_date,
                 bt.description       AS description,
                 bt.amount_cents      AS amount_cents,
+                bt.category          AS category,
                 NULLIF(TRIM(CONCAT(COALESCE(ba.institution_name, ba.name, ''),
                     CASE WHEN ba.account_number_masked IS NOT NULL THEN CONCAT(' •• ', RIGHT(ba.account_number_masked, 4)) ELSE '' END)), '')
                                      AS account_label
@@ -397,6 +399,7 @@ export class LedgerMatchPgRepo {
                 txnDate: r.txn_date ?? null,
                 description: r.description ?? null,
                 amountCents: Number(r.amount_cents),
+                category: r.category ?? null,
                 accountLabel: r.account_label ?? null,
             })),
             nextToken,
