@@ -187,6 +187,8 @@ describe('listUnmatchedIncome', () => {
         await stx({ txnId: 'stmt_1#00053', seq: 53, txnDate: '2026-01-08', description: 'Interest Payment (effective 01 Feb)', amountCents: 220 });
         await stx({ txnId: 'stmt_1#00054', seq: 54, txnDate: '2026-01-09', description: 'OSKO DEPOSIT REF 4471', amountCents: 900 }); // under $50 floor
         await stx({ txnId: 'stmt_1#00055', seq: 55, txnDate: '2026-01-10', description: 'CASH DEPOSIT CBA ATM MIDLAND', amountCents: 120000 }); // stays — takings need explaining
+        // Human-explained: user deliberately categorised it as other income.
+        await stx({ txnId: 'stmt_1#00056', seq: 56, txnDate: '2026-01-11', description: 'DIRECT CREDIT SIDE GIG', amountCents: 50000, category: 'INCOME', categorySource: 'USER' });
 
         const page = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01' });
         expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00055', 'stmt_1#00001', 'feed_1']);

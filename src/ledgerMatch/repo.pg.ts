@@ -295,7 +295,9 @@ export class LedgerMatchPgRepo {
      * income" for the whole platform:
      *   - credits under `minCents` (default $50 — bank interest cents),
      *   - payroll/salary/wages deposits, interest, and reversed direct
-     *     debits ("Return … Direct Debit"), by descriptor.
+     *     debits ("Return … Direct Debit"), by descriptor,
+     *   - rows a human already explained (category_source USER/ADVISOR —
+     *     e.g. deliberately categorised as other income).
      * Keyset-paginated on (txn_date, txn_id) with a total for the entry pill.
      */
     async listUnmatchedIncome(userId: string, opts: {
@@ -333,6 +335,7 @@ export class LedgerMatchPgRepo {
               AND st.transfer_pair_id IS NULL
               AND st.matched_invoice_id IS NULL
               AND st.txn_date IS NOT NULL AND st.txn_date <= ${opts.olderThan}::date
+              AND (st.category_source IS NULL OR st.category_source NOT IN ('USER', 'ADVISOR'))
               AND (st.description IS NULL OR (
                     st.description !~* '\\m(interest|payroll|salary|wages|reversal)\\M'
                 AND st.description !~* 'return.*direct debit'))
@@ -357,6 +360,7 @@ export class LedgerMatchPgRepo {
               AND bt.duplicate_of_txn_id IS NULL
               AND bt.matched_invoice_id IS NULL
               AND bt.txn_date IS NOT NULL AND bt.txn_date <= ${opts.olderThan}::date
+              AND (bt.category_source IS NULL OR bt.category_source NOT IN ('USER', 'ADVISOR'))
               AND (bt.description IS NULL OR (
                     bt.description !~* '\\m(interest|payroll|salary|wages|reversal)\\M'
                 AND bt.description !~* 'return.*direct debit'))
