@@ -31,4 +31,6 @@ export const Tables = {
     get LAUNCH_RUNS() { return process.env.LAUNCH_RUNS_TABLE!; },
     get SOCIAL_POSTS() { return process.env.SOCIAL_POSTS_TABLE!; },
     get DOMAIN_PURCHASES() { return process.env.DOMAIN_PURCHASES_TABLE!; },
+    get PRODUCTS() { return process.env.PRODUCTS_TABLE!; },
+    get ORDERS() { return process.env.ORDERS_TABLE!; },
 } as const;

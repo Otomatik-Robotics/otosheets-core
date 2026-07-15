@@ -1,0 +1,146 @@
+import { IDdb } from '../ddbPort';
+import { Tables } from '../tables';
+import { Order, OrderStatus, ORDER_COUNTER_SK, ORDER_ORG_CREATED_INDEX } from './schema';
+
+function isConditionalCancel(err: any): boolean {
+    if (err?.name === 'ConditionalCheckFailedException') return true;
+    if (err?.name !== 'TransactionCanceledException') return false;
+    const reasons: any[] = err?.CancellationReasons ?? [];
+    return reasons.some((r) => r?.Code === 'ConditionalCheckFailed');
+}
+
+/** OrderRepo — DynamoDB-only (PK `orgId`, SK `orderId`). */
+export class OrderRepo {
+    constructor(private ddb: IDdb) {}
+
+    /**
+     * Atomic per-org sequential order number. A gap can appear if a later step loses
+     * a conditional create (webhook replay) — gaps are acceptable; collisions are not.
+     */
+    async nextOrderNumber(orgId: string): Promise<number> {
+        const { Attributes } = await this.ddb.update(
+            Tables.ORDERS,
+            { orgId, orderId: ORDER_COUNTER_SK },
+            {
+                UpdateExpression: 'ADD seq :one',
+                ExpressionAttributeValues: { ':one': 1 },
+                ReturnValues: 'UPDATED_NEW',
+            },
+        );
+        return (Attributes as any)?.seq ?? 1;
+    }
+
+    /** Conditional create (`attribute_not_exists(orderId)`) — false on webhook replay. */
+    async createConditional(order: Order): Promise<boolean> {
+        try {
+            await this.ddb.transactWrite([
+                {
+                    Put: {
+                        TableName: Tables.ORDERS,
+                        Item: order,
+                        ConditionExpression: 'attribute_not_exists(orderId)',
+                    },
+                },
+            ]);
+            return true;
+        } catch (err: any) {
+            if (isConditionalCancel(err)) return false;
+            throw err;
+        }
+    }
+
+    async get(orgId: string, orderId: string): Promise<Order | null> {
+        const { Item } = await this.ddb.getItem(Tables.ORDERS, { orgId, orderId });
+        return (Item as Order) ?? null;
+    }
+
+    /** Newest-first, cursor-paginated; optional status filter. Skips the COUNTER item. */
+    async listByOrg(
+        orgId: string,
+        opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus },
+    ): Promise<{ items: Order[]; lastEvaluatedKey?: Record<string, any> }> {
+        const params: any = {
+            TableName: Tables.ORDERS,
+            IndexName: ORDER_ORG_CREATED_INDEX,
+            KeyConditionExpression: 'orgId = :orgId',
+            ExpressionAttributeValues: { ':orgId': orgId },
+            ScanIndexForward: false,
+            Limit: opts?.limit ?? 20,
+            ExclusiveStartKey: opts?.exclusiveStartKey,
+        };
+        if (opts?.status) {
+            params.FilterExpression = '#s = :st';
+            params.ExpressionAttributeNames = { '#s': 'status' };
+            params.ExpressionAttributeValues[':st'] = opts.status;
+        }
+        const { Items, LastEvaluatedKey } = await this.ddb.query(params);
+        return { items: (Items as Order[]) ?? [], lastEvaluatedKey: LastEvaluatedKey };
+    }
+
+    /**
+     * Conditional status transition (`status IN (expectedFrom)`), optionally writing
+     * extra top-level attributes (fulfilment, refund, linkedInvoiceId, paymentIntentId).
+     * Returns false when the current status is outside `expectedFrom`.
+     */
+    async updateStatus(
+        orgId: string,
+        orderId: string,
+        expectedFrom: OrderStatus[],
+        to: OrderStatus,
+        set?: Record<string, any>,
+    ): Promise<boolean> {
+        const names: Record<string, string> = { '#s': 'status' };
+        const values: Record<string, any> = { ':to': to, ':now': new Date().toISOString() };
+        const sets = ['#s = :to', 'updatedAt = :now'];
+        const fromKeys = expectedFrom.map((f, i) => {
+            values[`:f${i}`] = f;
+            return `:f${i}`;
+        });
+        let n = 0;
+        for (const [k, v] of Object.entries(set ?? {})) {
+            const nk = `#k${n}`, vk = `:v${n}`;
+            names[nk] = k;
+            values[vk] = v;
+            sets.push(`${nk} = ${vk}`);
+            n++;
+        }
+        try {
+            await this.ddb.update(
+                Tables.ORDERS,
+                { orgId, orderId },
+                {
+                    UpdateExpression: `SET ${sets.join(', ')}`,
+                    ConditionExpression: `attribute_exists(orderId) AND #s IN (${fromKeys.join(', ')})`,
+                    ExpressionAttributeNames: names,
+                    ExpressionAttributeValues: values,
+                },
+            );
+            return true;
+        } catch (err: any) {
+            if (isConditionalCancel(err)) return false;
+            throw err;
+        }
+    }
+
+    /**
+     * Claim the buyer-receipt send (`attribute_not_exists(receiptSentAt)`). Returns true
+     * exactly once; the caller sends the email only when it wins.
+     */
+    async claimReceiptSend(orgId: string, orderId: string): Promise<boolean> {
+        try {
+            await this.ddb.update(
+                Tables.ORDERS,
+                { orgId, orderId },
+                {
+                    UpdateExpression: 'SET receiptSentAt = :now',
+                    ConditionExpression: 'attribute_exists(orderId) AND attribute_not_exists(receiptSentAt)',
+                    ExpressionAttributeValues: { ':now': new Date().toISOString() },
+                },
+            );
+            return true;
+        } catch (err: any) {
+            if (isConditionalCancel(err)) return false;
+            throw err;
+        }
+    }
+}
