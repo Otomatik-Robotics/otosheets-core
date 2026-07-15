@@ -2,6 +2,7 @@ import { and, asc, eq, gt, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { statementTransactions, statements } from '../pg/schema/statements';
 import { toRow, fromRow } from '../pg/rows';
+import { foldAccountGroups } from './accountBookends';
 import type { StatementTransaction, StatementTransactionCategoryPatch } from './schema';
 
 const NUMERIC_KEYS = ['categoryConfidence'];
@@ -389,13 +390,23 @@ export class StatementTransactionPgRepo {
             inCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
             outCents: sql<number>`COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} < 0 THEN -${statementTransactions.amountCents} ELSE 0 END), 0)::bigint`,
             txnNetCents: sql<number>`COALESCE(SUM(${statementTransactions.amountCents}), 0)::bigint`,
-            // Statement balances live on the parent statement (verification json).
-            // Pick the earliest statement's opening and the latest's closing —
-            // FILTER drops statements with no verified balance, ORDER picks by period.
-            openingBalanceCents: sql<number | null>`(array_agg((${statements.verification} ->> 'openingBalanceCents')::bigint ORDER BY ${statements.periodStart} ASC NULLS LAST, ${statements.createdAt} ASC) FILTER (WHERE (${statements.verification} ->> 'openingBalanceCents') IS NOT NULL))[1]`,
-            closingBalanceCents: sql<number | null>`(array_agg((${statements.verification} ->> 'closingBalanceCents')::bigint ORDER BY ${statements.periodEnd} DESC NULLS LAST, ${statements.createdAt} DESC) FILTER (WHERE (${statements.verification} ->> 'closingBalanceCents') IS NOT NULL))[1]`,
+            // Statement bookends: the earliest statement's opening and the latest's
+            // closing (whole-statement `verification` balances). FILTER drops
+            // statements with no verified balance, ORDER picks by period. These are
+            // the FALLBACK — they span the whole statement, so they don't reconcile
+            // with an FY-sliced in/out when a statement straddles the FY boundary.
+            stmtOpeningCents: sql<number | null>`(array_agg((${statements.verification} ->> 'openingBalanceCents')::bigint ORDER BY ${statements.periodStart} ASC NULLS LAST, ${statements.createdAt} ASC) FILTER (WHERE (${statements.verification} ->> 'openingBalanceCents') IS NOT NULL))[1]`,
+            stmtClosingCents: sql<number | null>`(array_agg((${statements.verification} ->> 'closingBalanceCents')::bigint ORDER BY ${statements.periodEnd} DESC NULLS LAST, ${statements.createdAt} DESC) FILTER (WHERE (${statements.verification} ->> 'closingBalanceCents') IS NOT NULL))[1]`,
+            // Chain bookends: the per-transaction running balance, scoped to exactly
+            // the in-scope (FY-filtered, deduped) rows — FY-accurate and reconciling
+            // by construction. Opening = balance BEFORE the first txn (its running
+            // balance minus its own amount); closing = balance AFTER the last txn.
+            chainOpeningCents: sql<number | null>`(array_agg((${statementTransactions.balanceCents} - ${statementTransactions.amountCents}) ORDER BY ${statementTransactions.txnDate} ASC NULLS LAST, ${statementTransactions.statementId} ASC, ${statementTransactions.seq} ASC) FILTER (WHERE ${statementTransactions.balanceCents} IS NOT NULL AND ${statementTransactions.txnDate} IS NOT NULL))[1]`,
+            chainClosingCents: sql<number | null>`(array_agg(${statementTransactions.balanceCents} ORDER BY ${statementTransactions.txnDate} DESC NULLS LAST, ${statementTransactions.statementId} DESC, ${statementTransactions.seq} DESC) FILTER (WHERE ${statementTransactions.balanceCents} IS NOT NULL AND ${statementTransactions.txnDate} IS NOT NULL))[1]`,
             minPeriodStart: sql<string | null>`MIN(${statements.periodStart})::text`,
             maxPeriodEnd: sql<string | null>`MAX(${statements.periodEnd})::text`,
+            minTxnDate: sql<string | null>`MIN(${statementTransactions.txnDate})::text`,
+            maxTxnDate: sql<string | null>`MAX(${statementTransactions.txnDate})::text`,
             txnCount: sql<number>`COUNT(*)::int`,
             statementCount: sql<number>`COUNT(DISTINCT ${statementTransactions.statementId})::int`,
         })
@@ -405,73 +416,26 @@ export class StatementTransactionPgRepo {
             .groupBy(statements.accountId, statements.bankName, statements.accountLast4)
             .orderBy(sql`COALESCE(SUM(${statementTransactions.amountCents}), 0) DESC`);
 
-        interface Group {
-            accountId: string | null; bankName: string | null; accountLast4: string | null;
-            inCents: number; outCents: number; txnNetCents: number;
-            openingBalanceCents: number | null; closingBalanceCents: number | null;
-            minPeriodStart: string | null; maxPeriodEnd: string | null;
-            txnCount: number; statementCount: number;
-        }
-        const groups: Group[] = rows.map((r) => ({
+        // Merge legacy (null-accountId) groups, resolve bookends (chain-preferred),
+        // and sort — pure logic, unit-tested in accountBookends.test.ts.
+        return foldAccountGroups(rows.map((r) => ({
             accountId: r.accountId ?? null,
             bankName: r.bankName ?? null,
             accountLast4: r.accountLast4 ?? null,
             inCents: Number(r.inCents),
             outCents: Number(r.outCents),
             txnNetCents: Number(r.txnNetCents),
-            openingBalanceCents: r.openingBalanceCents != null ? Number(r.openingBalanceCents) : null,
-            closingBalanceCents: r.closingBalanceCents != null ? Number(r.closingBalanceCents) : null,
+            stmtOpeningCents: r.stmtOpeningCents != null ? Number(r.stmtOpeningCents) : null,
+            stmtClosingCents: r.stmtClosingCents != null ? Number(r.stmtClosingCents) : null,
+            chainOpeningCents: r.chainOpeningCents != null ? Number(r.chainOpeningCents) : null,
+            chainClosingCents: r.chainClosingCents != null ? Number(r.chainClosingCents) : null,
             minPeriodStart: r.minPeriodStart ?? null,
             maxPeriodEnd: r.maxPeriodEnd ?? null,
+            minTxnDate: r.minTxnDate ?? null,
+            maxTxnDate: r.maxTxnDate ?? null,
             txnCount: Number(r.txnCount),
             statementCount: Number(r.statementCount),
-        }));
-
-        // Grouping is by stable accountId, but legacy statements (processed
-        // before the column existed) carry a null accountId. Merge each null
-        // group into the identified group sharing its (bankName, last4) tuple
-        // so one real account never renders as two cards mid-backfill.
-        const identified = groups.filter((g) => g.accountId != null);
-        const merged: Group[] = [...identified];
-        for (const legacy of groups.filter((g) => g.accountId == null)) {
-            const home = identified.find((g) =>
-                g.bankName === legacy.bankName && g.accountLast4 === legacy.accountLast4);
-            if (!home) { merged.push(legacy); continue; }
-            home.inCents += legacy.inCents;
-            home.outCents += legacy.outCents;
-            home.txnNetCents += legacy.txnNetCents;
-            home.txnCount += legacy.txnCount;
-            home.statementCount += legacy.statementCount;
-            // Bookends follow the periods: earliest opening, latest closing.
-            if (legacy.openingBalanceCents != null && (home.openingBalanceCents == null
-                || (legacy.minPeriodStart ?? '9999') < (home.minPeriodStart ?? '9999'))) {
-                home.openingBalanceCents = legacy.openingBalanceCents;
-            }
-            if (legacy.closingBalanceCents != null && (home.closingBalanceCents == null
-                || (legacy.maxPeriodEnd ?? '0000') > (home.maxPeriodEnd ?? '0000'))) {
-                home.closingBalanceCents = legacy.closingBalanceCents;
-            }
-            if ((legacy.minPeriodStart ?? '9999') < (home.minPeriodStart ?? '9999')) home.minPeriodStart = legacy.minPeriodStart;
-            if ((legacy.maxPeriodEnd ?? '0000') > (home.maxPeriodEnd ?? '0000')) home.maxPeriodEnd = legacy.maxPeriodEnd;
-        }
-
-        return merged
-            .map((g) => ({
-                accountId: g.accountId,
-                bankName: g.bankName,
-                accountLast4: g.accountLast4,
-                inCents: g.inCents,
-                outCents: g.outCents,
-                // Balance-anchored net (closing − opening) when we have both; the
-                // transaction sum is only the fallback.
-                netCents: g.openingBalanceCents != null && g.closingBalanceCents != null
-                    ? g.closingBalanceCents - g.openingBalanceCents : g.txnNetCents,
-                openingBalanceCents: g.openingBalanceCents,
-                closingBalanceCents: g.closingBalanceCents,
-                txnCount: g.txnCount,
-                statementCount: g.statementCount,
-            }))
-            .sort((a, b) => b.netCents - a.netCents);
+        })));
     }
 
     /**
