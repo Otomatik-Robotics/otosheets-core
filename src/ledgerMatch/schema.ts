@@ -67,6 +67,23 @@ export interface UnmatchedIncomeRow {
     accountLabel: string | null;
 }
 
+/** Live display facts for an already-matched invoice (chip rendering — never snapshotted). */
+export interface InvoiceChipInfo {
+    invoiceId: string;
+    invoiceNumber: string | null;
+    clientName: string | null;
+    status: string;
+    totalCents: number;
+}
+
+/** Live display facts for an already-matched receipt. */
+export interface ReceiptChipInfo {
+    receiptId: string;
+    vendorName: string | null;
+    totalCents: number;
+    receiptDate: string | null;
+}
+
 /** Per-invoice deposit evidence for the "no bank deposit found" advisory. */
 export interface InvoiceDepositCheck {
     invoiceId: string;

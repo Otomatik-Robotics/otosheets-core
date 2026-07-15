@@ -8,7 +8,7 @@ import { receipts } from '../pg/schema/opsEntities';
 import type {
     MatchableLedgerRow, OpenInvoiceForMatching, UnlinkedReceiptForMatching,
     MatchRejectionRow, MatchSource, MatchTargetType, UnmatchedIncomeRow,
-    InvoiceDepositCheck,
+    InvoiceDepositCheck, InvoiceChipInfo, ReceiptChipInfo,
 } from './schema';
 
 /** Dollars-NUMERIC → integer cents (invoices/receipts store dollars; bank rows store cents). */
@@ -353,6 +353,63 @@ export class LedgerMatchPgRepo {
             amountCents: Number(r.amount_cents),
             accountLabel: r.account_label ?? null,
         }));
+    }
+
+    /** Live chip facts for already-matched invoices (any status — incl. PAID). */
+    async listInvoiceChips(orgId: string, invoiceIds: string[]): Promise<InvoiceChipInfo[]> {
+        if (invoiceIds.length === 0) return [];
+        const out: InvoiceChipInfo[] = [];
+        const CHUNK = 200;
+        for (let i = 0; i < invoiceIds.length; i += CHUNK) {
+            const rows = await this.db.select({
+                invoiceId: invoices.invoiceId,
+                invoiceNumber: invoices.invoiceNumber,
+                clientName: clients.name,
+                status: invoices.status,
+                totalAmount: invoices.totalAmount,
+            })
+                .from(invoices)
+                .leftJoin(clients, eq(clients.clientId, invoices.clientId))
+                .where(and(
+                    eq(invoices.orgId, orgId),
+                    inArray(invoices.invoiceId, invoiceIds.slice(i, i + CHUNK)),
+                ));
+            out.push(...rows.map((r) => ({
+                invoiceId: r.invoiceId,
+                invoiceNumber: r.invoiceNumber ?? null,
+                clientName: r.clientName ?? null,
+                status: r.status ?? 'SENT',
+                totalCents: toCents(r.totalAmount),
+            })));
+        }
+        return out;
+    }
+
+    /** Live chip facts for already-matched receipts. */
+    async listReceiptChips(orgId: string, receiptIds: string[]): Promise<ReceiptChipInfo[]> {
+        if (receiptIds.length === 0) return [];
+        const out: ReceiptChipInfo[] = [];
+        const CHUNK = 200;
+        for (let i = 0; i < receiptIds.length; i += CHUNK) {
+            const rows = await this.db.select({
+                receiptId: receipts.receiptId,
+                vendorName: receipts.vendorName,
+                totalAmount: receipts.totalAmount,
+                receiptDate: receipts.date,
+            })
+                .from(receipts)
+                .where(and(
+                    eq(receipts.orgId, orgId),
+                    inArray(receipts.receiptId, receiptIds.slice(i, i + CHUNK)),
+                ));
+            out.push(...rows.map((r) => ({
+                receiptId: r.receiptId,
+                vendorName: r.vendorName ?? null,
+                totalCents: toCents(r.totalAmount),
+                receiptDate: r.receiptDate ?? null,
+            })));
+        }
+        return out;
     }
 
     /**

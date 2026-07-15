@@ -163,6 +163,16 @@ describe('listUnmatchedIncome', () => {
     });
 });
 
+describe('chip info', () => {
+    it('returns live invoice + receipt facts for matched-chip rendering', async () => {
+        const [inv] = await repo.listInvoiceChips(ORG, ['i_paid']);
+        expect(inv).toMatchObject({ invoiceId: 'i_paid', invoiceNumber: 'INV-0100', clientName: 'Acme Pty Ltd', status: 'PAID', totalCents: 90000 });
+        const [rcpt] = await repo.listReceiptChips(ORG, ['r_linked']);
+        expect(rcpt).toMatchObject({ receiptId: 'r_linked', vendorName: 'Officeworks', totalCents: 4500, receiptDate: '2026-03-05' });
+        expect(await repo.listInvoiceChips(ORG, [])).toEqual([]);
+    });
+});
+
 describe('depositCheckForInvoices', () => {
     it('reports bank-match state and latest BANK_TRANSFER payment date', async () => {
         const checks = await repo.depositCheckForInvoices(ORG, ['i_paid', 'i_open']);
