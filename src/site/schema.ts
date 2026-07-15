@@ -25,6 +25,11 @@ export const SITE_TEMPLATE_IDS = [
     'midnight-sapphire',
     'onyx-rose',
     'sandstone-luxe',
+    'boutique-luxe',
+    'gallery-editorial',
+    'concept-store',
+    'market-artisan',
+    'flagship-vivid',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
