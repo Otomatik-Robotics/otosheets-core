@@ -30,6 +30,11 @@ export const BankTransactionSchema = z.object({
     // Set when a statement of the same (unified) account already ingested this
     // row — excluded from every summary (mirror of statement_transactions).
     duplicateOfTxnId: z.string().nullish(),
+    // Bank ↔ ledger matching layer (mirrors StatementTransaction) — only
+    // written on explicit user accept; sync upserts never touch these.
+    matchedInvoiceId: z.string().nullish(),
+    matchedReceiptId: z.string().nullish(),
+    matchSource: z.enum(['AUTO', 'USER']).nullish(),
     raw: z.any().nullish(),
     category: z.string().nullish(),
     categorySource: BankCategorySourceSchema.nullish(),

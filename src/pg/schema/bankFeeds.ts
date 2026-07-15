@@ -63,6 +63,11 @@ export const bankTransactions = pgTable('bank_transactions', {
     // Set when a statement of the same (unified) account already ingested this
     // row — excluded from every summary. Sync upserts never touch this column.
     duplicateOfTxnId: text('duplicate_of_txn_id'),
+    // Bank ↔ ledger matching layer (mirrors statement_transactions) — only
+    // written on explicit user accept; sync upserts never touch these columns.
+    matchedInvoiceId: text('matched_invoice_id'),
+    matchedReceiptId: text('matched_receipt_id'),
+    matchSource: text('match_source'),                        // AUTO | USER
     // categorisation (mutable annotation layer — mirrors statement_transactions;
     // sync upserts must never touch these columns)
     category: text('category'),
