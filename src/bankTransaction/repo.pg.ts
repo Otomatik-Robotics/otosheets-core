@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { bankTransactions } from '../pg/schema/bankFeeds';
 import { toRow, fromRow } from '../pg/rows';
@@ -111,6 +111,7 @@ export class BankTransactionPgRepo {
             .where(and(
                 eq(bankTransactions.userId, userId),
                 eq(bankTransactions.accountId, accountId),
+                isNull(bankTransactions.duplicateOfTxnId),
                 sql`${bankTransactions.txnDate} >= ${opts.dateFrom}::date`,
                 sql`${bankTransactions.txnDate} <= ${opts.dateTo}::date`,
             ))
@@ -129,6 +130,28 @@ export class BankTransactionPgRepo {
             .where(and(eq(bankTransactions.txnId, txnId), eq(bankTransactions.userId, userId)))
             .limit(1);
         return rows[0] ? fromRow<BankTransaction>(rows[0], NUMERIC_KEYS) : null;
+    }
+
+    /**
+     * Mark feed rows as duplicates of statement rows (reverse-direction
+     * dedupe, run after each sync). Idempotent; sync upserts never clear the
+     * marker because duplicate_of_txn_id is not a SYNC_COLUMN.
+     */
+    async markDuplicates(updates: Array<{ txnId: string; duplicateOfTxnId: string }>): Promise<void> {
+        const CHUNK = 200;
+        for (let i = 0; i < updates.length; i += CHUNK) {
+            const chunk = updates.slice(i, i + CHUNK);
+            const values = sql.join(
+                chunk.map((u) => sql`(${u.txnId}, ${u.duplicateOfTxnId})`),
+                sql`, `,
+            );
+            await this.db.execute(sql`
+                UPDATE bank_transactions AS t
+                SET duplicate_of_txn_id = v.dup_id, updated_at = now()
+                FROM (VALUES ${values}) AS v(txn_id, dup_id)
+                WHERE t.txn_id = v.txn_id
+            `);
+        }
     }
 
     /** Transactions of one account, newest date first — keyset on (date, txnId). */
@@ -239,7 +262,8 @@ export class BankTransactionPgRepo {
         if (!scope.userId && !scope.organizationId) {
             throw new Error('summariseByCategory requires a userId or organizationId scope');
         }
-        const conditions: any[] = [];
+        // Rows a statement already ingested never count toward any summary.
+        const conditions: any[] = [isNull(bankTransactions.duplicateOfTxnId)];
         if (scope.userId) conditions.push(eq(bankTransactions.userId, scope.userId));
         if (scope.organizationId) conditions.push(eq(bankTransactions.organizationId, scope.organizationId));
         if (scope.accountId) conditions.push(eq(bankTransactions.accountId, scope.accountId));

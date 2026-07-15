@@ -27,6 +27,9 @@ export const BankTransactionSchema = z.object({
     status: z.string().nullish(),       // POSTED | PENDING
     merchantName: z.string().nullish(),
     providerCategory: z.string().nullish(),
+    // Set when a statement of the same (unified) account already ingested this
+    // row — excluded from every summary (mirror of statement_transactions).
+    duplicateOfTxnId: z.string().nullish(),
     raw: z.any().nullish(),
     category: z.string().nullish(),
     categorySource: BankCategorySourceSchema.nullish(),
