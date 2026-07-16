@@ -96,6 +96,9 @@ export const LaunchProfileSchema = z.object({
     tagline: z.string().optional(),
     aboutDraft: z.string().optional(),
     templateSuggestion: z.string().optional(),
+    /** Owner-chosen storefront structure. When set it wins over deterministic
+     * classification when the launcher builds the site. */
+    archetype: z.enum(['website', 'full-shop', 'single-product', 'services', 'consultant']).optional(),
     palette: z.object({ primary: z.string(), accent: z.string() }).optional(),
     phone: z.string().optional(),
     email: z.string().optional(),
@@ -118,6 +121,7 @@ export interface LaunchProfile {
     tagline?: string;
     aboutDraft?: string;
     templateSuggestion?: string;
+    archetype?: 'website' | 'full-shop' | 'single-product' | 'services' | 'consultant';
     palette?: { primary: string; accent: string };
     phone?: string;
     email?: string;
