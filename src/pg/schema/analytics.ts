@@ -1,13 +1,49 @@
-import { pgTable, text, bigint, integer, primaryKey, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, bigint, integer, doublePrecision, boolean, timestamp, primaryKey, index } from 'drizzle-orm/pg-core';
 
 /**
- * Storefront analytics — AGGREGATES ONLY (docs/design/WEBSITE_ANALYTICS_ENGINE_PLAN.md).
+ * Storefront analytics — Postgres end to end (docs/design/WEBSITE_ANALYTICS_ENGINE_PLAN.md).
  *
- * Raw events live in DynamoDB (`AnalyticsEvents`, TTL'd) — keyed/ephemeral/hot-path,
- * per the platform's source-of-truth rule. The 5-min rollup folds them into these
- * pre-aggregated tables; the dashboard only ever reads these. All sums are additive
- * and keyed by (site_id, day, …) so rollup upserts are commutative
- * (`ON CONFLICT … DO UPDATE SET x = x + excluded.x`) and re-runs converge.
+ * Raw events land directly in `analytics_events` (below) — NO DynamoDB anywhere in
+ * the analytics path. The dashboard computes every figure on read with SQL over the
+ * raw rows (COUNT DISTINCT sessions/visitors, session-based monotonic funnel,
+ * cumulative scroll), so numbers are exact by construction at first-party
+ * storefront volume. (The aggregate tables further down are legacy from the
+ * short-lived rollup design and are no longer written or read.)
+ */
+export const analyticsEvents = pgTable('analytics_events', {
+    siteId: text('site_id').notNull(),
+    eventId: text('event_id').notNull(),           // client ULID — PK for beacon-retry dedupe
+    day: text('day').notNull(),                    // 'YYYY-MM-DD' (UTC) — cheap range/group key
+    ts: timestamp('ts', { withTimezone: true }).notNull(),
+    type: text('type').notNull(),                  // pageview|click|scroll|form_submit|add_to_cart|checkout_start|order_complete|custom
+    sid: text('sid').notNull().default(''),        // session id
+    vid: text('vid').notNull().default(''),        // server-computed daily visitor hash
+    path: text('path').notNull().default('/'),
+    ref: text('ref'),
+    utmSource: text('utm_source'),
+    utmMedium: text('utm_medium'),
+    utmCampaign: text('utm_campaign'),
+    vpBucket: text('vp_bucket').notNull().default('desktop'),
+    x: doublePrecision('x'),                       // click: 0..1 of page width
+    y: integer('y'),                               // click: page-y px
+    depth: doublePrecision('depth'),               // scroll: max fraction reached 0..1
+    sec: integer('sec'),                           // scroll: seconds on page
+    productId: text('product_id'),
+    orderId: text('order_id'),
+    ns: boolean('ns').notNull().default(false),    // new session (first pageview)
+    nv: boolean('nv').notNull().default(false),    // new visitor (first of the day)
+}, (t) => [
+    primaryKey({ columns: [t.siteId, t.eventId] }),
+    index('analytics_events_site_day_idx').on(t.siteId, t.day),
+    index('analytics_events_site_path_type_idx').on(t.siteId, t.path, t.type),
+]);
+
+/**
+ * LEGACY aggregate tables (migration 0024) — from the rollup design that has been
+ * replaced by compute-on-read above. Retained so the migration stays additive and
+ * old rows aren't orphaned; no code writes or reads them any more.
+ *
+ * (historical note) All sums were additive and keyed by (site_id, day, …).
  *
  * `site_id` is the storefront's Dynamo site key (sites stay on DynamoDB, PK=host) —
  * a plain text key here, no FK by design. First-party by construction: every row

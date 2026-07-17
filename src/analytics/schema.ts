@@ -1,29 +1,36 @@
 /**
- * Storefront analytics DTOs — the rollup delta the backend cron computes from raw
- * DynamoDB events, and the aggregate shapes the dashboard reads. First-party only:
- * every number originates from our own beacon (no third-party analytics anywhere).
+ * Storefront analytics DTOs — one raw-event insert shape, and the aggregate
+ * shapes the dashboard computes on read. First-party only: every number
+ * originates from our own beacon (no third-party analytics, no DynamoDB).
  * Design: docs/design/WEBSITE_ANALYTICS_ENGINE_PLAN.md.
  */
 
 export type VpBucket = 'mobile' | 'tablet' | 'desktop';
 export type FunnelStep = 'landing' | 'product' | 'add_to_cart' | 'checkout_start' | 'order_complete';
 
-/** One incremental rollup window's additive contribution for a (site, day). */
-export interface AnalyticsRollupDelta {
+/** One raw event as the collector persists it (server stamps siteId/vid/day/ts). */
+export interface AnalyticsEventInput {
     siteId: string;
-    day: string; // 'YYYY-MM-DD'
-    daily: {
-        pageviews: number; sessions: number; visitors: number; bounces: number;
-        totalSeconds: number; orders: number; revenueCents: number;
-    };
-    pages: { path: string; pageviews: number; entries: number; exits: number; totalSeconds: number }[];
-    referrers: { source: string; medium: string; campaign: string; sessions: number; orders: number; revenueCents: number }[];
-    funnel: { step: FunnelStep; count: number }[];
-    heatmap: { path: string; vpBucket: VpBucket; gx: number; gy: number; clicks: number }[];
-    scroll: { path: string; vpBucket: VpBucket; depthBucket: number; reached: number }[];
-    /** Raw sk high-water mark for this window — persisted with the delta so a
-     *  cron double-fire converges (same cursor → delta already applied → skip). */
-    lastSk: string;
+    eventId: string;
+    day: string;    // 'YYYY-MM-DD'
+    ts: string;     // ISO
+    type: string;
+    sid: string;
+    vid: string;
+    path: string;
+    ref?: string;
+    utmSource?: string;
+    utmMedium?: string;
+    utmCampaign?: string;
+    vpBucket: VpBucket;
+    x?: number;
+    y?: number;
+    depth?: number;
+    sec?: number;
+    productId?: string;
+    orderId?: string;
+    ns?: boolean;
+    nv?: boolean;
 }
 
 export interface AnalyticsDailyRow {

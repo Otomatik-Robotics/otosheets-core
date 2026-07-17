@@ -24,6 +24,18 @@ interface CacheEntry {
 const cache = new Map<DataDomain, CacheEntry>();
 let ssmClient: any;
 
+/**
+ * Per-domain fallback when neither an env override nor an SSM flag is set.
+ * `commerce` defaults to `dual_dynamo` (Dynamo authoritative, PG mirrored) so
+ * shop orders flow into Neon for the analytics reporting layer without needing
+ * an SSM write — the mirror is best-effort, so this never risks order creation.
+ * Everything else stays `dynamo` (ship-dark), unchanged.
+ */
+const DEFAULT_STATE: Partial<Record<DataDomain, DataBackendState>> = {
+    commerce: 'dual_dynamo',
+};
+const fallbackState = (domain: DataDomain): DataBackendState => DEFAULT_STATE[domain] ?? 'dynamo';
+
 function envOverride(domain: DataDomain): DataBackendState | undefined {
     const raw = process.env[`DATA_BACKEND_${domain.toUpperCase().replace(/-/g, '_')}`];
     if (raw && VALID_STATES.has(raw)) return raw as DataBackendState;
@@ -32,7 +44,7 @@ function envOverride(domain: DataDomain): DataBackendState | undefined {
 
 async function readFromSsm(domain: DataDomain): Promise<DataBackendState> {
     const prefix = process.env.DATA_BACKEND_SSM_PREFIX;
-    if (!prefix) return 'dynamo';
+    if (!prefix) return fallbackState(domain);
     try {
         if (!ssmClient) {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -44,13 +56,13 @@ async function readFromSsm(domain: DataDomain): Promise<DataBackendState> {
         const out = await ssmClient.send(new GetParameterCommand({ Name: `${prefix}/${domain}` }));
         const value = out.Parameter?.Value;
         if (value && VALID_STATES.has(value)) return value as DataBackendState;
-        if (value) console.error(`[dataBackend] invalid state '${value}' for domain '${domain}' — falling back to dynamo`);
-        return 'dynamo';
+        if (value) console.error(`[dataBackend] invalid state '${value}' for domain '${domain}' — falling back to default`);
+        return fallbackState(domain);
     } catch (err: any) {
         if (err?.name !== 'ParameterNotFound') {
-            console.error(`[dataBackend] SSM read failed for '${domain}' — falling back to dynamo:`, err?.message ?? err);
+            console.error(`[dataBackend] SSM read failed for '${domain}' — falling back to default:`, err?.message ?? err);
         }
-        return 'dynamo';
+        return fallbackState(domain);
     }
 }
 

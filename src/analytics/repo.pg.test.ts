@@ -5,21 +5,15 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { runMigrations, type SqlExecutor } from '../pg/migrate';
 import type { PgDb } from '../pg/client';
 import { AnalyticsPgRepo } from './repo.pg';
-import type { AnalyticsRollupDelta } from './schema';
+import type { AnalyticsEventInput, VpBucket } from './schema';
 
 let db: PgDb;
 let repo: AnalyticsPgRepo;
+let seq = 0;
 
-const delta = (over: Partial<AnalyticsRollupDelta> = {}): AnalyticsRollupDelta => ({
-    siteId: 'site_1', day: '2026-07-17',
-    daily: { pageviews: 10, sessions: 4, visitors: 3, bounces: 1, totalSeconds: 300, orders: 1, revenueCents: 4900 },
-    pages: [{ path: '/', pageviews: 6, entries: 4, exits: 2, totalSeconds: 200 }, { path: '/products/widget', pageviews: 4, entries: 0, exits: 2, totalSeconds: 100 }],
-    referrers: [{ source: 'google.com', medium: '', campaign: '', sessions: 3, orders: 1, revenueCents: 4900 }],
-    funnel: [{ step: 'landing', count: 4 }, { step: 'product', count: 2 }, { step: 'order_complete', count: 1 }],
-    heatmap: [{ path: '/', vpBucket: 'desktop', gx: 21, gy: 69, clicks: 5 }],
-    scroll: [{ path: '/', vpBucket: 'desktop', depthBucket: 7, reached: 3 }],
-    lastSk: '1721190000000#01AAA',
-    ...over,
+const ev = (over: Partial<AnalyticsEventInput>): AnalyticsEventInput => ({
+    siteId: 'site_1', eventId: 'e' + (++seq), day: '2026-07-17', ts: '2026-07-17T01:00:00.000Z',
+    type: 'pageview', sid: 's1', vid: 'v1', path: '/', vpBucket: 'desktop' as VpBucket, ...over,
 });
 
 beforeAll(async () => {
@@ -30,46 +24,73 @@ beforeAll(async () => {
     repo = new AnalyticsPgRepo(db);
 });
 
-describe('AnalyticsPgRepo', () => {
-    it('applies a delta and reads it back through the dashboard queries', async () => {
-        expect(await repo.getCursor('site_1', '2026-07-17')).toBe('');
-        expect(await repo.applyRollupDelta(delta(), '')).toBe(true);
-
+describe('AnalyticsPgRepo (compute-on-read)', () => {
+    it('insert dedupes on (site, eventId) and computes distinct sessions/visitors', async () => {
+        await repo.insertEvents([
+            ev({ eventId: 'pv1', sid: 's1', vid: 'v1', path: '/', ns: true, nv: true }),
+            ev({ eventId: 'pv2', sid: 's1', vid: 'v1', path: '/shop' }),              // same session
+            ev({ eventId: 'pv3', sid: 's2', vid: 'v2', path: '/', ns: true, nv: true }),
+        ]);
+        await repo.insertEvents([ev({ eventId: 'pv1', sid: 'sX' })]); // retry — ignored
         const o = await repo.getOverview('site_1', '2026-07-01', '2026-07-31');
-        expect(o.totals.pageviews).toBe(10);
-        expect(o.totals.revenueCents).toBe(4900);
-        expect(o.timeseries).toHaveLength(1);
+        expect(o.totals.pageviews).toBe(3);
+        expect(o.totals.sessions).toBe(2);   // s1, s2 — not inflated by the 3 pageviews
+        expect(o.totals.visitors).toBe(2);
+    });
 
+    it('funnel counts distinct sessions per step and never widens', async () => {
+        // s1 views 2 products + adds to cart twice; must NOT read as >100%.
+        await repo.insertEvents([
+            ev({ eventId: 'p_a', sid: 's1', type: 'pageview', path: '/products/widget' }),
+            ev({ eventId: 'p_b', sid: 's1', type: 'pageview', path: '/products/gizmo' }),
+            ev({ eventId: 'c_a', sid: 's1', type: 'add_to_cart' }),
+            ev({ eventId: 'c_b', sid: 's1', type: 'add_to_cart' }),
+            ev({ eventId: 'co', sid: 's1', type: 'checkout_start' }),
+            ev({ eventId: 'oc', sid: 's1', type: 'order_complete', orderId: 'ord1' }),
+        ]);
+        const f = await repo.getFunnel('site_1', '2026-07-01', '2026-07-31');
+        const by = Object.fromEntries(f.map(s => [s.step, s.count]));
+        expect(by.landing).toBe(2);          // s1 + s2 both had a pageview
+        expect(by.product).toBe(1);          // only s1 viewed a product
+        expect(by.add_to_cart).toBe(1);      // deduped: 2 events, 1 session
+        expect(by.checkout_start).toBe(1);
+        expect(by.order_complete).toBe(1);
+        // monotonic non-increasing
+        for (let i = 1; i < f.length; i++) expect(f[i].count).toBeLessThanOrEqual(f[i - 1].count);
+    });
+
+    it('scroll is cumulative — sessions reaching AT LEAST each depth', async () => {
+        await repo.insertEvents([
+            ev({ eventId: 'sc1', sid: 's1', type: 'scroll', path: '/', depth: 1.0, sec: 60 }),
+            ev({ eventId: 'sc2', sid: 's2', type: 'scroll', path: '/', depth: 0.5, sec: 20 }),
+        ]);
+        const h = await repo.getHeatmap('site_1', '/', 'desktop');
+        const by = Object.fromEntries(h.scroll.map(s => [s.depthBucket, s.reached]));
+        expect(by[4]).toBe(2);   // ≥40%: both s1 (100%) and s2 (50%)
+        expect(by[6]).toBe(1);   // ≥60%: only s1
+        expect(by[10]).toBe(1);  // ≥100%: only s1
+    });
+
+    it('heatmap bins clicks into a resolution-independent grid', async () => {
+        await repo.insertEvents([
+            ev({ eventId: 'ck1', sid: 's1', type: 'click', path: '/', x: 0.42, y: 1380 }),
+            ev({ eventId: 'ck2', sid: 's2', type: 'click', path: '/', x: 0.43, y: 1385 }),
+        ]);
+        const h = await repo.getHeatmap('site_1', '/', 'desktop');
+        // gx = floor(0.42*50)=21, gy = floor(1380/20)=69 — both clicks land in the same bin
+        const bin = h.clicks.find(c => c.gx === 21 && c.gy === 69);
+        expect(bin?.clicks).toBe(2);
+    });
+
+    it('top pages rank by pageviews with avg seconds from scroll', async () => {
         const pages = await repo.getTopPages('site_1', '2026-07-01', '2026-07-31');
-        expect(pages[0]).toMatchObject({ path: '/', pageviews: 6, avgSeconds: 33 });
-
-        const funnel = await repo.getFunnel('site_1', '2026-07-01', '2026-07-31');
-        expect(funnel.find(f => f.step === 'landing')?.count).toBe(4);
-        expect(funnel.find(f => f.step === 'add_to_cart')?.count).toBe(0); // absent step reads as 0
-
-        const heat = await repo.getHeatmap('site_1', '/', 'desktop');
-        expect(heat.clicks).toEqual([{ gx: 21, gy: 69, clicks: 5 }]);
-        expect(heat.scroll).toEqual([{ depthBucket: 7, reached: 3 }]);
+        const home = pages.find(p => p.path === '/');
+        expect(home).toBeTruthy();
+        expect(home!.avgSeconds).toBe(40); // (60+20)/2 scroll events
     });
 
-    it('sums commutatively on a second window', async () => {
-        expect(await repo.applyRollupDelta(delta({ lastSk: '1721193600000#01BBB' }), '1721190000000#01AAA')).toBe(true);
-        const o = await repo.getOverview('site_1', '2026-07-17', '2026-07-17');
-        expect(o.totals.pageviews).toBe(20);
-        const heat = await repo.getHeatmap('site_1', '/', 'desktop');
-        expect(heat.clicks[0].clicks).toBe(10);
-    });
-
-    it('cron double-fire loses the cursor CAS and applies nothing', async () => {
-        // Same window re-applied with a stale fromSk: cursor no longer matches.
-        expect(await repo.applyRollupDelta(delta({ lastSk: '1721193600000#01BBB' }), '1721190000000#01AAA')).toBe(false);
-        const o = await repo.getOverview('site_1', '2026-07-17', '2026-07-17');
-        expect(o.totals.pageviews).toBe(20); // unchanged — converged, not double-counted
-    });
-
-    it('scopes reads by site', async () => {
-        const o = await repo.getOverview('site_other', '2026-07-01', '2026-07-31');
-        expect(o.totals.pageviews).toBe(0);
-        expect(o.timeseries).toHaveLength(0);
+    it('scopes by site + day range', async () => {
+        expect((await repo.getOverview('other', '2026-07-01', '2026-07-31')).totals.pageviews).toBe(0);
+        expect((await repo.getOverview('site_1', '2026-08-01', '2026-08-31')).totals.pageviews).toBe(0);
     });
 });
