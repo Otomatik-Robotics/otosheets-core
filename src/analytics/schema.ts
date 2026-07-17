@@ -53,6 +53,7 @@ export interface AnalyticsReferrerRow {
 export interface AnalyticsFunnelRow { step: FunnelStep; count: number }
 export interface AnalyticsHeatmap {
     path: string; vpBucket: VpBucket;
-    clicks: { gx: number; gy: number; clicks: number }[];
+    /** Exact clicked points: x = fraction of page width (0..1), y = page-Y px. */
+    clicks: { x: number; y: number; clicks: number }[];
     scroll: { depthBucket: number; reached: number }[];
 }

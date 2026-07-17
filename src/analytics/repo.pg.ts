@@ -145,12 +145,15 @@ export class AnalyticsPgRepo {
         });
     }
 
-    /** Click bins + cumulative scroll (sessions reaching AT LEAST each depth). */
+    /** Exact click points + cumulative scroll (sessions reaching AT LEAST each depth).
+     *  x is the fraction of page width (0..1) and y is page-Y px — the REAL clicked
+     *  coordinates, only de-duplicated to a sub-pixel grid (0.05% wide × 2px tall)
+     *  so identical clicks merge without shifting anything to a bucket centre. */
     async getHeatmap(siteId: string, path: string, vpBucket: VpBucket): Promise<AnalyticsHeatmap> {
         const base = and(eq(analyticsEvents.siteId, siteId), eq(analyticsEvents.path, path), eq(analyticsEvents.vpBucket, vpBucket));
         const clickRows = await this.db.select({
-            gx: sql<number>`floor(${analyticsEvents.x} * 50)::int`,
-            gy: sql<number>`floor(${analyticsEvents.y} / 20)::int`,
+            x: sql<number>`round((${analyticsEvents.x} * 2000))::int`,   // 0..2000 → /2000 = fraction
+            y: sql<number>`round((${analyticsEvents.y} / 2.0))::int`,    // 2px vertical merge
             clicks: sql<number>`count(*)`,
         }).from(analyticsEvents)
             .where(and(base, eq(analyticsEvents.type, 'click'), sql`${analyticsEvents.x} is not null and ${analyticsEvents.y} is not null`))
@@ -171,7 +174,8 @@ export class AnalyticsPgRepo {
 
         return {
             path, vpBucket,
-            clicks: clickRows.map(c => ({ gx: Number(c.gx), gy: Number(c.gy), clicks: Number(c.clicks) })),
+            // x back to the 0..1 fraction; y stays in page px (×2 from the 2px merge).
+            clicks: clickRows.map(c => ({ x: Number(c.x) / 2000, y: Number(c.y) * 2, clicks: Number(c.clicks) })),
             scroll: marks.map(m => ({ depthBucket: m, reached: reachedByMark[m] })).filter(x => x.reached > 0),
         };
     }

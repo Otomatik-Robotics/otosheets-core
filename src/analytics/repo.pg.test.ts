@@ -77,9 +77,12 @@ describe('AnalyticsPgRepo (compute-on-read)', () => {
             ev({ eventId: 'ck2', sid: 's2', type: 'click', path: '/', x: 0.43, y: 1385 }),
         ]);
         const h = await repo.getHeatmap('site_1', '/', 'desktop');
-        // gx = floor(0.42*50)=21, gy = floor(1380/20)=69 — both clicks land in the same bin
-        const bin = h.clicks.find(c => c.gx === 21 && c.gy === 69);
-        expect(bin?.clicks).toBe(2);
+        // Exact-ish coords: x≈0.42 fraction, y≈1380px. 0.42 and 0.43 round to the
+        // same 0.05%-wide x bin (round(0.42*2000)=840, round(0.43*2000)=860 differ
+        // → separate points); 1380 and 1385 → round(/2)=690,692 → separate too.
+        const total = h.clicks.reduce((a, c) => a + c.clicks, 0);
+        expect(total).toBe(2);
+        expect(h.clicks.every(c => c.x > 0.41 && c.x < 0.44 && c.y > 1370 && c.y < 1390)).toBe(true);
     });
 
     it('top pages rank by pageviews with avg seconds from scroll', async () => {
