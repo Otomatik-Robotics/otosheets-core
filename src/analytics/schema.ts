@@ -34,7 +34,10 @@ export interface AnalyticsEventInput {
 }
 
 export interface AnalyticsDailyRow {
-    day: string; pageviews: number; sessions: number; visitors: number; bounces: number;
+    day: string; pageviews: number; sessions: number; visitors: number;
+    /** Visitors whose FIRST-ever visit was this day (persistent first-party id). */
+    newVisitors: number;
+    bounces: number;
     totalSeconds: number; orders: number; revenueCents: number;
 }
 export interface AnalyticsOverview {

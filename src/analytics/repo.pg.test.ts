@@ -89,6 +89,20 @@ describe('AnalyticsPgRepo (compute-on-read)', () => {
         expect(home!.avgSeconds).toBe(40); // (60+20)/2 scroll events
     });
 
+    it('tracks new vs returning visitors via the persistent id + nv flag', async () => {
+        // v1 first-ever visit (nv), v2 first-ever visit (nv), then v1 returns (no nv).
+        await repo.insertEvents([
+            ev({ eventId: 'r1', sid: 'sa', vid: 'v1', type: 'pageview', ns: true, nv: true, day: '2026-07-18', ts: '2026-07-18T01:00:00.000Z' }),
+            ev({ eventId: 'r2', sid: 'sb', vid: 'v2', type: 'pageview', ns: true, nv: true, day: '2026-07-18', ts: '2026-07-18T02:00:00.000Z' }),
+            ev({ eventId: 'r3', sid: 'sc', vid: 'v1', type: 'pageview', ns: true, nv: false, day: '2026-07-18', ts: '2026-07-18T03:00:00.000Z' }),
+        ]);
+        const o = await repo.getOverview('site_1', '2026-07-18', '2026-07-18');
+        expect(o.totals.visitors).toBe(2);      // v1, v2
+        expect(o.totals.newVisitors).toBe(2);   // both first-seen this day
+        // returning = visitors - newVisitors
+        expect(o.totals.visitors - o.totals.newVisitors).toBe(0);
+    });
+
     it('scopes by site + day range', async () => {
         expect((await repo.getOverview('other', '2026-07-01', '2026-07-31')).totals.pageviews).toBe(0);
         expect((await repo.getOverview('site_1', '2026-08-01', '2026-08-31')).totals.pageviews).toBe(0);

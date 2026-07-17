@@ -49,20 +49,33 @@ export class AnalyticsPgRepo {
             pageviews: sql<number>`count(*) filter (where ${analyticsEvents.type} = 'pageview')`,
             sessions: sql<number>`count(distinct ${analyticsEvents.sid})`,
             visitors: sql<number>`count(distinct ${analyticsEvents.vid})`,
+            // A visitor is "new" this day if any of that day's events flags nv
+            // (first-ever visit). count(distinct … filter) over the vid.
+            newVisitors: sql<number>`count(distinct ${analyticsEvents.vid}) filter (where ${analyticsEvents.nv})`,
             totalSeconds: sql<number>`coalesce(sum(${analyticsEvents.sec}), 0)`,
         }).from(analyticsEvents).where(this.range(siteId, fromDay, toDay))
             .groupBy(analyticsEvents.day).orderBy(analyticsEvents.day);
 
         const timeseries: AnalyticsDailyRow[] = rows.map(r => ({
             day: r.day, pageviews: Number(r.pageviews), sessions: Number(r.sessions),
-            visitors: Number(r.visitors), bounces: 0, totalSeconds: Number(r.totalSeconds),
-            orders: 0, revenueCents: 0,
+            visitors: Number(r.visitors), newVisitors: Number(r.newVisitors), bounces: 0,
+            totalSeconds: Number(r.totalSeconds), orders: 0, revenueCents: 0,
         }));
-        const totals = timeseries.reduce((t, r) => ({
-            pageviews: t.pageviews + r.pageviews, sessions: t.sessions + r.sessions,
-            visitors: t.visitors + r.visitors, bounces: 0,
-            totalSeconds: t.totalSeconds + r.totalSeconds, orders: 0, revenueCents: 0,
-        }), { pageviews: 0, sessions: 0, visitors: 0, bounces: 0, totalSeconds: 0, orders: 0, revenueCents: 0 });
+        // Totals: distinct across the WHOLE range (a visitor active on two days is
+        // one visitor), so re-query rather than summing per-day distincts.
+        const totalRow = await this.db.select({
+            pageviews: sql<number>`count(*) filter (where ${analyticsEvents.type} = 'pageview')`,
+            sessions: sql<number>`count(distinct ${analyticsEvents.sid})`,
+            visitors: sql<number>`count(distinct ${analyticsEvents.vid})`,
+            newVisitors: sql<number>`count(distinct ${analyticsEvents.vid}) filter (where ${analyticsEvents.nv})`,
+            totalSeconds: sql<number>`coalesce(sum(${analyticsEvents.sec}), 0)`,
+        }).from(analyticsEvents).where(this.range(siteId, fromDay, toDay));
+        const tr = totalRow[0];
+        const totals = {
+            pageviews: Number(tr?.pageviews ?? 0), sessions: Number(tr?.sessions ?? 0),
+            visitors: Number(tr?.visitors ?? 0), newVisitors: Number(tr?.newVisitors ?? 0),
+            bounces: 0, totalSeconds: Number(tr?.totalSeconds ?? 0), orders: 0, revenueCents: 0,
+        };
         return { totals, timeseries };
     }
 
