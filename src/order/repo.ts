@@ -78,6 +78,41 @@ export class OrderRepo {
     }
 
     /**
+     * Per-day order counts + revenue for a date range — the AUTHORITATIVE numbers
+     * for the analytics dashboard (orders are written by the Stripe webhook with a
+     * deterministic `ord-{sessionId}` id, so this is exact, unlike beacon events).
+     * Bounded query on the OrgCreatedIndex GSI (`orgId` + `createdAt BETWEEN`),
+     * revenue counts paid/fulfilled/shipped only (pending/cancelled/refunded excluded).
+     */
+    async dailyTotals(
+        orgId: string,
+        fromIso: string,
+        toIso: string,
+    ): Promise<{ day: string; orders: number; revenueCents: number }[]> {
+        const byDay = new Map<string, { day: string; orders: number; revenueCents: number }>();
+        let lastKey: Record<string, any> | undefined;
+        do {
+            const { Items, LastEvaluatedKey } = await this.ddb.query({
+                TableName: Tables.ORDERS,
+                IndexName: ORDER_ORG_CREATED_INDEX,
+                KeyConditionExpression: 'orgId = :orgId AND createdAt BETWEEN :from AND :to',
+                ExpressionAttributeValues: { ':orgId': orgId, ':from': fromIso, ':to': toIso },
+                ExclusiveStartKey: lastKey,
+            });
+            for (const o of (Items as Order[]) ?? []) {
+                if (!['paid', 'fulfilled', 'shipped'].includes(o.status)) continue;
+                const day = String(o.createdAt).slice(0, 10);
+                const row = byDay.get(day) ?? { day, orders: 0, revenueCents: 0 };
+                row.orders += 1;
+                row.revenueCents += o.totalCents ?? 0;
+                byDay.set(day, row);
+            }
+            lastKey = LastEvaluatedKey;
+        } while (lastKey);
+        return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+    }
+
+    /**
      * Conditional status transition (`status IN (expectedFrom)`), optionally writing
      * extra top-level attributes (fulfilment, refund, linkedInvoiceId, paymentIntentId).
      * Returns false when the current status is outside `expectedFrom`.
