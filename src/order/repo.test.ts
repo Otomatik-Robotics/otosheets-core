@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { OrderRepo } from './repo';
+import { OrderDynamoRepo } from './repo';
 import { Order, orderIdFromSession } from './schema';
 import type { IDdb } from '../ddbPort';
 
@@ -70,9 +70,9 @@ function order(sessionId = 'cs_123', overrides: Partial<Order> = {}): Order {
     };
 }
 
-describe('OrderRepo', () => {
-    let repo: OrderRepo;
-    beforeEach(() => { repo = new OrderRepo(makeStubDdb().ddb); });
+describe('OrderDynamoRepo', () => {
+    let repo: OrderDynamoRepo;
+    beforeEach(() => { repo = new OrderDynamoRepo(makeStubDdb().ddb); });
 
     it('nextOrderNumber increments atomically', async () => {
         expect(await repo.nextOrderNumber('org1')).toBe(1);

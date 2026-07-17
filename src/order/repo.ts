@@ -9,8 +9,22 @@ function isConditionalCancel(err: any): boolean {
     return reasons.some((r) => r?.Code === 'ConditionalCheckFailed');
 }
 
-/** OrderRepo — DynamoDB-only (PK `orgId`, SK `orderId`). */
-export class OrderRepo {
+/** The order data contract — implemented by Dynamo + Postgres, routed by factory.ts. */
+export interface IOrderRepo {
+    nextOrderNumber(orgId: string): Promise<number>;
+    createConditional(order: Order): Promise<boolean>;
+    get(orgId: string, orderId: string): Promise<Order | null>;
+    listByOrg(orgId: string, opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus }): Promise<{ items: Order[]; lastEvaluatedKey?: Record<string, any> }>;
+    dailyTotals(orgId: string, fromIso: string, toIso: string): Promise<{ day: string; orders: number; revenueCents: number }[]>;
+    updateStatus(orgId: string, orderId: string, expectedFrom: OrderStatus[], to: OrderStatus, set?: Record<string, any>): Promise<boolean>;
+    claimReceiptSend(orgId: string, orderId: string): Promise<boolean>;
+    /** Mirror seams (dual-write): full-row upsert + monotonic counter sync. */
+    upsert(order: Order): Promise<void>;
+    syncOrderCounter(orgId: string, seq: number): Promise<void>;
+}
+
+/** OrderDynamoRepo — the DynamoDB implementation (PK `orgId`, SK `orderId`). */
+export class OrderDynamoRepo implements IOrderRepo {
     constructor(private ddb: IDdb) {}
 
     /**
@@ -176,6 +190,28 @@ export class OrderRepo {
         } catch (err: any) {
             if (isConditionalCancel(err)) return false;
             throw err;
+        }
+    }
+
+    /** Mirror seam — plain put of the authoritative row (used by dual-write only). */
+    async upsert(order: Order): Promise<void> {
+        await this.ddb.put(Tables.ORDERS, order as unknown as Record<string, any>);
+    }
+
+    /** Mirror seam — raise the COUNTER to at least `seq` (never lowers; loss-free on races). */
+    async syncOrderCounter(orgId: string, seq: number): Promise<void> {
+        try {
+            await this.ddb.update(
+                Tables.ORDERS,
+                { orgId, orderId: ORDER_COUNTER_SK },
+                {
+                    UpdateExpression: 'SET seq = :v',
+                    ConditionExpression: 'attribute_not_exists(seq) OR seq < :v',
+                    ExpressionAttributeValues: { ':v': seq },
+                },
+            );
+        } catch (err: any) {
+            if (!isConditionalCancel(err)) throw err; // already >= seq — fine
         }
     }
 }
