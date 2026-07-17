@@ -4,12 +4,29 @@ import { shopOrders, shopOrderCounters } from '../pg/schema/commerce';
 import { Order, OrderStatus } from './schema';
 import type { IOrderRepo } from './repo';
 
-/** Whitelisted extra attributes updateStatus may set — mapped DTO key → column. */
+/**
+ * Every order attribute `updateStatus` may set alongside the status flip. Must
+ * cover what the Stripe webhook writes on `pending → paid` — buyer, shipping
+ * address/option and the money fields — or the Postgres copy would silently lose
+ * them (the DynamoDB repo applies arbitrary keys, so this must match). Keyed by
+ * DTO name → Drizzle column; anything not listed is ignored, so callers can't
+ * write unknown columns.
+ */
 const SETTABLE: Record<string, keyof typeof shopOrders.$inferInsert> = {
+    buyer: 'buyer',
+    shippingAddress: 'shippingAddress',
+    shippingOption: 'shippingOption',
+    subtotalCents: 'subtotalCents',
+    shippingCents: 'shippingCents',
+    taxCents: 'taxCents',
+    totalCents: 'totalCents',
+    currency: 'currency',
+    stripeSessionId: 'stripeSessionId',
+    stripePaymentIntentId: 'stripePaymentIntentId',
+    linkedInvoiceId: 'linkedInvoiceId',
     fulfilment: 'fulfilment',
     refund: 'refund',
-    linkedInvoiceId: 'linkedInvoiceId',
-    stripePaymentIntentId: 'stripePaymentIntentId',
+    receiptSentAt: 'receiptSentAt',
     businessProfileId: 'businessProfileId',
 };
 

@@ -84,4 +84,20 @@ describe('OrderPgRepo', () => {
         await repo.upsert(order({ status: 'shipped', updatedAt: '2026-07-18T00:00:00.000Z' }));
         expect((await repo.get('org_1', 'ord-cs_1'))?.status).toBe('shipped');
     });
+
+    it('updateStatus persists buyer + shipping + money on the pending->paid flip', async () => {
+        await repo.createConditional(order({ orderId: 'ord-cs_pay', orderNumber: 9, stripeSessionId: 'cs_pay', status: 'pending', updatedAt: '2026-07-17T05:00:00.000Z' }));
+        const ok = await repo.updateStatus('org_1', 'ord-cs_pay', ['pending'], 'paid', {
+            buyer: { name: 'Jordan Lee', email: 'jordan@x.com', phone: '0400111222' },
+            shippingAddress: { line1: '1 Test St', city: 'Sydney', state: 'NSW', postcode: '2000', country: 'AU' },
+            shippingCents: 900, taxCents: 100, totalCents: 5900, stripeSessionId: 'cs_pay',
+        });
+        expect(ok).toBe(true);
+        const got = await repo.get('org_1', 'ord-cs_pay');
+        expect(got?.status).toBe('paid');
+        expect(got?.buyer).toMatchObject({ name: 'Jordan Lee', email: 'jordan@x.com', phone: '0400111222' });
+        expect(got?.shippingAddress?.city).toBe('Sydney');
+        expect(got?.totalCents).toBe(5900);
+        expect(got?.taxCents).toBe(100);
+    });
 });
