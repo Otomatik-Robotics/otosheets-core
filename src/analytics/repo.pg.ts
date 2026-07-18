@@ -37,8 +37,16 @@ export class AnalyticsPgRepo {
 
     // ── Dashboard (compute-on-read) ─────────────────────────────────────────
 
-    private range(siteId: string, fromDay: string, toDay: string) {
-        return and(eq(analyticsEvents.siteId, siteId), gte(analyticsEvents.day, fromDay), lte(analyticsEvents.day, toDay));
+    /** Window filter on the precise `ts` (so custom ranges can be hour-granular).
+     *  Accepts a date (YYYY-MM-DD → whole UTC day) or a full ISO datetime. */
+    private range(siteId: string, from: string, to: string) {
+        const fromTs = from.length <= 10 ? `${from}T00:00:00.000Z` : from;
+        const toTs = to.length <= 10 ? `${to}T23:59:59.999Z` : to;
+        return and(
+            eq(analyticsEvents.siteId, siteId),
+            gte(analyticsEvents.ts, new Date(fromTs)),
+            lte(analyticsEvents.ts, new Date(toTs)),
+        );
     }
 
     /** Per-day pageviews / sessions / visitors / seconds. Orders + revenue are
