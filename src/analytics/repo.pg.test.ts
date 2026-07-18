@@ -71,18 +71,21 @@ describe('AnalyticsPgRepo (compute-on-read)', () => {
         expect(by[10]).toBe(1);  // ≥100%: only s1
     });
 
-    it('heatmap bins clicks into a resolution-independent grid', async () => {
+    it('heatmap returns absolute click px + median render width', async () => {
         await repo.insertEvents([
-            ev({ eventId: 'ck1', sid: 's1', type: 'click', path: '/', x: 0.42, y: 1380 }),
-            ev({ eventId: 'ck2', sid: 's2', type: 'click', path: '/', x: 0.43, y: 1385 }),
+            ev({ eventId: 'ck1', sid: 's1', type: 'click', path: '/', x: 600, y: 1380, pw: 1400 }),
+            ev({ eventId: 'ck2', sid: 's2', type: 'click', path: '/', x: 601, y: 1381, pw: 1600 }),
         ]);
         const h = await repo.getHeatmap('site_1', '/', 'desktop');
-        // Exact-ish coords: x≈0.42 fraction, y≈1380px. 0.42 and 0.43 round to the
-        // same 0.05%-wide x bin (round(0.42*2000)=840, round(0.43*2000)=860 differ
-        // → separate points); 1380 and 1385 → round(/2)=690,692 → separate too.
         const total = h.clicks.reduce((a, c) => a + c.clicks, 0);
-        expect(total).toBe(2);
-        expect(h.clicks.every(c => c.x > 0.41 && c.x < 0.44 && c.y > 1370 && c.y < 1390)).toBe(true);
+        expect(total).toBe(2);                       // both clicks present
+        expect(h.clicks.every(c => c.x > 595 && c.x < 605 && c.y > 1375 && c.y < 1385)).toBe(true);
+        expect(h.pageWidth).toBe(1500);              // median of 1400 & 1600
+    });
+
+    it('heatmap falls back to a device default width when no clicks have pw', async () => {
+        const h = await repo.getHeatmap('site_1', '/nowhere', 'mobile');
+        expect(h.pageWidth).toBe(390);
     });
 
     it('top pages rank by pageviews with avg seconds from scroll', async () => {

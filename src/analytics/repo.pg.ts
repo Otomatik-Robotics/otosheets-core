@@ -28,7 +28,7 @@ export class AnalyticsPgRepo {
             siteId: e.siteId, eventId: e.eventId, day: e.day, ts: new Date(e.ts),
             type: e.type, sid: e.sid, vid: e.vid, path: e.path,
             ref: e.ref ?? null, utmSource: e.utmSource ?? null, utmMedium: e.utmMedium ?? null, utmCampaign: e.utmCampaign ?? null,
-            vpBucket: e.vpBucket, x: e.x ?? null, y: e.y ?? null, depth: e.depth ?? null, sec: e.sec ?? null,
+            vpBucket: e.vpBucket, x: e.x ?? null, y: e.y ?? null, pw: e.pw ?? null, depth: e.depth ?? null, sec: e.sec ?? null,
             productId: e.productId ?? null, orderId: e.orderId ?? null,
             ns: e.ns ?? false, nv: e.nv ?? false,
         }));
@@ -151,13 +151,24 @@ export class AnalyticsPgRepo {
      *  so identical clicks merge without shifting anything to a bucket centre. */
     async getHeatmap(siteId: string, path: string, vpBucket: VpBucket): Promise<AnalyticsHeatmap> {
         const base = and(eq(analyticsEvents.siteId, siteId), eq(analyticsEvents.path, path), eq(analyticsEvents.vpBucket, vpBucket));
+        // Absolute click px, deduped to a 2px grid (keeps exact placement). Only
+        // clicks near the render width matter; we render at the MEDIAN width and
+        // include all — cross-width outliers are rare at storefront volume.
         const clickRows = await this.db.select({
-            x: sql<number>`round((${analyticsEvents.x} * 2000))::int`,   // 0..2000 → /2000 = fraction
-            y: sql<number>`round((${analyticsEvents.y} / 2.0))::int`,    // 2px vertical merge
+            x: sql<number>`round((${analyticsEvents.x} / 2.0))::int`,
+            y: sql<number>`round((${analyticsEvents.y} / 2.0))::int`,
             clicks: sql<number>`count(*)`,
         }).from(analyticsEvents)
             .where(and(base, eq(analyticsEvents.type, 'click'), sql`${analyticsEvents.x} is not null and ${analyticsEvents.y} is not null`))
             .groupBy(sql`1`, sql`2`);
+        // Render width = median page width the clicks were captured at, so the
+        // backdrop reflows exactly as visitors saw it and absolute px line up.
+        const pwRow = await this.db.select({
+            pw: sql<number>`percentile_cont(0.5) within group (order by ${analyticsEvents.pw})`,
+        }).from(analyticsEvents)
+            .where(and(base, eq(analyticsEvents.type, 'click'), sql`${analyticsEvents.pw} is not null`));
+        const DEFAULT_W: Record<string, number> = { desktop: 1280, tablet: 834, mobile: 390 };
+        const pageWidth = Math.round(Number(pwRow[0]?.pw ?? 0)) || DEFAULT_W[vpBucket] || 1280;
 
         // Cumulative: for each 20% mark, distinct sessions whose max depth reached it.
         const marks = [2, 4, 6, 8, 10];
@@ -173,9 +184,9 @@ export class AnalyticsPgRepo {
         const reachedByMark: Record<number, number> = { 2: Number(s.reached2 ?? 0), 4: Number(s.reached4 ?? 0), 6: Number(s.reached6 ?? 0), 8: Number(s.reached8 ?? 0), 10: Number(s.reached10 ?? 0) };
 
         return {
-            path, vpBucket,
-            // x back to the 0..1 fraction; y stays in page px (×2 from the 2px merge).
-            clicks: clickRows.map(c => ({ x: Number(c.x) / 2000, y: Number(c.y) * 2, clicks: Number(c.clicks) })),
+            path, vpBucket, pageWidth,
+            // ×2 back from the 2px dedupe merge → absolute page px.
+            clicks: clickRows.map(c => ({ x: Number(c.x) * 2, y: Number(c.y) * 2, clicks: Number(c.clicks) })),
             scroll: marks.map(m => ({ depthBucket: m, reached: reachedByMark[m] })).filter(x => x.reached > 0),
         };
     }

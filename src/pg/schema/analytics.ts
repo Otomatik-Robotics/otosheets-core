@@ -24,8 +24,9 @@ export const analyticsEvents = pgTable('analytics_events', {
     utmMedium: text('utm_medium'),
     utmCampaign: text('utm_campaign'),
     vpBucket: text('vp_bucket').notNull().default('desktop'),
-    x: doublePrecision('x'),                       // click: 0..1 of page width
-    y: integer('y'),                               // click: page-y px
+    x: doublePrecision('x'),                       // click: absolute page-X px
+    y: integer('y'),                               // click: absolute page-Y px
+    pw: integer('pw'),                             // click: page width (px) at capture — the render width
     depth: doublePrecision('depth'),               // scroll: max fraction reached 0..1
     sec: integer('sec'),                           // scroll: seconds on page
     productId: text('product_id'),

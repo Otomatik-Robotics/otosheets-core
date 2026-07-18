@@ -23,8 +23,9 @@ export interface AnalyticsEventInput {
     utmMedium?: string;
     utmCampaign?: string;
     vpBucket: VpBucket;
-    x?: number;
-    y?: number;
+    x?: number;   // click: absolute page-X px
+    y?: number;   // click: absolute page-Y px
+    pw?: number;  // click: page width (px) at capture
     depth?: number;
     sec?: number;
     productId?: string;
@@ -53,7 +54,11 @@ export interface AnalyticsReferrerRow {
 export interface AnalyticsFunnelRow { step: FunnelStep; count: number }
 export interface AnalyticsHeatmap {
     path: string; vpBucket: VpBucket;
-    /** Exact clicked points: x = fraction of page width (0..1), y = page-Y px. */
+    /** Absolute page pixels — x = page-X px, y = page-Y px, at pageWidth. */
     clicks: { x: number; y: number; clicks: number }[];
+    /** The page width (px) to render the backdrop at — the median of the widths
+     *  clicks were captured at, so absolute px line up. Falls back to a per-device
+     *  default when there are no clicks yet. */
+    pageWidth: number;
     scroll: { depthBucket: number; reached: number }[];
 }
