@@ -66,6 +66,10 @@ export const OrderSchema = z.object({
     orderId: z.string(),
     orderNumber: z.number().int().nonnegative(),
     businessProfileId: z.string().nullish(),
+    /** Which of the org's websites took the order (site host, stamped at
+     *  checkout). Absent on orders that predate multi-site — those are
+     *  attributed to the org's primary site at read time. */
+    siteHost: z.string().optional(),
     status: z.enum(ORDER_STATUSES),
     buyer: z.object({
         name: z.string(),
@@ -104,6 +108,7 @@ export interface Order {
     orderId: string;
     orderNumber: number;
     businessProfileId?: string | null;
+    siteHost?: string;
     status: OrderStatus;
     buyer: { name: string; email: string; phone?: string };
     shippingAddress?: OrderAddress;

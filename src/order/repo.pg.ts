@@ -2,7 +2,7 @@ import { and, eq, desc, lt, or, gte, lte, inArray, sql, isNull } from 'drizzle-o
 import { getPg, type PgDb } from '../pg/client';
 import { shopOrders, shopOrderCounters } from '../pg/schema/commerce';
 import { Order, OrderStatus } from './schema';
-import type { IOrderRepo } from './repo';
+import type { IOrderRepo, OrderSiteScope } from './repo';
 
 /**
  * Every order attribute `updateStatus` may set alongside the status flip. Must
@@ -40,6 +40,7 @@ function toDto(row: typeof shopOrders.$inferSelect): Order {
         createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
     if (row.businessProfileId != null) dto.businessProfileId = row.businessProfileId;
+    if (row.siteHost != null) dto.siteHost = row.siteHost;
     if (row.shippingAddress != null) dto.shippingAddress = row.shippingAddress;
     if (row.shippingOption != null) dto.shippingOption = row.shippingOption;
     if (row.stripePaymentIntentId != null) dto.stripePaymentIntentId = row.stripePaymentIntentId;
@@ -54,6 +55,7 @@ function toRow(o: Order): typeof shopOrders.$inferInsert {
     return {
         orgId: o.orgId, orderId: o.orderId, orderNumber: o.orderNumber,
         businessProfileId: o.businessProfileId ?? null,
+        siteHost: o.siteHost ?? null,
         status: o.status, buyer: o.buyer,
         shippingAddress: o.shippingAddress ?? null,
         shippingOption: o.shippingOption ?? null,
@@ -103,11 +105,16 @@ export class OrderPgRepo implements IOrderRepo {
     /** Newest-first keyset pagination — same opaque lastEvaluatedKey contract as Dynamo. */
     async listByOrg(
         orgId: string,
-        opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus },
+        opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus; site?: OrderSiteScope },
     ): Promise<{ items: Order[]; lastEvaluatedKey?: Record<string, any> }> {
         const limit = opts?.limit ?? 20;
         const conds: any[] = [eq(shopOrders.orgId, orgId)];
         if (opts?.status) conds.push(eq(shopOrders.status, opts.status));
+        if (opts?.site) {
+            conds.push(opts.site.includeUnattributed
+                ? or(eq(shopOrders.siteHost, opts.site.host), isNull(shopOrders.siteHost))
+                : eq(shopOrders.siteHost, opts.site.host));
+        }
         const k = opts?.exclusiveStartKey;
         if (k?.createdAt && k?.orderId) {
             conds.push(or(
@@ -131,19 +138,26 @@ export class OrderPgRepo implements IOrderRepo {
         orgId: string,
         fromIso: string,
         toIso: string,
+        site?: OrderSiteScope,
     ): Promise<{ day: string; orders: number; revenueCents: number }[]> {
         const day = sql<string>`substr(${shopOrders.createdAt}, 1, 10)`;
+        const conds = [
+            eq(shopOrders.orgId, orgId),
+            gte(shopOrders.createdAt, fromIso),
+            lte(shopOrders.createdAt, toIso),
+            inArray(shopOrders.status, ['paid', 'fulfilled', 'shipped']),
+        ];
+        if (site) {
+            conds.push(site.includeUnattributed
+                ? or(eq(shopOrders.siteHost, site.host), isNull(shopOrders.siteHost))!
+                : eq(shopOrders.siteHost, site.host));
+        }
         const rows = await this.db.select({
             day,
             orders: sql<number>`count(*)`,
             revenueCents: sql<number>`coalesce(sum(${shopOrders.totalCents}), 0)`,
         }).from(shopOrders)
-            .where(and(
-                eq(shopOrders.orgId, orgId),
-                gte(shopOrders.createdAt, fromIso),
-                lte(shopOrders.createdAt, toIso),
-                inArray(shopOrders.status, ['paid', 'fulfilled', 'shipped']),
-            ))
+            .where(and(...conds))
             .groupBy(day)
             .orderBy(day);
         return rows.map(r => ({ day: r.day, orders: Number(r.orders), revenueCents: Number(r.revenueCents) }));

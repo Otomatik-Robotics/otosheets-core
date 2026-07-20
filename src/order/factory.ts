@@ -2,7 +2,7 @@ import { resolveRoute, type Route } from '../dataBackend';
 import { mirrorWrite, shadowRead } from '../dualWrite';
 import type { IDdb } from '../ddbPort';
 import { Order, OrderStatus } from './schema';
-import { OrderDynamoRepo, type IOrderRepo } from './repo';
+import { OrderDynamoRepo, type IOrderRepo, type OrderSiteScope } from './repo';
 import { OrderPgRepo } from './repo.pg';
 
 const DOMAIN = 'commerce' as const;
@@ -56,14 +56,14 @@ export class RoutingOrderRepo implements IOrderRepo {
         return this.read('get', () => this.pick(r).get(orgId, orderId), () => this.pg.get(orgId, orderId), r);
     }
 
-    async listByOrg(orgId: string, opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus }) {
+    async listByOrg(orgId: string, opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus; site?: OrderSiteScope }) {
         // Cursor shapes differ between stores — no shadow compare on pagination.
         return this.pick(await resolveRoute(DOMAIN)).listByOrg(orgId, opts);
     }
 
-    async dailyTotals(orgId: string, fromIso: string, toIso: string) {
+    async dailyTotals(orgId: string, fromIso: string, toIso: string, site?: OrderSiteScope) {
         const r = await resolveRoute(DOMAIN);
-        return this.read('dailyTotals', () => this.pick(r).dailyTotals(orgId, fromIso, toIso), () => this.pg.dailyTotals(orgId, fromIso, toIso), r);
+        return this.read('dailyTotals', () => this.pick(r).dailyTotals(orgId, fromIso, toIso, site), () => this.pg.dailyTotals(orgId, fromIso, toIso, site), r);
     }
 
     async updateStatus(orgId: string, orderId: string, expectedFrom: OrderStatus[], to: OrderStatus, set?: Record<string, any>): Promise<boolean> {

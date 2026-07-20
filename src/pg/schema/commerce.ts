@@ -14,6 +14,7 @@ export const shopOrders = pgTable('shop_orders', {
     orderId: text('order_id').notNull(),           // ord-{stripeSessionId} — deterministic, webhook-replay safe
     orderNumber: bigint('order_number', { mode: 'number' }).notNull(),
     businessProfileId: text('business_profile_id'),
+    siteHost: text('site_host'),                   // which website took the order (null = pre-multi-site → primary)
     status: text('status').notNull(),              // pending|paid|fulfilled|shipped|cancelled|refunded
     buyer: jsonb('buyer').notNull(),               // { name, email, phone? }
     shippingAddress: jsonb('shipping_address'),

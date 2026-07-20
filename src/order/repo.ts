@@ -9,13 +9,19 @@ function isConditionalCancel(err: any): boolean {
     return reasons.some((r) => r?.Code === 'ConditionalCheckFailed');
 }
 
+/** Per-website scoping for order reads. `host` is the site host stamped at
+ *  checkout; `includeUnattributed` also matches orders with NO siteHost (set it
+ *  when the requested site is the org's PRIMARY site, so orders that predate
+ *  multi-site attribution stay visible there). */
+export interface OrderSiteScope { host: string; includeUnattributed?: boolean }
+
 /** The order data contract — implemented by Dynamo + Postgres, routed by factory.ts. */
 export interface IOrderRepo {
     nextOrderNumber(orgId: string): Promise<number>;
     createConditional(order: Order): Promise<boolean>;
     get(orgId: string, orderId: string): Promise<Order | null>;
-    listByOrg(orgId: string, opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus }): Promise<{ items: Order[]; lastEvaluatedKey?: Record<string, any> }>;
-    dailyTotals(orgId: string, fromIso: string, toIso: string): Promise<{ day: string; orders: number; revenueCents: number }[]>;
+    listByOrg(orgId: string, opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus; site?: OrderSiteScope }): Promise<{ items: Order[]; lastEvaluatedKey?: Record<string, any> }>;
+    dailyTotals(orgId: string, fromIso: string, toIso: string, site?: OrderSiteScope): Promise<{ day: string; orders: number; revenueCents: number }[]>;
     updateStatus(orgId: string, orderId: string, expectedFrom: OrderStatus[], to: OrderStatus, set?: Record<string, any>): Promise<boolean>;
     claimReceiptSend(orgId: string, orderId: string): Promise<boolean>;
     /** Mirror seams (dual-write): full-row upsert + monotonic counter sync. */
@@ -68,10 +74,11 @@ export class OrderDynamoRepo implements IOrderRepo {
         return (Item as Order) ?? null;
     }
 
-    /** Newest-first, cursor-paginated; optional status filter. Skips the COUNTER item. */
+    /** Newest-first, cursor-paginated; optional status + per-website filters.
+     *  Skips the COUNTER item. */
     async listByOrg(
         orgId: string,
-        opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus },
+        opts?: { limit?: number; exclusiveStartKey?: Record<string, any>; status?: OrderStatus; site?: OrderSiteScope },
     ): Promise<{ items: Order[]; lastEvaluatedKey?: Record<string, any> }> {
         const params: any = {
             TableName: Tables.ORDERS,
@@ -82,11 +89,19 @@ export class OrderDynamoRepo implements IOrderRepo {
             Limit: opts?.limit ?? 20,
             ExclusiveStartKey: opts?.exclusiveStartKey,
         };
+        const filters: string[] = [];
         if (opts?.status) {
-            params.FilterExpression = '#s = :st';
-            params.ExpressionAttributeNames = { '#s': 'status' };
+            filters.push('#s = :st');
+            params.ExpressionAttributeNames = { ...(params.ExpressionAttributeNames ?? {}), '#s': 'status' };
             params.ExpressionAttributeValues[':st'] = opts.status;
         }
+        if (opts?.site) {
+            filters.push(opts.site.includeUnattributed
+                ? '(siteHost = :sh OR attribute_not_exists(siteHost))'
+                : 'siteHost = :sh');
+            params.ExpressionAttributeValues[':sh'] = opts.site.host;
+        }
+        if (filters.length) params.FilterExpression = filters.join(' AND ');
         const { Items, LastEvaluatedKey } = await this.ddb.query(params);
         return { items: (Items as Order[]) ?? [], lastEvaluatedKey: LastEvaluatedKey };
     }
@@ -102,6 +117,7 @@ export class OrderDynamoRepo implements IOrderRepo {
         orgId: string,
         fromIso: string,
         toIso: string,
+        site?: OrderSiteScope,
     ): Promise<{ day: string; orders: number; revenueCents: number }[]> {
         const byDay = new Map<string, { day: string; orders: number; revenueCents: number }>();
         let lastKey: Record<string, any> | undefined;
@@ -115,6 +131,7 @@ export class OrderDynamoRepo implements IOrderRepo {
             });
             for (const o of (Items as Order[]) ?? []) {
                 if (!['paid', 'fulfilled', 'shipped'].includes(o.status)) continue;
+                if (site && o.siteHost !== site.host && !(site.includeUnattributed && o.siteHost == null)) continue;
                 const day = String(o.createdAt).slice(0, 10);
                 const row = byDay.get(day) ?? { day, orders: 0, revenueCents: 0 };
                 row.orders += 1;
