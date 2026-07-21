@@ -13,7 +13,10 @@ const NUMERIC_KEYS = ['subtotal', 'gstAmount', 'totalAmount', 'taxRate', 'paidAm
 // (ownerId is internal; the legacy_* columns are remapped to their DTO aliases).
 const PG_ONLY = new Set(['ownerId', 'legacyClientSnapshot', 'legacyLineItems']);
 
-interface LineItemRow {
+interface LineItemRowExtra {
+    cost?: string | null; priceBookItemId?: string | null;
+}
+interface LineItemRow extends LineItemRowExtra {
     lineItemId: string; description: string;
     quantity: string | null; unitPrice: string | null; total: string | null; sortOrder: number;
 }
@@ -23,6 +26,8 @@ function itemFromRow(r: LineItemRow) {
     if (r.quantity != null) item.quantity = Number(r.quantity);
     if (r.unitPrice != null) item.unitPrice = Number(r.unitPrice);
     if (r.total != null) item.total = Number(r.total);
+    if (r.cost != null) item.cost = Number(r.cost);
+    if (r.priceBookItemId != null) item.priceBookItemId = r.priceBookItemId;
     return item;
 }
 
@@ -72,6 +77,8 @@ function itemRows(invoiceId: string, items: any[]): any[] {
         quantity: it.quantity != null ? String(it.quantity) : null,
         unitPrice: it.unitPrice != null ? String(it.unitPrice) : null,
         total: it.total != null ? String(it.total) : null,
+        cost: it.cost != null ? String(it.cost) : null,
+        priceBookItemId: it.priceBookItemId ?? null,
         sortOrder: it.sortOrder ?? i,
     }));
 }

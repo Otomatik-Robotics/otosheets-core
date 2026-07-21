@@ -7,6 +7,11 @@ export const LineItemSchema = z.object({
     unitPrice: z.number().default(0),
     total: z.number().default(0),
     sortOrder: z.number().default(0),
+    /** Point-in-time unit cost snapshotted from the price book at line creation
+     *  (cost drifts, so it is frozen here) — powers margin reporting. */
+    cost: z.number().nullish(),
+    /** The price-book item this line came from, when applicable. */
+    priceBookItemId: z.string().nullish(),
 });
 export type LineItem = z.infer<typeof LineItemSchema>;
 

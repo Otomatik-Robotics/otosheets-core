@@ -128,6 +128,8 @@ export const invoiceLineItems = pgTable('invoice_line_items', {
     quantity: numeric('quantity', { precision: 12, scale: 3 }),
     unitPrice: numeric('unit_price', { precision: 12, scale: 2 }),
     total: numeric('total', { precision: 12, scale: 2 }),
+    cost: numeric('cost', { precision: 12, scale: 2 }),                 // 0030 margin reporting
+    priceBookItemId: text('price_book_item_id'),                        // 0030
     sortOrder: integer('sort_order').notNull().default(0),
 }, (t) => [
     index('invoice_line_items_invoice_idx').on(t.invoiceId),

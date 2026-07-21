@@ -5,7 +5,7 @@ import { toRow, fromRow } from '../pg/rows';
 import { PriceBookItem } from './schema';
 import type { IPriceBookRepo } from './repo';
 
-const NUM = ['unitPrice'];
+const NUM = ['unitPrice', 'costPrice', 'qtyOnHand', 'reorderPoint'];
 
 /** Price-book items are keyed (orgId, itemId) in Dynamo; itemId is a ULID PK here. */
 export class PriceBookPgRepo implements IPriceBookRepo {
