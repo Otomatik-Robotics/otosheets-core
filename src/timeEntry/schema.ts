@@ -13,6 +13,19 @@ export const TimeEntryBaseSchema = z.object({
     billable: z.boolean().default(true),
     invoicedAt: z.string().nullish(),
     invoiceId: z.string().nullish(),
+    /** How the entry came to exist: manual | job (start/end job) | auto (geofence auto-clock). */
+    source: z.string().nullish(),
+    /** Set when the worker confirmed the day's hours (GPS timesheets). */
+    confirmedAt: z.string().nullish(),
+    /** True when the worker corrected auto-logged hours — needs owner review. */
+    disputed: z.boolean().nullish(),
+    /** The auto-logged minutes before the worker's correction. */
+    originalMinutes: z.number().nullish(),
+    disputeNote: z.string().nullish(),
+    /** Dispute review state: pending | approved | rejected. */
+    approvalStatus: z.string().nullish(),
+    approvedBy: z.string().nullish(),
+    approvedAt: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
 });

@@ -68,6 +68,14 @@ export const timeEntries = pgTable('time_entries', {
     billable: boolean('billable'),
     invoicedAt: text('invoiced_at'),
     invoiceId: text('invoice_id'),
+    source: text('source'),                          // 0031 GPS timesheets
+    confirmedAt: text('confirmed_at'),               // 0031
+    disputed: boolean('disputed'),                   // 0031
+    originalMinutes: integer('original_minutes'),    // 0031
+    disputeNote: text('dispute_note'),               // 0031
+    approvalStatus: text('approval_status'),         // 0031
+    approvedBy: text('approved_by'),                 // 0031
+    approvedAt: text('approved_at'),                 // 0031
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
