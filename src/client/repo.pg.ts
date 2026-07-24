@@ -134,6 +134,35 @@ export class ClientPgRepo implements IClientRepo {
         return this.toClient(rows[0], contacts);
     }
 
+    /**
+     * Fuzzy name search over an org's clients (pg_trgm similarity on the
+     * `clients_name_trgm` GIN index) — used to check whether a bank payer
+     * resembles an existing client before offering to create a new one.
+     * Archived clients are excluded. Returns the closest matches, best first.
+     */
+    async findSimilarClients(
+        orgId: string, name: string, opts?: { limit?: number; threshold?: number },
+    ): Promise<Array<{ clientId: string; name: string; similarity: number }>> {
+        const q = (name ?? '').trim();
+        if (!orgId || !q) return [];
+        const limit = opts?.limit ?? 5;
+        const threshold = opts?.threshold ?? 0.3;
+        const rows = await this.db.select({
+            clientId: clients.clientId,
+            name: clients.name,
+            sim: sql<number>`similarity(${clients.name}, ${q})`,
+        })
+            .from(clients)
+            .where(and(
+                eq(clients.orgId, orgId),
+                sql`${clients.archived} IS NOT TRUE`,
+                sql`similarity(${clients.name}, ${q}) >= ${threshold}`,
+            ))
+            .orderBy(sql`similarity(${clients.name}, ${q}) DESC`)
+            .limit(limit);
+        return rows.map((r) => ({ clientId: r.clientId, name: r.name, similarity: Number(r.sim) }));
+    }
+
     async countClients(orgId: string): Promise<number> {
         const r = await this.db.select({ n: sql<number>`count(*)::int` }).from(clients).where(eq(clients.orgId, orgId));
         return r[0]?.n ?? 0;

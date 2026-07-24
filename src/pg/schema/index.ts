@@ -8,6 +8,7 @@ export * from './leadsPipelines';
 export * from './opsEntities';
 export * from './voiceCredit';
 export * from './merchantCategories';
+export * from './payerAliases';
 export * from './analytics';
 export * from './commerce';
 export * from './adCampaigns';
