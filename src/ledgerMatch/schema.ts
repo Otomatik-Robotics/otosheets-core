@@ -26,6 +26,8 @@ export interface MatchableLedgerRow {
     transferPairId: string | null;   // statement rows only
     matchedInvoiceId: string | null;
     matchedReceiptId: string | null;
+    /** Provenance of an existing link — 'AUTO' | 'USER' | null when unlinked. */
+    matchSource: string | null;
 }
 
 /** An invoice still owed money — a candidate for a bank CREDIT. Money in integer cents. */

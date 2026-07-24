@@ -45,6 +45,7 @@ export class LedgerMatchPgRepo {
             transferPairId: statementTransactions.transferPairId,
             matchedInvoiceId: statementTransactions.matchedInvoiceId,
             matchedReceiptId: statementTransactions.matchedReceiptId,
+            matchSource: statementTransactions.matchSource,
         })
             .from(statementTransactions)
             .where(and(
@@ -68,6 +69,7 @@ export class LedgerMatchPgRepo {
             transferPairId: r.transferPairId ?? null,
             matchedInvoiceId: r.matchedInvoiceId ?? null,
             matchedReceiptId: r.matchedReceiptId ?? null,
+            matchSource: r.matchSource ?? null,
         }));
     }
 
@@ -91,6 +93,7 @@ export class LedgerMatchPgRepo {
             duplicateOfTxnId: bankTransactions.duplicateOfTxnId,
             matchedInvoiceId: bankTransactions.matchedInvoiceId,
             matchedReceiptId: bankTransactions.matchedReceiptId,
+            matchSource: bankTransactions.matchSource,
         })
             .from(bankTransactions)
             .where(and(...conditions))
@@ -111,6 +114,7 @@ export class LedgerMatchPgRepo {
             transferPairId: null,
             matchedInvoiceId: r.matchedInvoiceId ?? null,
             matchedReceiptId: r.matchedReceiptId ?? null,
+            matchSource: r.matchSource ?? null,
         }));
     }
 
@@ -131,6 +135,7 @@ export class LedgerMatchPgRepo {
                 flowClass: r.flowClass ?? null, duplicateOfTxnId: r.duplicateOfTxnId ?? null,
                 transferPairId: r.transferPairId ?? null,
                 matchedInvoiceId: r.matchedInvoiceId ?? null, matchedReceiptId: r.matchedReceiptId ?? null,
+                matchSource: r.matchSource ?? null,
             };
         }
         const rows = await this.db.select().from(bankTransactions)
@@ -144,6 +149,7 @@ export class LedgerMatchPgRepo {
             amountCents: Number(r.amountCents), direction: (r.direction as any) ?? null,
             flowClass: null, duplicateOfTxnId: r.duplicateOfTxnId ?? null, transferPairId: null,
             matchedInvoiceId: r.matchedInvoiceId ?? null, matchedReceiptId: r.matchedReceiptId ?? null,
+            matchSource: r.matchSource ?? null,
         };
     }
 
