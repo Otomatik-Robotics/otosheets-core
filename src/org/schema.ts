@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+/**
+ * Auto-reconciliation opt-in (autonomous bank ↔ ledger matching). When
+ * enabled, statement ingest stages auto-eligible matches for a single human
+ * batch-confirm — no money is written until the user confirms. Absent/null
+ * means disabled (opt-in, default OFF).
+ */
+export const AutoReconcileSettingsSchema = z.object({
+    enabled: z.boolean(),
+});
+export type AutoReconcileSettings = z.infer<typeof AutoReconcileSettingsSchema>;
+
 export const OrgStoredSchema = z.object({
     orgId: z.string(),
     name: z.string(),
@@ -22,6 +33,7 @@ export const OrgStoredSchema = z.object({
     emailSignature: z.string().nullish(),
     bookingSettings: z.any().nullish(),
     tradeSettings: z.any().nullish(),
+    autoReconcile: AutoReconcileSettingsSchema.nullish(),
     /** Active business profile (FK → business_profiles). Every consumer resolves through this. */
     businessProfileId: z.string().nullish(),
     stripeAccountId: z.string().nullish(),

@@ -82,6 +82,9 @@ beforeAll(async () => {
     // Link r_linked from the statement side so listUnlinkedReceipts excludes it.
     await stx({ txnId: 'stmt_1#00006', seq: 6, txnDate: '2026-03-05', description: 'OFFICEWORKS', amountCents: -4500, direction: 'DEBIT', matchedReceiptId: 'r_linked', matchSource: 'USER', reviewStatus: 'CONFIRMED' });
 
+    // A clean credit reserved for the stamp → unstamp round-trip test.
+    await stx({ txnId: 'stmt_1#00007', seq: 7, txnDate: '2026-03-12', description: 'DIRECT CREDIT REF 5521', amountCents: 55000, direction: 'CREDIT', flowClass: 'INCOME', reviewStatus: 'CONFIRMED' });
+
     // A feed account with an old unmatched credit.
     await db.insert(bankAccounts).values({
         accountId: 'acct_1', userId: USER, organizationId: ORG, institutionName: 'Westpac',
@@ -114,7 +117,7 @@ describe('candidate sets', () => {
 
     it('lists statement rows engine-shaped with exclusion columns intact', async () => {
         const rows = await repo.listStatementRowsForMatching(USER, 'stmt_1');
-        expect(rows).toHaveLength(6);
+        expect(rows).toHaveLength(7);
         expect(rows[0]).toMatchObject({ txnId: 'stmt_1#00001', source: 'statement', seq: 1, amountCents: 240000 });
         expect(rows[1].matchedInvoiceId).toBe('i_paid');
         expect(rows[2].transferPairId).toBe('stmt_1#00003');
@@ -136,6 +139,28 @@ describe('stampMatch', () => {
 
     it('another user cannot stamp my rows', async () => {
         expect(await repo.stampMatch('intruder', 'statement', 'stmt_1#00001', { type: 'INVOICE', id: 'i_open' }, 'USER')).toBe('not_found');
+    });
+});
+
+describe('unstampMatch', () => {
+    it('clears a link, is idempotent on replay, and never unlinks the wrong target', async () => {
+        // stamp → unstamp round-trip on a fresh row.
+        expect(await repo.stampMatch(USER, 'statement', 'stmt_1#00007', { type: 'INVOICE', id: 'i_open' }, 'AUTO')).toBe('linked');
+        // Wrong target id — refuse, the link stays.
+        expect(await repo.unstampMatch(USER, 'statement', 'stmt_1#00007', { type: 'INVOICE', id: 'i_part' })).toBe('mismatch');
+        expect((await repo.getRowForMatching(USER, 'statement', 'stmt_1#00007'))!.matchedInvoiceId).toBe('i_open');
+        // Right target — cleared, and match_source goes with it.
+        expect(await repo.unstampMatch(USER, 'statement', 'stmt_1#00007', { type: 'INVOICE', id: 'i_open' })).toBe('cleared');
+        const row = await repo.getRowForMatching(USER, 'statement', 'stmt_1#00007');
+        expect(row!.matchedInvoiceId).toBeNull();
+        // Replay — inert, still 'cleared'.
+        expect(await repo.unstampMatch(USER, 'statement', 'stmt_1#00007', { type: 'INVOICE', id: 'i_open' })).toBe('cleared');
+        // The freed row can be stamped again (undo really frees the target).
+        expect(await repo.stampMatch(USER, 'statement', 'stmt_1#00007', { type: 'INVOICE', id: 'i_part' }, 'USER')).toBe('linked');
+    });
+
+    it('another user cannot unstamp my rows', async () => {
+        expect(await repo.unstampMatch('intruder', 'statement', 'stmt_1#00007', { type: 'INVOICE', id: 'i_part' })).toBe('not_found');
     });
 });
 

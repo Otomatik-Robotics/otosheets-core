@@ -85,6 +85,8 @@ export const orgs = pgTable('orgs', {
     emailSignature: text('email_signature'),
     bookingSettings: jsonb('booking_settings'),
     tradeSettings: jsonb('trade_settings'),
+    // Auto-reconciliation opt-in — { enabled: boolean }. NULL = disabled (0032).
+    autoReconcile: jsonb('auto_reconcile'),
     // Active business profile — points at the business_profiles row every consumer
     // resolves through. Plain column (no hard FK) to avoid the orgs↔business_profiles
     // insert-order cycle; integrity is app-level. See businessProfile.ts.

@@ -285,6 +285,38 @@ export class LedgerMatchPgRepo {
     }
 
     /**
+     * Reverse an accepted link — the undo of `stampMatch`. Conditional the
+     * same way: the clear only lands when the target column holds the given
+     * id or is already NULL (replay-safe — running twice is inert). A row
+     * linked to a DIFFERENT target is left untouched and reported as
+     * 'mismatch' so the caller never silently unlinks the wrong thing.
+     * `match_source` is cleared only when no other link remains on the row.
+     */
+    async unstampMatch(
+        userId: string,
+        source: 'statement' | 'feed',
+        txnId: string,
+        target: { type: MatchTargetType; id: string },
+    ): Promise<'cleared' | 'mismatch' | 'not_found'> {
+        const table = source === 'statement' ? sql.raw('statement_transactions') : sql.raw('bank_transactions');
+        const column = target.type === 'INVOICE' ? sql.raw('matched_invoice_id') : sql.raw('matched_receipt_id');
+        const other = target.type === 'INVOICE' ? sql.raw('matched_receipt_id') : sql.raw('matched_invoice_id');
+        const result: any = await this.db.execute(sql`
+            UPDATE ${table} SET
+                ${column} = NULL,
+                match_source = CASE WHEN ${other} IS NULL THEN NULL ELSE match_source END,
+                updated_at = now()
+            WHERE txn_id = ${txnId} AND user_id = ${userId}
+              AND (${column} IS NULL OR ${column} = ${target.id})
+            RETURNING txn_id
+        `);
+        const rows = result.rows ?? result;
+        if (rows && rows.length > 0) return 'cleared';
+        const existing = await this.getRowForMatching(userId, source, txnId);
+        return existing ? 'mismatch' : 'not_found';
+    }
+
+    /**
      * Confirmed old credits no invoice explains — transfers, refunds,
      * duplicates and already-matched rows excluded; statement and feed rows
      * UNIONed with a display label for the account the money landed in.
