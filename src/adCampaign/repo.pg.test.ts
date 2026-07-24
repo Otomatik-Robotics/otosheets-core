@@ -91,16 +91,17 @@ describe('AdCampaignPgRepo', () => {
         await mk('l1', 'oto_c1', 'NEW');
         await mk('l2', 'oto_c1', 'QUOTED');
         await mk('l3', 'oto_c1', 'Won', 1200);
+        await mk('l6', 'oto_c1', 'COMPLETE', 800); // default pipeline's terminal stage counts as won
         await mk('l4', 'oto_c2', 'NEW');
         await mk('l5', null, 'NEW'); // organic — no attribution
 
         const stats = await repo.leadStatsByCampaign('org_1', ['oto_c1', 'oto_c2'], '2026-07-01T00:00:00Z', '2026-08-01T00:00:00Z');
         const c1 = stats.find(s => s.utmCampaign === 'oto_c1');
-        expect(c1).toMatchObject({ leads: 3, qualified: 2, won: 1, wonValue: 1200 });
+        expect(c1).toMatchObject({ leads: 4, qualified: 3, won: 2, wonValue: 2000 });
         expect(stats.find(s => s.utmCampaign === 'oto_c2')).toMatchObject({ leads: 1, qualified: 0, won: 0 });
 
         const split = await repo.leadSourceSplit('org_1', '2026-07-01T00:00:00Z', '2026-08-01T00:00:00Z');
-        expect(split.find(r => r.channel === 'meta')?.leads).toBe(4);
+        expect(split.find(r => r.channel === 'meta')?.leads).toBe(5);
         expect(split.find(r => r.channel === 'intake_form')?.leads).toBe(1); // falls back to lead.source
     });
 

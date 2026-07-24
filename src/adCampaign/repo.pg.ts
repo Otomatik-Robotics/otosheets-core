@@ -187,8 +187,9 @@ export class AdCampaignPgRepo {
 
     /**
      * Per-campaign lead outcomes. `qualified` = progressed beyond NEW;
-     * `won` = stage 'won' (case-insensitive) — org stages are free-form, this
-     * matches the default pipeline's terminal stage.
+     * `won` = a success terminal stage — org stages are free-form, so this
+     * matches both the default pipeline's terminal 'COMPLETE' and the common
+     * 'won' label (case-insensitive). LOST is neither.
      */
     async leadStatsByCampaign(
         orgId: string,
@@ -202,8 +203,8 @@ export class AdCampaignPgRepo {
             utmCampaign: utm,
             leads: sql<number>`count(*)`,
             qualified: sql<number>`count(*) filter (where ${leads.stage} is not null and upper(${leads.stage}) <> 'NEW')`,
-            won: sql<number>`count(*) filter (where lower(${leads.stage}) = 'won')`,
-            wonValue: sql<number>`coalesce(sum(${leads.quotedAmount}) filter (where lower(${leads.stage}) = 'won'), 0)`,
+            won: sql<number>`count(*) filter (where lower(${leads.stage}) in ('won', 'complete'))`,
+            wonValue: sql<number>`coalesce(sum(${leads.quotedAmount}) filter (where lower(${leads.stage}) in ('won', 'complete')), 0)`,
         }).from(leads)
             .where(and(
                 eq(leads.orgId, orgId),
@@ -229,8 +230,8 @@ export class AdCampaignPgRepo {
         const rows = await this.db.select({
             channel,
             leads: sql<number>`count(*)`,
-            won: sql<number>`count(*) filter (where lower(${leads.stage}) = 'won')`,
-            wonValue: sql<number>`coalesce(sum(${leads.quotedAmount}) filter (where lower(${leads.stage}) = 'won'), 0)`,
+            won: sql<number>`count(*) filter (where lower(${leads.stage}) in ('won', 'complete'))`,
+            wonValue: sql<number>`coalesce(sum(${leads.quotedAmount}) filter (where lower(${leads.stage}) in ('won', 'complete')), 0)`,
         }).from(leads)
             .where(and(
                 eq(leads.orgId, orgId),
