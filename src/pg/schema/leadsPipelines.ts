@@ -60,6 +60,9 @@ export const leads = pgTable('leads', {
     conversationSummary: text('conversation_summary'),
     doNotCall: boolean('do_not_call'),
     stageHistory: jsonb('stage_history'),
+    // First-party ad attribution (UTMs + gclid/fbclid), stamped at ingest —
+    // `attribution ->> 'utmCampaign'` joins to ad_campaigns.utm_campaign (0033).
+    attribution: jsonb('attribution'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [

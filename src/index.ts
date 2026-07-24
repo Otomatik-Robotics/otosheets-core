@@ -72,3 +72,4 @@ export * from './product';
 export * from './order';
 export * from './domainPurchase';
 export * from './analytics';
+export * from './adCampaign';
