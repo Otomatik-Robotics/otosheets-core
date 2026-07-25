@@ -36,6 +36,23 @@ export const OrgStoredSchema = z.object({
     autoReconcile: AutoReconcileSettingsSchema.nullish(),
     /** Active business profile (FK → business_profiles). Every consumer resolves through this. */
     businessProfileId: z.string().nullish(),
+    // ─── Per-org studio entitlement ──────────────────────────────
+    /**
+     * Studio ids this org is entitled to (e.g. `['ops.money', 'ledger']`) — the
+     * HARD floor the CASL ability engine applies before any per-user override.
+     * Kept as plain strings so the data layer stays decoupled from
+     * `@otosheets/shared`'s `StudioId` union.
+     *
+     * **Absent (undefined/null) means "not configured"**, which the ability
+     * engine reads as *all studios enabled* — never as "none". Both stores keep
+     * absence sparse for exactly this reason: never default it to `[]`.
+     */
+    enabledStudios: z.array(z.string()).nullish(),
+    /**
+     * Org-level feature-flag overrides — `{ [featureName]: boolean }` — applied
+     * on top of the tier/entitlement resolution. Absent = no overrides.
+     */
+    featureOverrides: z.record(z.string(), z.boolean()).nullish(),
     stripeAccountId: z.string().nullish(),
     // ─── Per-org subscription & seats ───────────────────────────
     // The org is the billable unit: tier drives the CASL entitlement

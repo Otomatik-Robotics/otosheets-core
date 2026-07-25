@@ -93,6 +93,15 @@ export const orgs = pgTable('orgs', {
     // resolves through. Plain column (no hard FK) to avoid the orgs↔business_profiles
     // insert-order cycle; integrity is app-level. See businessProfile.ts.
     businessProfileId: text('business_profile_id'),
+    // Per-org studio entitlement — JSON array of studio ids, e.g. ["ops.money"].
+    // jsonb (not text[]) matches this schema's existing convention: every
+    // array/object attribute here is jsonb, there is no text[] anywhere.
+    // Nullable with NO default: NULL means "not configured" (ability engine ⇒
+    // all studios). Materializing `[]` would read as "no studios" and lock every
+    // existing org out, so this must stay sparse. (0035)
+    enabledStudios: jsonb('enabled_studios'),
+    // Org-level feature-flag overrides — { [feature]: boolean }. NULL = none (0035).
+    featureOverrides: jsonb('feature_overrides'),
     stripeAccountId: text('stripe_account_id'),
     subscriptionTier: text('subscription_tier').notNull().default('free'),
     subscriptionStatus: text('subscription_status'),
