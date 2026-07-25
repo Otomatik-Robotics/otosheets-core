@@ -7,6 +7,16 @@ import type { IOrgRepo } from './repo';
 
 const NUMERIC_KEYS = ['taxRate'];
 
+/**
+ * Columns whose *absence* is semantically load-bearing, so a NULL row value must
+ * not surface as `null` on the DTO. `enabledStudios` absent means "entitlement
+ * not configured" (the ability engine then grants every studio) — the Dynamo
+ * impl simply omits the attribute, and consumers spread it conditionally
+ * (`...(org.enabledStudios && { … })`), so normalise here to keep the two
+ * backends' DTOs identical for these fields.
+ */
+const SPARSE_KEYS = ['enabledStudios', 'featureOverrides'] as const;
+
 export class OrgPgRepo implements IOrgRepo {
     constructor(private injected?: PgDb) {}
 
@@ -14,14 +24,22 @@ export class OrgPgRepo implements IOrgRepo {
         return this.injected ?? getPg();
     }
 
+    private toDto(row: Record<string, any>): Organization {
+        const dto = fromRow<Organization>(row, NUMERIC_KEYS) as Record<string, any>;
+        for (const key of SPARSE_KEYS) {
+            if (dto[key] === null) delete dto[key];
+        }
+        return dto as Organization;
+    }
+
     async getOrg(orgId: string): Promise<Organization | null> {
         const rows = await this.db.select().from(orgs).where(eq(orgs.orgId, orgId)).limit(1);
-        return rows[0] ? fromRow<Organization>(rows[0], NUMERIC_KEYS) : null;
+        return rows[0] ? this.toDto(rows[0]) : null;
     }
 
     async getOrgBySlug(slug: string): Promise<Organization | null> {
         const rows = await this.db.select().from(orgs).where(eq(orgs.slug, slug)).limit(1);
-        return rows[0] ? fromRow<Organization>(rows[0], NUMERIC_KEYS) : null;
+        return rows[0] ? this.toDto(rows[0]) : null;
     }
 
     async createOrg(orgId: string, data: Record<string, any>): Promise<void> {
