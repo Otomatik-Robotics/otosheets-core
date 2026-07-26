@@ -96,6 +96,7 @@ export const priceBookItems = pgTable('price_book_items', {
     costPrice: numeric('cost_price', { precision: 12, scale: 2 }),      // 0030
     qtyOnHand: numeric('qty_on_hand', { precision: 12, scale: 3 }),     // 0030 inventory-lite
     reorderPoint: numeric('reorder_point', { precision: 12, scale: 3 }), // 0030 inventory-lite
+    supplierId: text('supplier_id'),                                     // 0036 — who we buy it from
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
