@@ -83,6 +83,25 @@ export interface CoverageSummaryRow {
     confirmedCount: number;
 }
 
+/**
+ * How much of a GST figure is standing on a guess.
+ *
+ * The pipeline books GST conservatively — a credit that looks like business
+ * income is treated as GST-inclusive, because over-reporting and reconciling
+ * later is the safe direction for a BAS. That choice is only defensible if the
+ * user can see it, so this measures the part no deterministic signal confirms.
+ */
+export interface UncertainGstSummary {
+    /** GST cents in scope that nothing deterministic confirms. */
+    gstCents: number;
+    /** How many transactions that GST comes from. */
+    rowCount: number;
+    /** Term 1 — income credits the model alone classified. */
+    unconfirmedIncomeGstCents: number;
+    /** Term 2 — rows paired to a counterpart leg yet still booked income/expense. */
+    pairedTransferGstCents: number;
+}
+
 /** A transfer-class row, slim shape for cross-statement pairing. */
 export interface TransferRow {
     txnId: string;
@@ -467,6 +486,64 @@ export class StatementTransactionPgRepo {
             txnCount: Number(r.txnCount),
             confirmedCount: Number(r.confirmedCount),
         }));
+    }
+
+    /**
+     * The uncertain slice of the GST total — one aggregate, no rows leave
+     * Postgres.
+     *
+     * Neither `summariseByCategory` nor `summariseCoverage` can answer this:
+     * the first has gstCents without the categorisation source, the second has
+     * the source buckets without gstCents. The question crosses both, which is
+     * why it needs its own aggregate rather than post-processing either.
+     *
+     * Two terms, unioned (a row counts once even if it satisfies both):
+     *
+     *   1. UNCONFIRMED INCOME — an income-classed credit carrying booked GST
+     *      whose category came from the model alone: no payer→client match, no
+     *      user rule, no shared-cache consensus, no advisor. This is the money
+     *      that may have been called revenue when it was not.
+     *
+     *   2. PAIRED-BUT-NOT-TRANSFER — a row positively matched to an equal-and-
+     *      opposite leg on another of the user's accounts (`transferPairId`
+     *      set) that is nonetheless still booked as income/expense with GST.
+     *      Either the evidence was amount-only (the ingest deliberately keeps
+     *      the conservative booking) or the counterpart lives in a statement
+     *      that has not been reprocessed since.
+     *
+     * Human-confirmed rows are excluded throughout: a person standing behind
+     * the answer is precisely what "confirmed" means. Duplicates are excluded
+     * by `scopeConditions`, as in every other summary.
+     */
+    async summariseUncertainGst(scope: TxnSummaryScope): Promise<UncertainGstSummary> {
+        const conditions = this.scopeConditions(scope, 'summariseUncertainGst');
+        conditions.push(gt(statementTransactions.gstAmountCents, 0));
+        conditions.push(ne(statementTransactions.reviewStatus, 'CONFIRMED'));
+
+        // Sources that COUNT as confirmation — decided by a client match, a
+        // human, or a cross-tenant consensus, not by the model on its own.
+        const unconfirmedIncome = sql`${statementTransactions.flowClass} = 'INCOME'
+            AND (${statementTransactions.categorySource} IS NULL
+                 OR ${statementTransactions.categorySource} NOT IN ('PAYER', 'RULE', 'SHARED', 'USER', 'ADVISOR'))`;
+        const pairedNotTransfer = sql`${statementTransactions.transferPairId} IS NOT NULL
+            AND ${statementTransactions.flowClass} <> 'TRANSFER'`;
+        const either = sql`(${unconfirmedIncome}) OR (${pairedNotTransfer})`;
+
+        const [row] = await this.db.select({
+            gstCents: sql<string>`COALESCE(SUM(CASE WHEN ${either} THEN ${statementTransactions.gstAmountCents} ELSE 0 END), 0)::bigint`,
+            rowCount: sql<number>`COALESCE(SUM(CASE WHEN ${either} THEN 1 ELSE 0 END), 0)::int`,
+            unconfirmedIncomeGstCents: sql<string>`COALESCE(SUM(CASE WHEN ${unconfirmedIncome} THEN ${statementTransactions.gstAmountCents} ELSE 0 END), 0)::bigint`,
+            pairedTransferGstCents: sql<string>`COALESCE(SUM(CASE WHEN ${pairedNotTransfer} THEN ${statementTransactions.gstAmountCents} ELSE 0 END), 0)::bigint`,
+        })
+            .from(statementTransactions)
+            .where(and(...conditions));
+
+        return {
+            gstCents: Number(row?.gstCents ?? 0),
+            rowCount: Number(row?.rowCount ?? 0),
+            unconfirmedIncomeGstCents: Number(row?.unconfirmedIncomeGstCents ?? 0),
+            pairedTransferGstCents: Number(row?.pairedTransferGstCents ?? 0),
+        };
     }
 
     /**
