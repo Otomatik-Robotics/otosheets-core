@@ -126,6 +126,63 @@ export class ProductRepo {
         }
     }
 
+    /**
+     * Push the catalogue's true on-hand figure onto every variant linked to a
+     * given item. Absolute SET, not a delta — which is what makes it safe to
+     * call after any movement from any channel, and self-healing if a variant
+     * ever drifts.
+     *
+     * Returns the number of variants written, so the caller can log a no-op
+     * (nothing linked) differently from a real sync.
+     *
+     * A variant with `stock == null` is untracked and deliberately left alone:
+     * "always available" is a choice the owner made, not drift to correct.
+     * Variants resolve by `variant.priceBookItemId`, falling back to the
+     * product-level link for single-variant products created before variants
+     * carried their own.
+     */
+    async syncVariantStockForItem(
+        orgId: string,
+        priceBookItemId: string,
+        qty: number,
+        products?: Product[],
+    ): Promise<number> {
+        const all = products ?? await this.listByOrg(orgId);
+        const next = Math.max(0, Math.round(qty));
+        let written = 0;
+
+        for (const product of all) {
+            for (let i = 0; i < (product.variants?.length ?? 0); i++) {
+                const v = product.variants[i];
+                if (v.stock === null || v.stock === undefined) continue;
+                const linked = v.priceBookItemId
+                    ?? ((product as any).priceBookItemId as string | undefined);
+                if (linked !== priceBookItemId) continue;
+                if (v.stock === next) continue;   // already true — skip the write
+                try {
+                    await this.ddb.update(
+                        Tables.PRODUCTS,
+                        { orgId, productId: product.productId },
+                        {
+                            UpdateExpression: `SET variants[${i}].stock = :q, updatedAt = :now`,
+                            // Guard on variantId so a concurrent variant reorder
+                            // can never write the level onto the wrong SKU.
+                            ConditionExpression: `variants[${i}].variantId = :vid`,
+                            ExpressionAttributeValues: {
+                                ':q': next, ':vid': v.variantId, ':now': new Date().toISOString(),
+                            },
+                        },
+                    );
+                    written += 1;
+                } catch (err: any) {
+                    if (isConditionalCancel(err)) continue;   // reordered under us; next sync fixes it
+                    throw err;
+                }
+            }
+        }
+        return written;
+    }
+
     /** Restore stock on a refund/cancel (unconditional add; only for tracked variants). */
     async incrementVariantStock(
         orgId: string,
