@@ -81,7 +81,7 @@ describe('OrderPgRepo', () => {
     it('upsert is last-writer-wins on updated_at', async () => {
         await repo.upsert(order({ totalCents: 1, updatedAt: '2026-07-16T00:00:00.000Z' })); // stale — ignored
         expect((await repo.get('org_1', 'ord-cs_1'))?.totalCents).toBe(4900);
-        await repo.upsert(order({ status: 'shipped', updatedAt: '2026-07-18T00:00:00.000Z' }));
+        await repo.upsert(order({ status: 'shipped', updatedAt: '2030-01-01T00:00:00.000Z' }));
         expect((await repo.get('org_1', 'ord-cs_1'))?.status).toBe('shipped');
     });
 
