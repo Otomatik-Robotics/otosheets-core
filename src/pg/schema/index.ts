@@ -6,6 +6,7 @@ export * from './ledgerMatch';
 export * from './billingCore';
 export * from './leadsPipelines';
 export * from './opsEntities';
+export * from './priceBooks';
 export * from './voiceCredit';
 export * from './merchantCategories';
 export * from './payerAliases';

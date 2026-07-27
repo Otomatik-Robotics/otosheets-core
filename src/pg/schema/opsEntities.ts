@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, text, boolean, integer, numeric, doublePrecision, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, integer, numeric, doublePrecision, jsonb, timestamp, index, unique } from 'drizzle-orm/pg-core';
 import { orgs } from './identity';
 import { clients } from './billingCore';
 
@@ -102,6 +102,9 @@ export const priceBookItems = pgTable('price_book_items', {
 }, (t) => [
     index('price_book_org_idx').on(t.orgId),
     index('price_book_profile_idx').on(t.businessProfileId),
+    // 0037 — the target for price_book_entries' composite (org_id, item_id) FK, so a
+    // cross-tenant entry is structurally impossible rather than merely unlikely.
+    unique('price_book_items_org_item_key').on(t.orgId, t.itemId),
 ]);
 
 export const receipts = pgTable('receipts', {
