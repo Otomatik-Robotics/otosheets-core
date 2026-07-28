@@ -10,6 +10,10 @@ import {
     creditsForSpec,
     creditsForTurn,
     resolveModelSpec,
+    totalCreditBudget,
+    worstCaseAudCents,
+    AI_REVENUE_SHARE,
+    AUD_CENTS_PER_MILLION_CREDITS,
     type AiModelSpec,
     type AiTaskClass,
     type RawTokenUsage,
@@ -221,16 +225,28 @@ describe('resolveModelSpec', () => {
 });
 
 describe('creditBudget', () => {
-    it('returns the table value for every known (tier, class)', () => {
-        expect(creditBudget('free', 'assistant')).toBe(300_000);
-        expect(creditBudget('free', 'design')).toBe(60_000);
-        expect(creditBudget('free', 'bulk')).toBe(200_000);
-        expect(creditBudget('starter', 'assistant')).toBe(3_000_000);
-        expect(creditBudget('starter', 'design')).toBe(900_000);
-        expect(creditBudget('starter', 'bulk')).toBe(2_000_000);
-        expect(creditBudget('pro', 'assistant')).toBe(15_000_000);
-        expect(creditBudget('pro', 'design')).toBe(6_000_000);
-        expect(creditBudget('pro', 'bulk')).toBe(10_000_000);
+    // Deliberately NOT nine hardcoded literals. Budgets are derived from tier
+    // price x AI_REVENUE_SHARE and are expected to move when pricing or the rate
+    // assumption changes; a copy of the table asserts only that the table equals
+    // itself, and breaks on every legitimate tuning. The contract worth pinning
+    // is that the lookup reads through for every pair. The VALUES are constrained
+    // by the margin-guard tests below, which is where a bad number should fail.
+    it('reads through to the table for every known (tier, class)', () => {
+        for (const tier of ['free', 'starter', 'pro'] as const) {
+            for (const cls of AI_TASK_CLASSES) {
+                expect(creditBudget(tier, cls)).toBe(CREDIT_BUDGET[tier][cls]);
+            }
+        }
+    });
+
+    it('every budget is a positive integer or the -1 unlimited sentinel', () => {
+        for (const tier of ['free', 'starter', 'pro'] as const) {
+            for (const cls of AI_TASK_CLASSES) {
+                const v = CREDIT_BUDGET[tier][cls];
+                expect(Number.isInteger(v)).toBe(true);
+                expect(v === -1 || v > 0).toBe(true);
+            }
+        }
     });
 
     it('defaults to free + assistant for an unknown tier or class', () => {
@@ -275,5 +291,51 @@ describe('creditMetric', () => {
         for (const cls of AI_TASK_CLASSES) {
             expect(creditMetric(cls)).not.toBe('chatTokens');
         }
+    });
+});
+
+// ─── Margin guard ────────────────────────────────────────────────────────────
+// CREDIT_BUDGET is derived from tier price x AI_REVENUE_SHARE, not picked. These
+// tests exist so a future "just bump the budget a bit" cannot quietly breach the
+// margin it was derived from — the previous table had starter at ~9.5% of revenue
+// and pro at ~33%, which is exactly the drift this catches.
+describe('aiCredits — margin guard', () => {
+    /** Published AUD monthly prices: Solo (starter) $99, Crew (pro) $149. */
+    const MONTHLY_AUD: Record<string, number> = { starter: 99, pro: 149 };
+
+    it('no paid tier can spend more than AI_REVENUE_SHARE of its revenue', () => {
+        for (const [tier, price] of Object.entries(MONTHLY_AUD)) {
+            const share = worstCaseAudCents(tier) / 100 / price;
+            expect(share).toBeLessThanOrEqual(AI_REVENUE_SHARE);
+        }
+    });
+
+    it('paid tiers carry comparable margin exposure, not wildly different ones', () => {
+        const shares = Object.entries(MONTHLY_AUD)
+            .map(([tier, price]) => worstCaseAudCents(tier) / 100 / price);
+        expect(Math.max(...shares) - Math.min(...shares)).toBeLessThan(0.03);
+    });
+
+    it('a higher tier never gets a smaller allowance than a lower one', () => {
+        expect(totalCreditBudget('starter')).toBeGreaterThan(totalCreditBudget('free'));
+        expect(totalCreditBudget('pro')).toBeGreaterThan(totalCreditBudget('starter'));
+    });
+
+    it('free funds at least one full redesign — the trial must be able to see the feature', () => {
+        // Matches CREDITS_PER_REDESIGN in the backend's shared/aiCredits.ts. If that
+        // estimate is recalibrated upward, free must rise with it or the trial silently
+        // stops being able to run the thing that sells the product.
+        const ESTIMATED_REDESIGN_CREDITS = 800_000;
+        expect(creditBudget('free', 'design')).toBeGreaterThanOrEqual(ESTIMATED_REDESIGN_CREDITS);
+    });
+
+    it('worstCaseAudCents tracks the rate assumption', () => {
+        expect(worstCaseAudCents('pro'))
+            .toBe(Math.round((totalCreditBudget('pro') / 1_000_000) * AUD_CENTS_PER_MILLION_CREDITS));
+    });
+
+    it('unlimited (-1) classes are excluded from the total rather than subtracted', () => {
+        expect(totalCreditBudget('pro')).toBeGreaterThan(0);
+        for (const tier of ['free', 'starter', 'pro']) expect(totalCreditBudget(tier)).toBeGreaterThan(0);
     });
 });

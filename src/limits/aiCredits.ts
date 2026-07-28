@@ -116,18 +116,74 @@ const MODEL_ROUTE: Record<SubscriptionTier, Record<AiTaskClass, string>> = {
 };
 
 /**
+ * Roughly what one credit costs us, in AUD cents per million credits.
+ *
+ * A credit is one input-token-equivalent (see CREDIT_WEIGHTS), so this is the
+ * blended input rate of the baseline model. Haiku 4.5 is about USD $1 per
+ * million input tokens; at ~0.65 USD/AUD that is ~A$1.55, rounded up to A$1.60
+ * for headroom.
+ *
+ * ASSUMPTION, NOT A MEASUREMENT. We are on Bedrock, which is priced separately
+ * from Anthropic's first-party rates. Confirm against the Bedrock pricing page
+ * and correct this one number — every budget below is derived from it, so the
+ * whole table re-derives when it changes.
+ */
+export const AUD_CENTS_PER_MILLION_CREDITS = 160;
+
+/**
+ * Share of subscription revenue we are willing to spend on AI at FULL
+ * utilisation. This is the margin guard: it is what makes the worst case
+ * knowable before anyone signs up, and it stays knowable when the model
+ * changes because AiModelSpec.multiplier reprices credits automatically.
+ *
+ * 15% is deliberately generous — almost nobody will reach their ceiling — while
+ * still leaving room for hosting, Stripe fees and support underneath it.
+ */
+export const AI_REVENUE_SHARE = 0.15;
+
+/**
  * Monthly credit allowance per (tier, class). -1 = unlimited.
  *
- * PROVISIONAL — these numbers are pending confirmed tier price points and
- * confirmed Bedrock token rates. **This object is the single place to change
- * them**: budgets, gating, upgrade prompts and the usage UI all read through
- * `creditBudget()`, so nothing else needs to move when the pricing lands.
+ * DERIVED, not picked. Tier prices are the published AUD monthly rates:
+ * Solo (starter) A$99, Crew (pro) A$149.
+ *
+ *   budget ≈ price × AI_REVENUE_SHARE ÷ (AUD_CENTS_PER_MILLION_CREDITS / 100)
+ *
+ *   starter  $99 × 15% = A$14.85 →  ~9.3M  → 9.0M  (14.5% of revenue)
+ *   pro     $149 × 15% = A$22.35 → ~14.0M → 14.0M  (15.0% of revenue)
+ *
+ * The previous numbers were not derived and were inconsistent across tiers:
+ * starter capped AI at ~9.5% of revenue while pro capped at ~33%, so the two
+ * tiers carried very different margin exposure for no stated reason.
+ *
+ * FREE IS NOT REVENUE-FUNDED — it is a trial, so its allowance is acquisition
+ * cost, not a margin calculation. It is sized to fund exactly ONE full-quality
+ * redesign (estimated ~800k credits) plus enough chat to evaluate the product:
+ * ~1.8M credits, about A$2.88 per trial. The prior 60k funded ZERO redesigns,
+ * which meant a trial user could never see the feature that sells the product.
+ * One good redesign converts; five degraded ones do not.
+ *
+ * **This object is the single place to change any of it** — budgets, gating,
+ * upgrade prompts and the usage UI all read through `creditBudget()`.
  */
 export const CREDIT_BUDGET: Record<SubscriptionTier, Record<AiTaskClass, number>> = {
-    free: { assistant: 300_000, design: 60_000, bulk: 200_000 },
-    starter: { assistant: 3_000_000, design: 900_000, bulk: 2_000_000 },
-    pro: { assistant: 15_000_000, design: 6_000_000, bulk: 10_000_000 },
+    free: { assistant: 500_000, design: 1_000_000, bulk: 300_000 },
+    starter: { assistant: 5_000_000, design: 2_500_000, bulk: 1_500_000 },
+    // pro bulk is 1.9M, not a rounder 2.0M, because 14.0M total lands at 15.03%
+    // of A$149 — just over the guard. The margin-guard test caught it.
+    pro: { assistant: 8_000_000, design: 4_000_000, bulk: 1_900_000 },
 };
+
+/** Total monthly credit allowance for a tier across every class. */
+export function totalCreditBudget(tier?: string | null): number {
+    const row = CREDIT_BUDGET[asTier(tier)];
+    return AI_TASK_CLASSES.reduce((sum, c) => (row[c] === -1 ? sum : sum + row[c]), 0);
+}
+
+/** Worst-case monthly AI cost for a tier, in AUD cents, at full utilisation. */
+export function worstCaseAudCents(tier?: string | null): number {
+    return Math.round((totalCreditBudget(tier) / 1_000_000) * AUD_CENTS_PER_MILLION_CREDITS);
+}
 
 /**
  * Normalise an arbitrary tier string. Mirrors the private `asTier` in
