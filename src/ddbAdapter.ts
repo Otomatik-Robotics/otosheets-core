@@ -33,8 +33,14 @@ export class DynamoDbAdapter implements IDdb {
         this.client = client;
     }
 
-    async getItem(tableName: string, key: Key): Promise<GetCommandOutput> {
-        return this.client.send(new GetCommand({ TableName: tableName, Key: key }));
+    async getItem(
+        tableName: string,
+        key: Key,
+        options?: { ConsistentRead?: boolean },
+    ): Promise<GetCommandOutput> {
+        return this.client.send(
+            new GetCommand({ TableName: tableName, Key: key, ConsistentRead: options?.ConsistentRead }),
+        );
     }
 
     async put<T extends Record<string, any>>(tableName: string, item: T): Promise<PutCommandOutput> {
