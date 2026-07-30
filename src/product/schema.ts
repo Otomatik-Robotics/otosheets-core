@@ -40,7 +40,26 @@ export const ProductVariantSchema = z.object({
     /** Option name → value, e.g. { Size: 'Medium' } or { Colour: 'Sage' }. */
     options: z.record(z.string(), z.string()),
     sku: z.string().max(60).optional(),
-    priceCents: z.number().int().nonnegative(),
+    /**
+     * ABSENT MEANS "INHERIT THE PRODUCT'S `basePriceCents`" — it is not zero.
+     *
+     * This was required, and a blank price field in the variant editor therefore
+     * had nowhere to go but `0`. Because `priceRange()` prefers variants whenever
+     * any exist, one priced-0 variant silently SHADOWED a perfectly good base
+     * price across every surface — listing, PDP and cart all read $0 on a product
+     * whose editor still showed $39. The owner had no way to see it: the title
+     * comes from a different field, so nothing looked broken.
+     *
+     * Optional rather than "treat 0 as unpriced", because 0 has to stay
+     * expressible: a genuinely free variant is a real thing, and inferring intent
+     * from the value would make it impossible to say. Absent is the absence of a
+     * price; 0 is a price of nothing.
+     *
+     * Readers MUST resolve it via `variantPriceCents()` below. The type is
+     * deliberately widened to `number | undefined` so the compiler names every
+     * site that has to make that decision.
+     */
+    priceCents: z.number().int().nonnegative().optional(),
     /**
      * null / undefined = untracked (always available).
      *
@@ -67,7 +86,8 @@ export interface ProductVariant {
     variantId: string;
     options: Record<string, string>;
     sku?: string;
-    priceCents: number;
+    /** Absent = inherit `basePriceCents`. Resolve via `variantPriceCents()`. */
+    priceCents?: number;
     stock?: number | null;
     priceBookItemId?: string | null;
     imageIndex?: number;
@@ -114,4 +134,24 @@ export interface Product {
     variants: ProductVariant[];
     createdAt: string;
     updatedAt: string;
+}
+
+/**
+ * The price a variant actually sells at.
+ *
+ * ONE implementation, because the variant-price question had four copies in the
+ * storefront renderer alone (`liquid/types.ts`, `shopPages.tsx`, `fullShop.tsx`,
+ * `singleProduct*.tsx`) plus a fifth in the cart client. A rule that lives in
+ * four places is a rule that will be applied in three.
+ *
+ * `priceCents` absent means inherit; see the field's note. Callers that hold only
+ * a variant and a base figure (the render view-models flatten the product away)
+ * can pass the number directly.
+ */
+export function variantPriceCents(
+    variant: Pick<ProductVariant, 'priceCents'>,
+    base: number | Pick<Product, 'basePriceCents'>,
+): number {
+    const fallback = typeof base === 'number' ? base : base.basePriceCents;
+    return variant.priceCents ?? fallback;
 }
