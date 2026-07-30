@@ -79,9 +79,16 @@ describe('OrderPgRepo', () => {
     });
 
     it('upsert is last-writer-wins on updated_at', async () => {
-        await repo.upsert(order({ totalCents: 1, updatedAt: '2026-07-16T00:00:00.000Z' })); // stale — ignored
+        // Stale/fresh are derived from what is actually stored, never hardcoded:
+        // earlier tests mutate this row through updateStatus, which stamps
+        // updatedAt with the wall clock. A fixed literal here silently becomes
+        // "stale" once real time passes it, and the test starts failing on a date.
+        const stored = (await repo.get('org_1', 'ord-cs_1'))!.updatedAt;
+        const shift = (ms: number) => new Date(Date.parse(stored) + ms).toISOString();
+
+        await repo.upsert(order({ totalCents: 1, updatedAt: shift(-60_000) })); // stale — ignored
         expect((await repo.get('org_1', 'ord-cs_1'))?.totalCents).toBe(4900);
-        await repo.upsert(order({ status: 'shipped', updatedAt: '2026-07-18T00:00:00.000Z' }));
+        await repo.upsert(order({ status: 'shipped', updatedAt: shift(60_000) }));
         expect((await repo.get('org_1', 'ord-cs_1'))?.status).toBe('shipped');
     });
 
