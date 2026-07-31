@@ -87,6 +87,19 @@ export class SiteRepo {
         await this.ddb.update(Tables.SITES, { host }, params);
     }
 
+    /** Marks an external (BYO) claim verified — idempotent: re-verifying keeps
+     *  the original verifiedAt. Guarded to external rows so a bug can never
+     *  flip a hosted site through this path. */
+    async markExternalVerified(host: string): Promise<void> {
+        const now = new Date().toISOString();
+        await this.ddb.update(Tables.SITES, { host }, {
+            UpdateExpression: 'SET external.verifiedAt = if_not_exists(external.verifiedAt, :now), #s = :published, publishedAt = if_not_exists(publishedAt, :now), updatedAt = :now',
+            ConditionExpression: 'attribute_exists(host) AND #t = :external',
+            ExpressionAttributeNames: { '#s': 'status', '#t': 'type' },
+            ExpressionAttributeValues: { ':now': now, ':published': 'published', ':external': 'external' },
+        });
+    }
+
     /** Replaces the customDomains list and keeps the sparse DomainsPending GSI attribute in sync. */
     async setCustomDomains(host: string, customDomains: SiteCustomDomain[]): Promise<void> {
         const pending = customDomains.some(d => !['attached', 'failed'].includes(d.status));
