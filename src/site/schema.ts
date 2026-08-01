@@ -36,6 +36,9 @@ export const SITE_TEMPLATE_IDS = [
     'journal',
     'atelier-studio',
     'signal',
+    // Purpose-built services themes (whole-site compositions, services-only).
+    'callout',
+    'fieldbook',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
