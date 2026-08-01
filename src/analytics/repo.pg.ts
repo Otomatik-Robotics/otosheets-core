@@ -1,9 +1,11 @@
-import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, like, lte, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { analyticsEvents } from '../pg/schema/analytics';
+import { leads } from '../pg/schema/leadsPipelines';
 import type {
     AnalyticsEventInput, AnalyticsOverview, AnalyticsDailyRow, AnalyticsPageRow,
     AnalyticsReferrerRow, AnalyticsFunnelRow, AnalyticsHeatmap, VpBucket, FunnelStep,
+    ContentStatRow,
 } from './schema';
 
 /**
@@ -103,6 +105,66 @@ export class AnalyticsPgRepo {
             path: r.path, pageviews: Number(r.pageviews), entries: 0, exits: 0,
             avgSeconds: Number(r.scrolls) > 0 ? Math.round(Number(r.totalSeconds) / Number(r.scrolls)) : 0,
         }));
+    }
+
+    /**
+     * Per-path content stats for paths under `prefix` (default '/updates/'):
+     * pageviews + avg dwell from the beacon, joined with lead enquiries whose
+     * first-touch `attribution.landingPage` was that path (stamped at ingest —
+     * same jsonb key convention as AdCampaignPgRepo's utmCampaign joins).
+     * Both sides are small bounded aggregates, merged by path in TS; a path
+     * with enquiries but no recorded pageviews still gets a row.
+     */
+    async getContentStats(
+        siteId: string,
+        orgId: string,
+        fromDay: string,
+        toDay: string,
+        prefix = '/updates/',
+    ): Promise<ContentStatRow[]> {
+        const pvRows = await this.db.select({
+            path: analyticsEvents.path,
+            pageviews: sql<number>`count(*) filter (where ${analyticsEvents.type} = 'pageview')`,
+            // avg seconds from the one scroll event each session emits on this page
+            totalSeconds: sql<number>`coalesce(sum(${analyticsEvents.sec}) filter (where ${analyticsEvents.type} = 'scroll'), 0)`,
+            scrolls: sql<number>`count(*) filter (where ${analyticsEvents.type} = 'scroll')`,
+        }).from(analyticsEvents)
+            .where(and(this.range(siteId, fromDay, toDay), like(analyticsEvents.path, `${prefix}%`)))
+            .groupBy(analyticsEvents.path)
+            .having(sql`count(*) filter (where ${analyticsEvents.type} = 'pageview') > 0`)
+            .orderBy(sql`count(*) filter (where ${analyticsEvents.type} = 'pageview') desc`);
+
+        // Enquiries — leads created in the window whose landing page is under the prefix.
+        const fromTs = fromDay.length <= 10 ? `${fromDay}T00:00:00.000Z` : fromDay;
+        const toTs = toDay.length <= 10 ? `${toDay}T23:59:59.999Z` : toDay;
+        const landing = sql<string>`${leads.attribution} ->> 'landingPage'`;
+        const leadRows = await this.db.select({
+            path: landing,
+            enquiries: sql<number>`count(*)`,
+        }).from(leads)
+            .where(and(
+                eq(leads.orgId, orgId),
+                gte(leads.createdAt, new Date(fromTs)),
+                lte(leads.createdAt, new Date(toTs)),
+                like(landing, `${prefix}%`),
+            ))
+            .groupBy(landing);
+
+        const byPath = new Map<string, ContentStatRow>();
+        for (const r of pvRows) {
+            byPath.set(r.path, {
+                path: r.path,
+                pageviews: Number(r.pageviews),
+                avgSeconds: Number(r.scrolls) > 0 ? Math.round(Number(r.totalSeconds) / Number(r.scrolls)) : 0,
+                enquiries: 0,
+            });
+        }
+        for (const r of leadRows) {
+            const row = byPath.get(r.path);
+            if (row) row.enquiries = Number(r.enquiries);
+            else byPath.set(r.path, { path: r.path, pageviews: 0, avgSeconds: 0, enquiries: Number(r.enquiries) });
+        }
+        return [...byPath.values()].sort((a, b) => b.pageviews - a.pageviews || b.enquiries - a.enquiries);
     }
 
     /** Traffic sources — distinct sessions grouped by first-touch source/medium/campaign. */

@@ -4,6 +4,8 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { runMigrations, type SqlExecutor } from '../pg/migrate';
 import type { PgDb } from '../pg/client';
+import { orgs } from '../pg/schema/identity';
+import { leads } from '../pg/schema/leadsPipelines';
 import { AnalyticsPgRepo } from './repo.pg';
 import type { AnalyticsEventInput, VpBucket } from './schema';
 
@@ -112,5 +114,33 @@ describe('AnalyticsPgRepo (compute-on-read)', () => {
     it('scopes by site + day range', async () => {
         expect((await repo.getOverview('other', '2026-07-01', '2026-07-31')).totals.pageviews).toBe(0);
         expect((await repo.getOverview('site_1', '2026-08-01', '2026-08-31')).totals.pageviews).toBe(0);
+    });
+
+    it('content stats join pageviews/dwell with lead landing-page enquiries', async () => {
+        await repo.insertEvents([
+            ev({ eventId: 'up1', sid: 'su1', type: 'pageview', path: '/updates/winter-maintenance' }),
+            ev({ eventId: 'us1', sid: 'su1', type: 'scroll', path: '/updates/winter-maintenance', depth: 1.0, sec: 80 }),
+            ev({ eventId: 'up2', sid: 'su2', type: 'pageview', path: '/updates/winter-maintenance' }),
+            ev({ eventId: 'us2', sid: 'su2', type: 'scroll', path: '/updates/winter-maintenance', depth: 0.5, sec: 40 }),
+        ]);
+        await db.insert(orgs).values({ orgId: 'org_1', name: 'Test Org' });
+        const lead = (leadId: string, landingPage: string, createdAt: string) => ({
+            leadId, orgId: 'org_1', ownerId: 'u1', createdBy: 'u1',
+            attribution: { landingPage },
+            createdAt: new Date(createdAt), updatedAt: new Date(createdAt),
+        });
+        await db.insert(leads).values([
+            lead('ld1', '/updates/winter-maintenance', '2026-07-17T02:00:00.000Z'),
+            lead('ld2', '/updates/ghost-post', '2026-07-17T03:00:00.000Z'),   // enquiries, zero pageviews
+            lead('ld3', '/pricing', '2026-07-17T04:00:00.000Z'),             // outside prefix — excluded
+            lead('ld4', '/updates/winter-maintenance', '2026-09-01T00:00:00.000Z'), // outside window — excluded
+        ]);
+        const rows = await repo.getContentStats('site_1', 'org_1', '2026-07-01', '2026-07-31');
+        expect(rows.find(r => r.path === '/updates/winter-maintenance'))
+            .toEqual({ path: '/updates/winter-maintenance', pageviews: 2, avgSeconds: 60, enquiries: 1 });
+        // A path with enquiries but no recorded pageviews still gets a row.
+        expect(rows.find(r => r.path === '/updates/ghost-post'))
+            .toEqual({ path: '/updates/ghost-post', pageviews: 0, avgSeconds: 0, enquiries: 1 });
+        expect(rows.find(r => r.path === '/pricing')).toBeUndefined();
     });
 });
