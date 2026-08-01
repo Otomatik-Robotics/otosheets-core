@@ -34,6 +34,8 @@ export const SITE_TEMPLATE_IDS = [
     'precision',
     'boardroom',
     'journal',
+    'atelier-studio',
+    'signal',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
