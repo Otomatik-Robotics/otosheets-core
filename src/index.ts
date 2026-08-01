@@ -34,6 +34,7 @@ export * from './invoicePayment';
 export * from './client';
 export * from './clientOverview';
 export * from './address';
+export * from './callTrigger';
 export * from './job';
 export * from './booking';
 export * from './timeEntry';
