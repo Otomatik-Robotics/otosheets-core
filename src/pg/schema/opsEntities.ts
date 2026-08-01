@@ -24,6 +24,7 @@ export const jobs = pgTable('jobs', {
     address: text('address'),
     lat: doublePrecision('lat'),
     lng: doublePrecision('lng'),
+    addressStatus: text('address_status'),      // 0038 — AddressStatus; null = never looked up
     scheduledDate: text('scheduled_date'),
     scheduledTime: text('scheduled_time'),
     estimatedDuration: integer('estimated_duration'),

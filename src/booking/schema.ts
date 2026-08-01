@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AddressStatusSchema } from '../address/schema';
 
 export const BookingBaseSchema = z.object({
     bookingId: z.string(),
@@ -10,6 +11,14 @@ export const BookingBaseSchema = z.object({
     clientEmail: z.string().nullish(),
     serviceType: z.string().nullish(),
     suburb: z.string().nullish(),
+    // Where the appointment actually is. `suburb` alone was the entire location
+    // record for every booking taken by phone, chat or DM — no street, no
+    // coordinates, nothing dispatch could route on. `addressStatus` says whether
+    // the place index confirmed it; see AddressStatusSchema for the states.
+    address: z.string().nullish(),
+    lat: z.number().nullish(),
+    lng: z.number().nullish(),
+    addressStatus: AddressStatusSchema.nullish(),
     notes: z.string().nullish(),
     status: z.string().default('CONFIRMED'),
     source: z.string(),
@@ -42,6 +51,10 @@ export const BookingCreateRequestSchema = z.object({
     clientEmail: z.string().nullish(),
     serviceType: z.string().nullish(),
     suburb: z.string().nullish(),
+    address: z.string().nullish(),
+    lat: z.number().nullish(),
+    lng: z.number().nullish(),
+    addressStatus: AddressStatusSchema.nullish(),
     notes: z.string().nullish(),
     source: z.string(),
     sourceName: z.string().nullish(),
