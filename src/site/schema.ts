@@ -30,6 +30,10 @@ export const SITE_TEMPLATE_IDS = [
     'concept-store',
     'market-artisan',
     'flagship-vivid',
+    // Purpose-built consultant themes (whole-site compositions, consultant-only).
+    'precision',
+    'boardroom',
+    'journal',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
