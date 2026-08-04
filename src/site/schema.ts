@@ -39,6 +39,11 @@ export const SITE_TEMPLATE_IDS = [
     // Purpose-built services themes (whole-site compositions, services-only).
     'callout',
     'fieldbook',
+    // Store fronts for the three sellers the roster had nowhere to put: the one
+    // who moves volume, the modern DTC brand, and the one selling goods AND time.
+    'depot',
+    'pulse',
+    'counter',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
