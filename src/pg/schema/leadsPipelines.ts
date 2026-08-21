@@ -58,6 +58,9 @@ export const leads = pgTable('leads', {
     bookingTime: text('booking_time'),
     notes: text('notes'),
     conversationSummary: text('conversation_summary'),
+    // Conversation record IDs (Dynamo-only entity) for the lead timeline —
+    // leads are PG-authoritative, so a DTO field without a column is dropped.
+    conversationIds: jsonb('conversation_ids'),
     doNotCall: boolean('do_not_call'),
     stageHistory: jsonb('stage_history'),
     // First-party ad attribution (UTMs + gclid/fbclid), stamped at ingest —

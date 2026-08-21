@@ -54,6 +54,12 @@ export const LeadBaseSchema = z.object({
     bookingTime: z.string().nullish(),
     notes: z.string().nullish(),
     conversationSummary: z.string().nullish(),
+    /**
+     * IDs of the Conversation records (Dynamo-only entity) holding this lead's
+     * full chat/DM history — the timeline's structured-messages source.
+     * `conversationSummary` above stays the prose fallback for legacy leads.
+     */
+    conversationIds: z.array(z.string()).nullish(),
     /** Manual voice-calling opt-out — the dial queue must never call this lead */
     doNotCall: z.boolean().nullish(),
     stageHistory: z.array(StageHistoryEntrySchema).default([]),

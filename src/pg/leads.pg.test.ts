@@ -48,6 +48,17 @@ describe('LeadPgRepo', () => {
         const search = await r().listOrgLeadsPaginated({ orgId: 'org_1', search: 'bob' });
         expect(search.items.map(x => x.leadId)).toEqual(['l_1']);
     });
+    // conversation_ids landed in 0039 for the Front Desk timeline. Assert the
+    // round trip end to end (migration → Drizzle column → DTO): dtoToRow maps
+    // by key, so an unmapped field is silently dropped — in BOTH stores, since
+    // the Dynamo mirror is written from the PG read-back.
+    it('round-trips conversationIds (jsonb) through create and update', async () => {
+        await r().createLead('org_1', 'u1', 'l_conv', { source: 'website_agent', clientName: 'Mia Chen', conversationIds: ['conv_a'] });
+        expect((await r().getLead('org_1', 'u1', 'l_conv'))!.conversationIds).toEqual(['conv_a']);
+
+        await r().updateLead('org_1', 'u1', 'l_conv', { conversationIds: ['conv_a', 'meta#pg1#s7'] });
+        expect((await r().getLead('org_1', 'u1', 'l_conv'))!.conversationIds).toEqual(['conv_a', 'meta#pg1#s7']);
+    });
     it('upsert accepts a Dynamo DTO with string timestamps + sk', async () => {
         await r().upsertLead({ leadId: 'l_mir', orgId: 'org_1', sk: 'u2#l_mir', createdBy: 'u2', source: 'WEB', stage: 'NEW', stageHistory: [], createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' } as any);
         const l = await r().getLead('org_1', 'u2', 'l_mir');
@@ -64,5 +75,14 @@ describe('BookingPgRepo', () => {
         expect(b!.sk).toBe('u1#b_1');
         expect((b as any).dateSk).toBe('2026-07-10#b_1');
         expect((await r().listBookingsByDate('org_1', '2026-07-01', '2026-07-31')).map(x => x.bookingId)).toContain('b_1');
+    });
+    it('listBookingsByLead returns only that lead’s bookings, newest first', async () => {
+        await r().createBooking('org_1', 'u1', 'b_lead_1', { date: '2026-07-11', startTime: '09:00', endTime: '10:00', clientName: 'Sue', status: 'CONFIRMED', source: 'voice_agent', leadId: 'l_1' });
+        await r().createBooking('org_1', 'u1', 'b_lead_2', { date: '2026-07-12', startTime: '11:00', endTime: '12:00', clientName: 'Sue', status: 'CANCELLED', source: 'voice_agent', leadId: 'l_1' });
+        await r().createBooking('org_1', 'u1', 'b_other', { date: '2026-07-13', startTime: '09:00', endTime: '10:00', clientName: 'Ann', status: 'CONFIRMED', source: 'manual', leadId: 'l_other' });
+
+        const got = await r().listBookingsByLead('org_1', 'l_1');
+        expect(got.map(x => x.bookingId).sort()).toEqual(['b_lead_1', 'b_lead_2']);
+        expect(await r().listBookingsByLead('org_1', 'l_none')).toEqual([]);
     });
 });

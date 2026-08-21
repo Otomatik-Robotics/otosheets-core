@@ -51,6 +51,13 @@ export class BookingPgRepo implements IBookingRepo {
         const rows = await this.db.select().from(bookings).where(and(eq(bookings.orgId, orgId), gte(bookings.date, from), lte(bookings.date, to)));
         return rows.map(toDto);
     }
+    async listBookingsByLead(orgId: string, leadId: string): Promise<Booking[]> {
+        // bookings_lead_idx carries lead_id; orgId narrows within the (small) lead's set.
+        const rows = await this.db.select().from(bookings)
+            .where(and(eq(bookings.orgId, orgId), eq(bookings.leadId, leadId)))
+            .orderBy(desc(bookings.createdAt), desc(bookings.bookingId));
+        return rows.map(toDto);
+    }
     async createBooking(orgId: string, userId: string, bookingId: string, data: Record<string, any>): Promise<void> {
         const now = new Date();
         const row = { ...dtoToRow(data, NUMERIC_KEYS, STRIP), orgId, bookingId, ownerId: userId, createdBy: userId, createdAt: now, updatedAt: now };
