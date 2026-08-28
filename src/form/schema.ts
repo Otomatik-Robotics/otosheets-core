@@ -78,6 +78,20 @@ export const FormDestinationSchema = z.enum(['pipeline', 'inbox']);
 export type FormStatus = 'draft' | 'live' | 'archived';
 export const FormStatusSchema = z.enum(['draft', 'live', 'archived']);
 
+/** Per-form branding. Unset values inherit the org's logo and brand colour. */
+export interface FormBrand {
+    logoUrl?: string | null;
+    /** Actions: buttons, progress, the success mark. #rrggbb. */
+    primary?: string | null;
+    /** Accents: selected choices, step markers. #rrggbb. */
+    secondary?: string | null;
+}
+export const FormBrandSchema = z.object({
+    logoUrl: z.string().max(600).nullish(),
+    primary: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
+    secondary: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
+});
+
 export interface FormDef {
     formId: string;
     orgId: string;
@@ -92,6 +106,7 @@ export interface FormDef {
     pipelineId?: string | null;
     status: FormStatus;
     fields: FormField[];
+    brand?: FormBrand | null;
     intro?: string | null;
     successMessage?: string | null;
     createdAt: string;
@@ -109,6 +124,7 @@ export const FormDefSchema = z.object({
     pipelineId: z.string().nullish(),
     status: FormStatusSchema,
     fields: z.array(FormFieldSchema).max(80),
+    brand: FormBrandSchema.nullish(),
     intro: z.string().max(600).nullish(),
     successMessage: z.string().max(600).nullish(),
     createdAt: z.string(),

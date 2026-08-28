@@ -25,6 +25,7 @@ export const forms = pgTable('forms', {
     pipelineId: text('pipeline_id'),               // explicit target; null = org default
     status: text('status').notNull(),              // draft|live|archived
     fields: jsonb('fields').notNull(),             // FormField[]
+    brand: jsonb('brand'),                         // { logoUrl?, primary?, secondary? } — unset inherits the org
     intro: text('intro'),
     successMessage: text('success_message'),
     createdAt: text('created_at').notNull(),

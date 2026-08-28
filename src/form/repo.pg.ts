@@ -17,6 +17,7 @@ const SETTABLE: Record<string, keyof typeof forms.$inferInsert> = {
     pipelineId: 'pipelineId',
     status: 'status',
     fields: 'fields',
+    brand: 'brand',
     intro: 'intro',
     successMessage: 'successMessage',
     businessProfileId: 'businessProfileId',
@@ -31,6 +32,7 @@ function toDto(row: typeof forms.$inferSelect): FormDef {
     };
     if (row.businessProfileId != null) dto.businessProfileId = row.businessProfileId;
     if (row.pipelineId != null) dto.pipelineId = row.pipelineId;
+    if (row.brand != null) dto.brand = row.brand;
     if (row.intro != null) dto.intro = row.intro;
     if (row.successMessage != null) dto.successMessage = row.successMessage;
     return dto as unknown as FormDef;
@@ -43,7 +45,7 @@ function toRow(f: FormDef): typeof forms.$inferInsert {
         createdBy: f.createdBy, name: f.name, slug: f.slug,
         style: f.style, destination: f.destination,
         pipelineId: f.pipelineId ?? null, status: f.status,
-        fields: f.fields, intro: f.intro ?? null,
+        fields: f.fields, brand: f.brand ?? null, intro: f.intro ?? null,
         successMessage: f.successMessage ?? null,
         createdAt: f.createdAt, updatedAt: f.updatedAt,
     };
