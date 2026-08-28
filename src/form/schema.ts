@@ -14,12 +14,12 @@ import { z } from 'zod';
  */
 export type FormFieldType =
     | 'text' | 'textarea' | 'tel' | 'email' | 'number' | 'date'
-    | 'select' | 'checkboxes'
+    | 'select' | 'checkboxes' | 'pills'
     | 'currency' | 'percentage' | 'link' | 'embed' | 'attachment'
     | 'section' | 'content';
 export const FormFieldTypeSchema = z.enum([
     'text', 'textarea', 'tel', 'email', 'number', 'date',
-    'select', 'checkboxes',
+    'select', 'checkboxes', 'pills',
     'currency', 'percentage', 'link', 'embed', 'attachment',
     'section', 'content',
 ]);
