@@ -80,7 +80,11 @@ export const FormStatusSchema = z.enum(['draft', 'live', 'archived']);
 
 /** Per-form branding. Unset values inherit the org's logo and brand colour. */
 export interface FormBrand {
+    /** A pasted link to a hosted logo. */
     logoUrl?: string | null;
+    /** An UPLOADED logo: the private S3 key under forms/{orgId}/{formId}/ —
+     *  served to the public page through the form's /logo redirect route. */
+    logoKey?: string | null;
     /** Actions: buttons, progress, the success mark. #rrggbb. */
     primary?: string | null;
     /** Accents: selected choices, step markers. #rrggbb. */
@@ -88,6 +92,7 @@ export interface FormBrand {
 }
 export const FormBrandSchema = z.object({
     logoUrl: z.string().max(600).nullish(),
+    logoKey: z.string().max(400).nullish(),
     primary: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
     secondary: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
 });
