@@ -89,12 +89,15 @@ export interface FormBrand {
     primary?: string | null;
     /** Accents: selected choices, step markers. #rrggbb. */
     secondary?: string | null;
+    /** The public page's background. #rrggbb; unset = the default light grey. */
+    background?: string | null;
 }
 export const FormBrandSchema = z.object({
     logoUrl: z.string().max(600).nullish(),
     logoKey: z.string().max(400).nullish(),
     primary: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
     secondary: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
+    background: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
 });
 
 export interface FormDef {
