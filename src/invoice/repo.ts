@@ -2,7 +2,7 @@ import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 import { sk, dueDateSk } from '../keys';
 import { Invoice } from './schema';
-import { composeInvoiceSummary, type InvoiceSummary, type InvoiceSummaryBucket } from './summary';
+import { composeInvoiceSummary, composeInvoiceTotals, type InvoiceSummary, type InvoiceSummaryBucket, type InvoiceTotals } from './summary';
 import { PaginatedResult } from '../types';
 
 export interface ListInvoicesPaginatedParams {
@@ -24,6 +24,12 @@ export interface ListInvoicesPaginatedParams {
     dateTo?: string;
 }
 
+/**
+ * The same filter the list takes, minus pagination -- what defines "the set of
+ * invoices this question is about". getInvoiceTotals answers over that whole set.
+ */
+export type InvoiceTotalsFilter = Omit<ListInvoicesPaginatedParams, 'limit' | 'exclusiveStartKey'>;
+
 /** Store-agnostic contract — implemented by InvoiceDynamoRepo and InvoicePgRepo; InvoiceRepo (factory.ts) routes. */
 export interface IInvoiceRepo {
     getInvoice(orgId: string, userId: string, invoiceId: string): Promise<Invoice | null>;
@@ -36,6 +42,7 @@ export interface IInvoiceRepo {
     listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]>;
     /** Live KPI-band aggregate (outstanding / overdue / awaiting / draft) for one org. */
     getInvoiceSummary(orgId: string): Promise<InvoiceSummary>;
+    getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals>;
     createInvoice(orgId: string, userId: string, invoiceId: string, data: Record<string, any>): Promise<void>;
     updateInvoice(orgId: string, userId: string, invoiceId: string, updates: Record<string, any>): Promise<void>;
     deleteInvoice(orgId: string, userId: string, invoiceId: string): Promise<void>;
@@ -71,8 +78,17 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return { invoice: item, ownerId: skOwner || item.createdBy };
     }
 
-    async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
-        const { orgId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
+    /**
+     * FilterExpression for a filtered invoice set, minus pagination. Shared by
+     * the list and getInvoiceTotals so the totals describe exactly the rows the
+     * list would return.
+     */
+    private invoiceFilter(params: InvoiceTotalsFilter): {
+        filterParts: string[];
+        names: Record<string, string>;
+        values: Record<string, any>;
+    } {
+        const { orgId, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
 
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
@@ -151,6 +167,13 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             values[':issueDateTo'] = dateTo;
         }
 
+        return { filterParts, names, values };
+    }
+
+    async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
+        const { limit = 20, exclusiveStartKey } = params;
+        const { filterParts, names, values } = this.invoiceFilter(params);
+
         const result = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'CreatedAtIndex',
@@ -221,6 +244,40 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE' },
         });
         return (Items as Invoice[]) ?? [];
+    }
+
+    async getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals> {
+        // Fallback path for orgs still on the Dynamo route. Pages the whole
+        // matched set (the point of a total), buckets it by (status, past-due),
+        // and folds through the same pure fn Postgres uses, so both stores
+        // return the same figure. Postgres does it in one GROUP BY.
+        const today = new Date().toISOString().slice(0, 10);
+        const { filterParts, names, values } = this.invoiceFilter(filter);
+        const buckets = new Map<string, InvoiceSummaryBucket>();
+        let exclusiveStartKey: Record<string, any> | undefined;
+        do {
+            const res = await this.ddb.query({
+                TableName: Tables.INVOICES,
+                IndexName: 'CreatedAtIndex',
+                KeyConditionExpression: 'orgId = :orgId',
+                ExpressionAttributeValues: values,
+                ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
+                ...(filterParts.length > 0 && { FilterExpression: filterParts.join(' AND ') }),
+                ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
+            });
+            for (const item of (res.Items as Invoice[]) ?? []) {
+                const status = item.status ?? 'DRAFT';
+                const isPastDue = !!item.dueDate && item.dueDate < today;
+                const key = `${status}|${isPastDue}`;
+                const b = buckets.get(key) ?? { status, isPastDue, count: 0, totalAmount: 0, paidAmount: 0 };
+                b.count += 1;
+                b.totalAmount += Number(item.totalAmount) || 0;
+                b.paidAmount += Number(item.paidAmount) || 0;
+                buckets.set(key, b);
+            }
+            exclusiveStartKey = res.LastEvaluatedKey;
+        } while (exclusiveStartKey);
+        return composeInvoiceTotals([...buckets.values()]);
     }
 
     async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {

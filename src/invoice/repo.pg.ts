@@ -4,8 +4,8 @@ import { invoices, invoiceLineItems } from '../pg/schema/billingCore';
 import { keysetFromStartKey, keysetStartKey } from '../pg/cursor';
 import { PaginatedResult } from '../types';
 import { Invoice } from './schema';
-import { composeInvoiceSummary, type InvoiceSummary, type InvoiceSummaryBucket } from './summary';
-import type { IInvoiceRepo, ListInvoicesPaginatedParams } from './repo';
+import { composeInvoiceSummary, composeInvoiceTotals, type InvoiceSummary, type InvoiceSummaryBucket, type InvoiceTotals } from './summary';
+import type { IInvoiceRepo, InvoiceTotalsFilter, ListInvoicesPaginatedParams } from './repo';
 
 // Money/number columns returned as strings by pg → numbers in the DTO.
 const NUMERIC_KEYS = ['subtotal', 'gstAmount', 'totalAmount', 'taxRate', 'paidAmount'];
@@ -122,8 +122,14 @@ export class InvoicePgRepo implements IInvoiceRepo {
         return { invoice, ownerId: (rows[0] as any).ownerId };
     }
 
-    async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
-        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
+    /**
+     * The WHERE for a filtered invoice set, minus pagination. Shared by the list
+     * and by getInvoiceTotals so the totals always describe exactly the rows the
+     * list would return -- if these drifted apart, the figure under a list would
+     * silently stop matching the list.
+     */
+    private invoiceFilterConds(params: InvoiceTotalsFilter): any[] {
+        const { orgId, businessProfileId, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
         const conds: any[] = [eq(invoices.orgId, orgId)];
         if (businessProfileId) conds.push(eq(invoices.businessProfileId, businessProfileId));
 
@@ -147,6 +153,13 @@ export class InvoicePgRepo implements IInvoiceRepo {
         if (dueDateTo) conds.push(lte(invoices.dueDate, dueDateTo));
         if (dateFrom) conds.push(gte(invoices.date, dateFrom));
         if (dateTo) conds.push(lte(invoices.date, dateTo));
+
+        return conds;
+    }
+
+    async listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>> {
+        const { limit = 20, exclusiveStartKey } = params;
+        const conds = this.invoiceFilterConds(params);
 
         const cursor = keysetFromStartKey(exclusiveStartKey, 'invoiceId');
         if (cursor) {
@@ -198,6 +211,33 @@ export class InvoicePgRepo implements IInvoiceRepo {
             .where(and(eq(invoices.orgId, orgId), lt(invoices.dueDate, beforeDate),
                 inArray(invoices.status, ['SENT', 'PARTIAL', 'OVERDUE'])));
         return this.hydrate(rows);
+    }
+
+    async getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals> {
+        // One GROUP BY over the SAME predicates the list uses, so the figure and
+        // the rows can never describe different sets. Whole matched set, not a page.
+        const today = new Date().toISOString().slice(0, 10);
+        const pastDue = sql<boolean>`(due_date is not null and due_date < ${today})`;
+        const rows = await this.db
+            .select({
+                status: invoices.status,
+                isPastDue: pastDue,
+                count: sql<number>`count(*)::int`,
+                totalAmount: sql<string>`coalesce(sum(${invoices.totalAmount}), 0)`,
+                paidAmount: sql<string>`coalesce(sum(${invoices.paidAmount}), 0)`,
+            })
+            .from(invoices)
+            .where(and(...this.invoiceFilterConds(filter)))
+            .groupBy(sql`1`, sql`2`);
+
+        const buckets: InvoiceSummaryBucket[] = (rows as any[]).map((r) => ({
+            status: r.status ?? 'DRAFT',
+            isPastDue: r.isPastDue === true || r.isPastDue === 't' || r.isPastDue === 1,
+            count: Number(r.count) || 0,
+            totalAmount: Number(r.totalAmount) || 0,
+            paidAmount: Number(r.paidAmount) || 0,
+        }));
+        return composeInvoiceTotals(buckets);
     }
 
     async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
