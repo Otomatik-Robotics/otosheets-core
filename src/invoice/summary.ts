@@ -43,6 +43,28 @@ export interface InvoiceSummary {
     draft: InvoiceSummaryFigure;
 }
 
+/**
+ * Money rolled up across EVERY invoice matching a filter, not just one page.
+ *
+ * The list endpoint is paginated, so a caller that sums the rows it received is
+ * summing a page and calling it a total. That is how the assistant came to tell
+ * someone they had been invoiced a figure that only covered the first 20 rows.
+ * This is computed by the store — one GROUP BY on Postgres — so it describes the
+ * whole matched set however many pages that is.
+ */
+export interface InvoiceTotals {
+    /** How many invoices matched the filter (every status, VOID included). */
+    count: number;
+    /** Σ totalAmount, excluding VOID — the face value actually invoiced. */
+    invoiced: number;
+    /** Σ paidAmount, excluding VOID — how much of that has been received. */
+    paid: number;
+    /** Still owed on open invoices (SENT/PARTIAL/OVERDUE). Excludes drafts. */
+    outstanding: number;
+    /** Σ totalAmount of VOID invoices, held apart so `invoiced` stays honest. */
+    voided: number;
+}
+
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 const add = (f: InvoiceSummaryFigure, amount: number, count: number): void => {
     f.amount += amount;
@@ -82,4 +104,37 @@ export function composeInvoiceSummary(buckets: InvoiceSummaryBucket[]): InvoiceS
 
     for (const f of [outstanding, overdue, awaiting, draft]) f.amount = round2(f.amount);
     return { outstanding, overdue, awaiting, draft };
+}
+
+/**
+ * Fold (status, past-due) buckets into whole-set totals. Pure, and shares its
+ * buckets with composeInvoiceSummary so the KPI band and these totals can never
+ * disagree about what is outstanding.
+ *
+ * VOID is counted in `count` but kept out of `invoiced`/`paid`: a cancelled
+ * invoice is not money you billed, and folding it in overstates the figure.
+ */
+export function composeInvoiceTotals(buckets: InvoiceSummaryBucket[]): InvoiceTotals {
+    let count = 0;
+    let invoiced = 0;
+    let paid = 0;
+    let voided = 0;
+
+    for (const b of buckets) {
+        count += b.count;
+        if (b.status === 'VOID') {
+            voided += b.totalAmount;
+            continue;
+        }
+        invoiced += b.totalAmount;
+        paid += b.paidAmount;
+    }
+
+    return {
+        count,
+        invoiced: round2(invoiced),
+        paid: round2(paid),
+        outstanding: composeInvoiceSummary(buckets).outstanding.amount,
+        voided: round2(voided),
+    };
 }

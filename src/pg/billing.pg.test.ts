@@ -195,3 +195,49 @@ describe('InvoicePgRepo.getInvoiceSummary', () => {
         expect(s.outstanding).toEqual({ amount: 34510, count: 4 });
     });
 });
+
+describe('InvoicePgRepo.getInvoiceTotals', () => {
+    // The bug this exists to stop: the assistant was asked for one client's
+    // invoices, got page 1 of the org, summed it, and reported that as a total.
+    const ORG = 'org_tot';
+    const inv = () => new InvoicePgRepo(db, db);
+
+    beforeAll(async () => {
+        await (db as any).execute(sql`INSERT INTO orgs (org_id, name) VALUES (${ORG}, 'Totals Co')`);
+        const clients = new ClientPgRepo(db);
+        await clients.createClient(ORG, 'jerry', { createdBy: 'user_1', name: 'Jerry Jovial' });
+        await clients.createClient(ORG, 'other', { createdBy: 'user_1', name: 'Someone Else' });
+        const mk = (id: string, data: Record<string, any>) =>
+            inv().createInvoice(ORG, 'user_1', id, { invoiceNumber: id, ...data });
+        // Jerry: 3 invoices, one of them VOID.
+        await mk('t_j1', { clientId: 'jerry', status: 'PAID', totalAmount: 500, paidAmount: 500 });
+        await mk('t_j2', { clientId: 'jerry', status: 'SENT', totalAmount: 300, paidAmount: 100, dueDate: '2999-01-01' });
+        await mk('t_j3', { clientId: 'jerry', status: 'VOID', totalAmount: 110, paidAmount: 0 });
+        // Somebody else entirely — must never leak into Jerry's figure.
+        await mk('t_o1', { clientId: 'other', status: 'SENT', totalAmount: 9999, paidAmount: 0 });
+    });
+
+    it('totals one client across every invoice, not one page', async () => {
+        const t = await inv().getInvoiceTotals({ orgId: ORG, clientId: 'jerry' });
+        expect(t.count).toBe(3);
+        expect(t.invoiced).toBe(800);   // 500 + 300, VOID excluded
+        expect(t.paid).toBe(600);       // 500 + 100
+        expect(t.outstanding).toBe(200);// only the open SENT remainder
+        expect(t.voided).toBe(110);
+    });
+
+    it('is unaffected by limit — a total is not a page', async () => {
+        const page = await inv().listOrgInvoicesPaginated({ orgId: ORG, clientId: 'jerry', limit: 1 });
+        expect(page.items).toHaveLength(1);
+        const t = await inv().getInvoiceTotals({ orgId: ORG, clientId: 'jerry' });
+        expect(t.count).toBe(3);
+    });
+
+    it('scopes to the client — another client\'s money never lands in the figure', async () => {
+        const t = await inv().getInvoiceTotals({ orgId: ORG, clientId: 'jerry' });
+        expect(t.invoiced).not.toBe(10799);
+        const all = await inv().getInvoiceTotals({ orgId: ORG });
+        expect(all.count).toBe(4);
+        expect(all.invoiced).toBe(10799); // 500 + 300 + 9999
+    });
+});
