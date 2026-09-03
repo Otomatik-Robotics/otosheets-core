@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { composeInvoiceSummary, type InvoiceSummaryBucket } from './summary';
+import { composeInvoiceSummary, composeInvoiceTotals, type InvoiceSummaryBucket } from './summary';
 
 const bucket = (b: Partial<InvoiceSummaryBucket> & { status: string }): InvoiceSummaryBucket => ({
     isPastDue: false,
@@ -90,5 +90,62 @@ describe('composeInvoiceSummary', () => {
             bucket({ status: 'SENT', count: 1, totalAmount: 0.2, paidAmount: 0 }),
         ]);
         expect(s.outstanding.amount).toBe(0.3);
+    });
+});
+
+describe('composeInvoiceTotals', () => {
+    it('returns zeroes for no buckets', () => {
+        expect(composeInvoiceTotals([])).toEqual({
+            count: 0, invoiced: 0, paid: 0, outstanding: 0, voided: 0,
+        });
+    });
+
+    it('sums the whole set, not one status', () => {
+        const t = composeInvoiceTotals([
+            bucket({ status: 'PAID', count: 2, totalAmount: 500, paidAmount: 500 }),
+            bucket({ status: 'SENT', count: 1, totalAmount: 300, paidAmount: 100 }),
+            bucket({ status: 'DRAFT', count: 1, totalAmount: 60, paidAmount: 0 }),
+        ]);
+        expect(t.count).toBe(4);
+        expect(t.invoiced).toBe(860);
+        expect(t.paid).toBe(600);
+    });
+
+    // A cancelled invoice is not money you billed. Folding it into `invoiced`
+    // overstates the figure, so it is counted and reported separately.
+    it('keeps VOID out of invoiced and paid, but counts it', () => {
+        const t = composeInvoiceTotals([
+            bucket({ status: 'SENT', count: 1, totalAmount: 100, paidAmount: 0 }),
+            bucket({ status: 'VOID', count: 1, totalAmount: 110, paidAmount: 0 }),
+        ]);
+        expect(t.invoiced).toBe(100);
+        expect(t.voided).toBe(110);
+        expect(t.count).toBe(2);
+    });
+
+    it('outstanding covers open invoices only, never drafts or paid', () => {
+        const t = composeInvoiceTotals([
+            bucket({ status: 'SENT', count: 1, totalAmount: 300, paidAmount: 100 }),
+            bucket({ status: 'PAID', count: 1, totalAmount: 500, paidAmount: 500 }),
+            bucket({ status: 'DRAFT', count: 1, totalAmount: 60, paidAmount: 0 }),
+        ]);
+        expect(t.outstanding).toBe(200);
+    });
+
+    it('agrees with composeInvoiceSummary on what is outstanding', () => {
+        const buckets = [
+            bucket({ status: 'SENT', isPastDue: true, count: 2, totalAmount: 400, paidAmount: 50 }),
+            bucket({ status: 'PARTIAL', count: 1, totalAmount: 200, paidAmount: 120 }),
+            bucket({ status: 'VOID', count: 1, totalAmount: 999, paidAmount: 0 }),
+        ];
+        expect(composeInvoiceTotals(buckets).outstanding)
+            .toBe(composeInvoiceSummary(buckets).outstanding.amount);
+    });
+
+    it('rounds money to cents', () => {
+        const t = composeInvoiceTotals([
+            bucket({ status: 'SENT', count: 3, totalAmount: 0.1 + 0.2, paidAmount: 0 }),
+        ]);
+        expect(t.invoiced).toBe(0.3);
     });
 });
