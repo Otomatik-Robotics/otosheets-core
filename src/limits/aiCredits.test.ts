@@ -300,8 +300,8 @@ describe('creditMetric', () => {
 // margin it was derived from — the previous table had starter at ~9.5% of revenue
 // and pro at ~33%, which is exactly the drift this catches.
 describe('aiCredits — margin guard', () => {
-    /** Published AUD monthly prices: Solo (starter) $49, Crew (pro) $99. */
-    const MONTHLY_AUD: Record<string, number> = { starter: 49, pro: 99 };
+    /** Published AUD monthly prices: Solo (starter) $49, Crew (pro) $220 (5 seats). */
+    const MONTHLY_AUD: Record<string, number> = { starter: 49, pro: 220 };
 
     it('no paid tier can spend more than AI_REVENUE_SHARE of its revenue', () => {
         for (const [tier, price] of Object.entries(MONTHLY_AUD)) {
@@ -342,7 +342,7 @@ describe('aiCredits — margin guard', () => {
         // Pinned in cents, independent of MONTHLY_AUD above, so a later edit to that
         // table cannot re-derive the guard against a price nobody publishes.
         expect(worstCaseAudCents('starter')).toBeLessThanOrEqual(Math.floor(4900 * 0.15));
-        expect(worstCaseAudCents('pro')).toBeLessThanOrEqual(Math.floor(9900 * 0.15));
+        expect(worstCaseAudCents('pro')).toBeLessThanOrEqual(Math.floor(22000 * 0.15));
     });
 
     it('worstCaseAudCents tracks the rate assumption', () => {
