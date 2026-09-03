@@ -53,6 +53,33 @@ export const BusinessProfileStoredSchema = z.object({
     // Banking
     bankDetails: z.string().nullish(),
 
+    // Stripe Connect onboarding: the representative (the person who signs;
+    // for the sole-trader ICP, the owner) plus the merchant descriptors.
+    representativeFirstName: z.string().nullish(),
+    representativeLastName: z.string().nullish(),
+    representativeEmail: z.string().nullish(),
+    representativePhone: z.string().nullish(),
+    /** Home address line 1. */
+    representativeAddress: z.string().nullish(),
+    representativeSuburb: z.string().nullish(),
+    representativeState: z.string().nullish(),
+    representativePostcode: z.string().nullish(),
+    /** Merchant category code, exactly 4 digits. */
+    mcc: z.string().regex(/^\d{4}$/).nullish(),
+    /** Card-statement descriptor, at most 22 chars (Stripe limit). */
+    statementDescriptor: z.string().max(22).nullish(),
+    /**
+     * CIPHERTEXT ONLY, by contract. The encrypted JSON blob
+     * `{ dob: { day, month, year }, bank: { bsb, accountNumber, accountHolderName } }`.
+     * Core stores opaque text and never encrypts, decrypts, or logs it: the
+     * backend encrypts with its org-keyed seam BEFORE any repo write, so
+     * Postgres and any mirror never hold plaintext. Owner-only. Cleared once
+     * forwarded to Stripe; `connectSensitiveForwardedAt` stays as the stamp.
+     */
+    connectSensitive: z.string().nullish(),
+    /** ISO stamp of when the sensitive blob was forwarded to Stripe and cleared. */
+    connectSensitiveForwardedAt: z.string().nullish(),
+
     // Branding
     logoKey: z.string().nullish(),
     brandColor: z.string().nullish(),
@@ -133,6 +160,20 @@ export interface ResolvedBusinessProfile {
     postcode?: string | null;
     // Banking
     bankDetails?: string | null;
+    // Stripe Connect onboarding
+    representativeFirstName?: string | null;
+    representativeLastName?: string | null;
+    representativeEmail?: string | null;
+    representativePhone?: string | null;
+    representativeAddress?: string | null;
+    representativeSuburb?: string | null;
+    representativeState?: string | null;
+    representativePostcode?: string | null;
+    mcc?: string | null;
+    statementDescriptor?: string | null;
+    /** Ciphertext only; see BusinessProfileStoredSchema. */
+    connectSensitive?: string | null;
+    connectSensitiveForwardedAt?: string | null;
     // Branding
     logoKey?: string | null;
     brandColor?: string | null;

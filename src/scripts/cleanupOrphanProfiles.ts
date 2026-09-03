@@ -34,6 +34,12 @@ const CONTENT_FIELDS = [
     'businessSize', 'operatingHours', 'about', 'serviceAreas', 'targetCustomers',
     'uniqueSellingPoints', 'commonQuestions', 'chatbotTone', 'chatbotInstructions',
     'googleReviewUrl', 'setupCompletedAt',
+    // Connect onboarding data is intentional content. `connectSensitive` is
+    // deliberately excluded: a profile holding only ciphertext is not content.
+    'representativeFirstName', 'representativeLastName', 'representativeEmail',
+    'representativePhone', 'representativeAddress', 'representativeSuburb',
+    'representativeState', 'representativePostcode', 'mcc', 'statementDescriptor',
+    'connectSensitiveForwardedAt',
 ] as const;
 
 /**
