@@ -4,8 +4,8 @@ import { ddb } from '../ddbClient';
 import type { IDdb } from '../ddbPort';
 import { PaginatedResult } from '../types';
 import { Invoice } from './schema';
-import type { InvoiceSummary } from './summary';
-import { InvoiceDynamoRepo, type IInvoiceRepo, type ListInvoicesPaginatedParams } from './repo';
+import type { InvoiceSummary, InvoiceTotals } from './summary';
+import { InvoiceDynamoRepo, type IInvoiceRepo, type InvoiceTotalsFilter, type ListInvoicesPaginatedParams } from './repo';
 import { InvoicePgRepo } from './repo.pg';
 
 const DOMAIN = 'billing-core' as const;
@@ -80,6 +80,13 @@ export class RoutingInvoiceRepo implements IInvoiceRepo {
         const route = await resolveRoute(DOMAIN);
         const result = await this.pick(route).getInvoiceSummary(orgId);
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceSummary' }, result, () => this.pg.getInvoiceSummary(orgId));
+        return result;
+    }
+
+    async getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals> {
+        const route = await resolveRoute(DOMAIN);
+        const result = await this.pick(route).getInvoiceTotals(filter);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceTotals' }, result, () => this.pg.getInvoiceTotals(filter));
         return result;
     }
 
