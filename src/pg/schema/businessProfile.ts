@@ -27,6 +27,10 @@ export const businessProfiles = pgTable('business_profiles', {
     tradeName: text('trade_name'),
     abn: text('abn'),
     acn: text('acn'),
+    // Legal structure (sole trader, company, partnership, trust, ...). Free text
+    // rather than an enum so the set can grow without a migration; nullable
+    // because every existing profile predates the question.
+    entityType: text('entity_type'),
 
     // ─── Tax (single authoritative home) ────────────────────────
     gstRegistered: boolean('gst_registered'),

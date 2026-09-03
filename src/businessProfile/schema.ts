@@ -33,6 +33,8 @@ export const BusinessProfileStoredSchema = z.object({
     tradeName: z.string().nullish(),
     abn: z.string().nullish(),
     acn: z.string().nullish(),
+    /** Legal structure, e.g. 'sole_trader' | 'company' | 'partnership' | 'trust'. */
+    entityType: z.string().nullish(),
 
     // Tax (single authoritative home)
     gstRegistered: z.boolean().nullish(),
@@ -116,6 +118,7 @@ export interface ResolvedBusinessProfile {
     tradeName?: string | null;
     abn?: string | null;
     acn?: string | null;
+    entityType?: string | null;
     // Tax (defaults applied)
     gstRegistered: boolean;
     taxRate: number;

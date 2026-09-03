@@ -145,14 +145,22 @@ export const AI_REVENUE_SHARE = 0.15;
  * Monthly credit allowance per (tier, class). -1 = unlimited.
  *
  * DERIVED, not picked. Tier prices are the published AUD monthly rates:
- * Solo (starter) A$99, Crew (pro) A$149.
+ * Solo (starter) A$49, Crew (pro) A$99 (Option B pricing — was A$99 / A$149).
  *
  *   budget ≈ price × AI_REVENUE_SHARE ÷ (AUD_CENTS_PER_MILLION_CREDITS / 100)
  *
- *   starter  $99 × 15% = A$14.85 →  ~9.3M  → 9.0M  (14.5% of revenue)
- *   pro     $149 × 15% = A$22.35 → ~14.0M → 14.0M  (15.0% of revenue)
+ *   starter  $49 × 15% = A$7.35  → ~4.59M → 4.59M  (14.98% of revenue)
+ *   pro      $99 × 15% = A$14.85 → ~9.28M → 9.27M  (14.98% of revenue)
  *
- * The previous numbers were not derived and were inconsistent across tiers:
+ * Each tier's total is split across the three classes in the same proportions
+ * the previous table used (starter 5.0/2.5/1.5 of 9.0; pro 8.0/4.0/1.9 of
+ * 13.9), then rounded to 10k so the totals sit just UNDER the guard rather
+ * than exactly on it — a total that lands on 15.00% passes only by
+ * floating-point luck, and the guard test is meant to bite, not to be
+ * gamed. Starter design stays above 1.0M so one full redesign
+ * (~800k credits, see CREDITS_PER_REDESIGN in the backend) fits inside it.
+ *
+ * The table before that was not derived and was inconsistent across tiers:
  * starter capped AI at ~9.5% of revenue while pro capped at ~33%, so the two
  * tiers carried very different margin exposure for no stated reason.
  *
@@ -168,10 +176,11 @@ export const AI_REVENUE_SHARE = 0.15;
  */
 export const CREDIT_BUDGET: Record<SubscriptionTier, Record<AiTaskClass, number>> = {
     free: { assistant: 500_000, design: 1_000_000, bulk: 300_000 },
-    starter: { assistant: 5_000_000, design: 2_500_000, bulk: 1_500_000 },
-    // pro bulk is 1.9M, not a rounder 2.0M, because 14.0M total lands at 15.03%
-    // of A$149 — just over the guard. The margin-guard test caught it.
-    pro: { assistant: 8_000_000, design: 4_000_000, bulk: 1_900_000 },
+    // 4.59M total; the derived ceiling is 4.594M (A$7.35 ÷ A$1.60).
+    starter: { assistant: 2_550_000, design: 1_280_000, bulk: 760_000 },
+    // 9.27M total; the derived ceiling is 9.281M (A$14.85 ÷ A$1.60). 9.28M would
+    // round to exactly 15.00% of A$99, so bulk gives up 10k to stay clear of it.
+    pro: { assistant: 5_340_000, design: 2_670_000, bulk: 1_260_000 },
 };
 
 /** Total monthly credit allowance for a tier across every class. */

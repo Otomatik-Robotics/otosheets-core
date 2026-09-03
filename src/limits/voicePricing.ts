@@ -17,8 +17,15 @@ function intEnv(name: string, fallback: number): number {
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
 }
 
-/** Per-minute retail rate charged to the account (AUD cents). Default $1.00/min. */
-export const VOICE_PER_MINUTE_CENTS = intEnv('VOICE_PER_MINUTE_CENTS', 100);
+/**
+ * Per-minute retail rate charged to the account (AUD cents). Default $1.20/min.
+ *
+ * This is the pay-as-you-go rate, i.e. the UNDISCOUNTED one. Prepaid minute
+ * packages (A$0.98 / A$0.89 / A$0.72 per minute at increasing volume) land
+ * later with the wallet work; they discount from here, so this number has to
+ * sit above every package rate or the packages have nothing to discount.
+ */
+export const VOICE_PER_MINUTE_CENTS = intEnv('VOICE_PER_MINUTE_CENTS', 120);
 
 /** A call may only start if the balance covers at least this many minutes. */
 export const VOICE_MIN_CALL_MINUTES = intEnv('VOICE_MIN_CALL_MINUTES', 3);
@@ -26,8 +33,12 @@ export const VOICE_MIN_CALL_MINUTES = intEnv('VOICE_MIN_CALL_MINUTES', 3);
 /** Numbers included in a paid subscription before per-number charges apply. */
 export const FREE_NUMBERS_INCLUDED = intEnv('VOICE_FREE_NUMBERS_INCLUDED', 1);
 
-/** Monthly charge per extra number (AUD cents) — for display; Stripe is the source of truth. */
-export const EXTRA_NUMBER_MONTHLY_CENTS = intEnv('VOICE_EXTRA_NUMBER_MONTHLY_CENTS', 400);
+/**
+ * Monthly charge per extra number (AUD cents) — for display; Stripe is the
+ * source of truth. Default A$9.00: a Twilio AU local number rents for roughly
+ * A$4.60/month, so the previous A$4.00 was below cost on every extra number.
+ */
+export const EXTRA_NUMBER_MONTHLY_CENTS = intEnv('VOICE_EXTRA_NUMBER_MONTHLY_CENTS', 900);
 
 /** Prepaid top-up packs offered in the UI (AUD cents). */
 export const TOPUP_PACKS_CENTS: number[] = [1000, 2500, 5000, 10000];

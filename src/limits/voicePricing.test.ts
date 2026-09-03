@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
     callCostCents,
     minBalanceToCallCents,
@@ -8,9 +8,40 @@ import {
     splitAllowanceOverage,
     VOICE_PER_MINUTE_CENTS,
     VOICE_MIN_CALL_MINUTES,
+    EXTRA_NUMBER_MONTHLY_CENTS,
     TOPUP_CUSTOM_MIN_CENTS,
     TOPUP_CUSTOM_MAX_CENTS,
 } from './voicePricing';
+
+// Option B defaults (PRICING_MODEL.md): PAYG A$1.20/min is the undiscounted rate every
+// prepaid package discounts from, and A$9/number sits above Twilio's ~A$4.60 rent.
+describe('voicePricing option B defaults', () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+    });
+
+    it('defaults to 120 c/min and 900 c/number when no env override is set', () => {
+        expect(VOICE_PER_MINUTE_CENTS).toBe(120);
+        expect(EXTRA_NUMBER_MONTHLY_CENTS).toBe(900);
+    });
+
+    it('env overrides still win, because the constants resolve at module load', async () => {
+        vi.stubEnv('VOICE_PER_MINUTE_CENTS', '150');
+        vi.stubEnv('VOICE_EXTRA_NUMBER_MONTHLY_CENTS', '1100');
+        vi.resetModules();
+        const fresh = await import('./voicePricing');
+        expect(fresh.VOICE_PER_MINUTE_CENTS).toBe(150);
+        expect(fresh.EXTRA_NUMBER_MONTHLY_CENTS).toBe(1100);
+    });
+
+    it('a malformed env override falls back to the default rather than zeroing the rate', async () => {
+        vi.stubEnv('VOICE_PER_MINUTE_CENTS', 'free');
+        vi.resetModules();
+        const fresh = await import('./voicePricing');
+        expect(fresh.VOICE_PER_MINUTE_CENTS).toBe(120);
+    });
+});
 
 describe('voicePricing', () => {
     it('minBalanceToCallCents is rate × min-minutes', () => {

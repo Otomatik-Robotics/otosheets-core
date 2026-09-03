@@ -300,8 +300,8 @@ describe('creditMetric', () => {
 // margin it was derived from — the previous table had starter at ~9.5% of revenue
 // and pro at ~33%, which is exactly the drift this catches.
 describe('aiCredits — margin guard', () => {
-    /** Published AUD monthly prices: Solo (starter) $99, Crew (pro) $149. */
-    const MONTHLY_AUD: Record<string, number> = { starter: 99, pro: 149 };
+    /** Published AUD monthly prices: Solo (starter) $49, Crew (pro) $99. */
+    const MONTHLY_AUD: Record<string, number> = { starter: 49, pro: 99 };
 
     it('no paid tier can spend more than AI_REVENUE_SHARE of its revenue', () => {
         for (const [tier, price] of Object.entries(MONTHLY_AUD)) {
@@ -327,6 +327,22 @@ describe('aiCredits — margin guard', () => {
         // stops being able to run the thing that sells the product.
         const ESTIMATED_REDESIGN_CREDITS = 800_000;
         expect(creditBudget('free', 'design')).toBeGreaterThanOrEqual(ESTIMATED_REDESIGN_CREDITS);
+    });
+
+    it('every paid tier funds at least one full redesign after the option B price cut', () => {
+        // The A$99 -> A$49 cut shrank starter design from 2.5M to 1.28M. It must not shrink
+        // below one redesign, or a paying customer gets less than the free trial did.
+        const ESTIMATED_REDESIGN_CREDITS = 800_000;
+        for (const tier of ['starter', 'pro']) {
+            expect(creditBudget(tier, 'design')).toBeGreaterThanOrEqual(ESTIMATED_REDESIGN_CREDITS);
+        }
+    });
+
+    it('worst case stays within 15% of the option B prices in cents', () => {
+        // Pinned in cents, independent of MONTHLY_AUD above, so a later edit to that
+        // table cannot re-derive the guard against a price nobody publishes.
+        expect(worstCaseAudCents('starter')).toBeLessThanOrEqual(Math.floor(4900 * 0.15));
+        expect(worstCaseAudCents('pro')).toBeLessThanOrEqual(Math.floor(9900 * 0.15));
     });
 
     it('worstCaseAudCents tracks the rate assumption', () => {
