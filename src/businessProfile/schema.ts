@@ -33,6 +33,8 @@ export const BusinessProfileStoredSchema = z.object({
     tradeName: z.string().nullish(),
     abn: z.string().nullish(),
     acn: z.string().nullish(),
+    /** Legal structure, e.g. 'sole_trader' | 'company' | 'partnership' | 'trust'. */
+    entityType: z.string().nullish(),
 
     // Tax (single authoritative home)
     gstRegistered: z.boolean().nullish(),
@@ -50,6 +52,33 @@ export const BusinessProfileStoredSchema = z.object({
 
     // Banking
     bankDetails: z.string().nullish(),
+
+    // Stripe Connect onboarding: the representative (the person who signs;
+    // for the sole-trader ICP, the owner) plus the merchant descriptors.
+    representativeFirstName: z.string().nullish(),
+    representativeLastName: z.string().nullish(),
+    representativeEmail: z.string().nullish(),
+    representativePhone: z.string().nullish(),
+    /** Home address line 1. */
+    representativeAddress: z.string().nullish(),
+    representativeSuburb: z.string().nullish(),
+    representativeState: z.string().nullish(),
+    representativePostcode: z.string().nullish(),
+    /** Merchant category code, exactly 4 digits. */
+    mcc: z.string().regex(/^\d{4}$/).nullish(),
+    /** Card-statement descriptor, at most 22 chars (Stripe limit). */
+    statementDescriptor: z.string().max(22).nullish(),
+    /**
+     * CIPHERTEXT ONLY, by contract. The encrypted JSON blob
+     * `{ dob: { day, month, year }, bank: { bsb, accountNumber, accountHolderName } }`.
+     * Core stores opaque text and never encrypts, decrypts, or logs it: the
+     * backend encrypts with its org-keyed seam BEFORE any repo write, so
+     * Postgres and any mirror never hold plaintext. Owner-only. Cleared once
+     * forwarded to Stripe; `connectSensitiveForwardedAt` stays as the stamp.
+     */
+    connectSensitive: z.string().nullish(),
+    /** ISO stamp of when the sensitive blob was forwarded to Stripe and cleared. */
+    connectSensitiveForwardedAt: z.string().nullish(),
 
     // Branding
     logoKey: z.string().nullish(),
@@ -116,6 +145,7 @@ export interface ResolvedBusinessProfile {
     tradeName?: string | null;
     abn?: string | null;
     acn?: string | null;
+    entityType?: string | null;
     // Tax (defaults applied)
     gstRegistered: boolean;
     taxRate: number;
@@ -130,6 +160,22 @@ export interface ResolvedBusinessProfile {
     postcode?: string | null;
     // Banking
     bankDetails?: string | null;
+    // Stripe Connect onboarding
+    representativeFirstName?: string | null;
+    representativeLastName?: string | null;
+    representativeEmail?: string | null;
+    representativePhone?: string | null;
+    representativeAddress?: string | null;
+    representativeSuburb?: string | null;
+    representativeState?: string | null;
+    representativePostcode?: string | null;
+    mcc?: string | null;
+    statementDescriptor?: string | null;
+    // `connectSensitive` is deliberately NOT part of the resolved profile:
+    // resolveBusinessProfile() strips it so rendering consumers never carry the
+    // ciphertext. Read it via BusinessProfileRepo.getById() on the owner-gated
+    // Stripe forwarding path only.
+    connectSensitiveForwardedAt?: string | null;
     // Branding
     logoKey?: string | null;
     brandColor?: string | null;

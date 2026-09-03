@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, text, boolean, numeric, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, numeric, jsonb, timestamp, index, doublePrecision } from 'drizzle-orm/pg-core';
 import { orgs } from './identity';
 
 /**
@@ -58,6 +58,9 @@ export const leads = pgTable('leads', {
     bookingTime: text('booking_time'),
     notes: text('notes'),
     conversationSummary: text('conversation_summary'),
+    // Conversation record IDs (Dynamo-only entity) for the lead timeline —
+    // leads are PG-authoritative, so a DTO field without a column is dropped.
+    conversationIds: jsonb('conversation_ids'),
     doNotCall: boolean('do_not_call'),
     stageHistory: jsonb('stage_history'),
     // First-party ad attribution (UTMs + gclid/fbclid), stamped at ingest —
@@ -90,6 +93,10 @@ export const bookings = pgTable('bookings', {
     clientEmail: text('client_email'),
     serviceType: text('service_type'),
     suburb: text('suburb'),
+    address: text('address'),                   // 0038 — full address + lookup outcome
+    lat: doublePrecision('lat'),
+    lng: doublePrecision('lng'),
+    addressStatus: text('address_status'),      // AddressStatus; null = never looked up
     notes: text('notes'),
     status: text('status'),
     source: text('source'),

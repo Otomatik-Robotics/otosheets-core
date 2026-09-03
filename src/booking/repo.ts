@@ -11,6 +11,8 @@ export interface IBookingRepo {
     listAllOrgBookings(orgId: string): Promise<Booking[]>;
     listOrgBookingsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; }): Promise<PaginatedResult<Booking>>;
     listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]>;
+    /** All bookings linked to one lead — the lead timeline's booking source. */
+    listBookingsByLead(orgId: string, leadId: string): Promise<Booking[]>;
     createBooking(orgId: string, userId: string, bookingId: string, data: Record<string, any>): Promise<void>;
     updateBooking(orgId: string, userId: string, bookingId: string, updates: Record<string, any>): Promise<void>;
     deleteBooking(orgId: string, userId: string, bookingId: string): Promise<void>;
@@ -96,6 +98,16 @@ export class BookingDynamoRepo implements IBookingRepo {
             IndexName: 'DateIndex',
             KeyConditionExpression: 'orgId = :orgId AND dateSk BETWEEN :from AND :to',
             ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿` },
+        });
+        return (Items as Booking[]) ?? [];
+    }
+
+    async listBookingsByLead(orgId: string, leadId: string): Promise<Booking[]> {
+        const { Items } = await this.ddb.query({
+            TableName: Tables.BOOKINGS,
+            KeyConditionExpression: 'orgId = :orgId',
+            FilterExpression: 'leadId = :leadId',
+            ExpressionAttributeValues: { ':orgId': orgId, ':leadId': leadId },
         });
         return (Items as Booking[]) ?? [];
     }

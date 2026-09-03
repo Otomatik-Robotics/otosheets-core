@@ -21,6 +21,13 @@ export const rosterEntrySk = (date: string, memberId: string) => `ROSTER#${date}
 
 // Usage metering SK builder: USAGE#{metric}#{YYYY-MM} (monthly bucket per org)
 export const usageSk = (metric: string, month: string) => `USAGE#${metric}#${month}`;
+// Idempotency marker for one metered AI turn: USAGE#turn#{metric}#{turnId}.
+// Written conditionally alongside the counter ADD so a replay is a no-op.
+// Deliberately NOT month-scoped: a turn metered just before midnight on the 1st
+// and retried just after would recompute a different month bucket, and the
+// counters are monotonic — suppressing a stray replay is recoverable, an
+// over-count is not.
+export const usageTurnSk = (metric: string, turnId: string) => `USAGE#turn#${metric}#${turnId}`;
 
 // GSI key builders
 export const dueDateSk = (dueDate: string, invoiceId: string) => `${dueDate}#${invoiceId}`;

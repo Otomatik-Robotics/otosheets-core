@@ -30,6 +30,20 @@ export const SITE_TEMPLATE_IDS = [
     'concept-store',
     'market-artisan',
     'flagship-vivid',
+    // Purpose-built consultant themes (whole-site compositions, consultant-only).
+    'precision',
+    'boardroom',
+    'journal',
+    'atelier-studio',
+    'signal',
+    // Purpose-built services themes (whole-site compositions, services-only).
+    'callout',
+    'fieldbook',
+    // Store fronts for the three sellers the roster had nowhere to put: the one
+    // who moves volume, the modern DTC brand, and the one selling goods AND time.
+    'depot',
+    'pulse',
+    'counter',
 ] as const;
 export const SiteTemplateIdSchema = z.enum(SITE_TEMPLATE_IDS);
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
@@ -110,9 +124,19 @@ export const SITE_POSTS_MAX = 200;
 export const SiteSchema = z.object({
     /** PK. Canonical rows: the subdomain label (e.g. "joesmowing"). Alias rows: the full custom domain. */
     host: z.string(),
-    type: z.enum(['site', 'alias']).default('site'),
+    type: z.enum(['site', 'alias', 'external']).default('site'),
     /** Alias rows only — the canonical host this domain points at. */
     aliasOf: z.string().optional(),
+    /** External (BYO / Lane-B) rows only — claim + verification state. The row
+     *  counts as a real site (analytics, switcher, visitor agent) only once
+     *  verifiedAt is set; until then it is an unproven claim. */
+    external: z.object({
+        /** Random claim token the owner publishes as a DNS TXT record:
+         *  _otosheets.{domain} TXT "otosheets-verify={claimToken}" */
+        claimToken: z.string(),
+        method: z.enum(['dns-txt']).default('dns-txt'),
+        verifiedAt: z.string().optional(),
+    }).optional(),
     orgId: z.string(),
     /** Always the canonical subdomain label, on alias rows too. */
     slug: z.string(),
@@ -152,8 +176,13 @@ export interface SiteAsset {
 
 export interface Site {
     host: string;
-    type: 'site' | 'alias';
+    type: 'site' | 'alias' | 'external';
     aliasOf?: string;
+    external?: {
+        claimToken: string;
+        method: 'dns-txt';
+        verifiedAt?: string;
+    };
     orgId: string;
     slug: string;
     templateId: SiteTemplateId;

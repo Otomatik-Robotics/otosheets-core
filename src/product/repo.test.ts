@@ -48,11 +48,16 @@ function makeStubDdb() {
                 if (cond.includes('>= :q') && v.stock < vals[':q']) failCond();
                 if (params.UpdateExpression.includes('- :q')) v.stock -= vals[':q'];
                 else if (params.UpdateExpression.includes('+ :q')) v.stock += vals[':q'];
+                else if (params.UpdateExpression.includes('= :q')) v.stock = vals[':q'];
             }
             return { Attributes: {} } as any;
         },
         async delete() { return {} as any; },
-        async query() { return { Items: [] } as any; },
+        async query(params: any) {
+            const org = params?.ExpressionAttributeValues?.[':orgId'];
+            const items = [...store.values()].filter((i) => !org || i.orgId === org);
+            return { Items: items } as any;
+        },
         async scan() { return { Items: [] } as any; },
         async batchGet() { return {} as any; },
         async batchWrite() { return {} as any; },
@@ -101,5 +106,85 @@ describe('ProductRepo', () => {
         expect(await repo.decrementVariantStock('org1', 'nope', 'v-s', 1)).toBe(false);
         await repo.create(product());
         expect(await repo.decrementVariantStock('org1', 'p1', 'ghost', 1)).toBe(false);
+    });
+});
+
+describe('ProductRepo.syncVariantStockForItem — the catalogue is the truth', () => {
+    let repo: ProductRepo, store: Map<string, any>;
+    beforeEach(() => { const s = makeStubDdb(); repo = new ProductRepo(s.ddb); store = s.store; });
+
+    /** Two variants drawing on the same catalogue item, one on another. */
+    const linked = () => product({
+        variants: [
+            { variantId: 'v-s', options: { Size: 'Small' }, priceCents: 4800, stock: 12, priceBookItemId: 'itm_pot' },
+            { variantId: 'v-m', options: { Size: 'Medium' }, priceCents: 7200, stock: 3, priceBookItemId: 'itm_pot' },
+            { variantId: 'v-l', options: { Size: 'Large' }, priceCents: 12800, stock: 5, priceBookItemId: 'itm_urn' },
+        ],
+    });
+
+    const variants = () => store.get('org1|p1').variants;
+
+    it('pushes the true on-hand figure onto every linked variant', async () => {
+        await repo.create(linked());
+        const written = await repo.syncVariantStockForItem('org1', 'itm_pot', 7);
+
+        expect(written).toBe(2);
+        expect(variants().map((v: any) => v.stock)).toEqual([7, 7, 5]);
+    });
+
+    it('is absolute, not a delta — so it heals drift instead of compounding it', async () => {
+        // The exact live bug: an invoice moved the catalogue counter to 7 while
+        // the storefront still believed 12, so the shop would sell stock that
+        // had already left the building.
+        await repo.create(linked());
+        await repo.syncVariantStockForItem('org1', 'itm_pot', 7);
+        await repo.syncVariantStockForItem('org1', 'itm_pot', 7);   // re-run: no compounding
+
+        expect(variants()[0].stock).toBe(7);
+    });
+
+    it('never resurrects an untracked variant', async () => {
+        // stock null means "always available" — an owner's choice, not drift.
+        await repo.create(product({
+            variants: [
+                { variantId: 'v-s', options: { Size: 'Small' }, priceCents: 4800, stock: null, priceBookItemId: 'itm_pot' },
+            ],
+        }));
+        const written = await repo.syncVariantStockForItem('org1', 'itm_pot', 7);
+
+        expect(written).toBe(0);
+        expect(variants()[0].stock).toBeNull();
+    });
+
+    it('falls back to the product-level link for single-variant products', async () => {
+        // Products created before variants carried their own link.
+        await repo.create(product({
+            priceBookItemId: 'itm_pot',
+            variants: [{ variantId: 'v-only', options: {}, priceCents: 4800, stock: 12 }],
+        } as any));
+        await repo.syncVariantStockForItem('org1', 'itm_pot', 2);
+
+        expect(variants()[0].stock).toBe(2);
+    });
+
+    it('leaves unlinked variants alone', async () => {
+        await repo.create(product());   // no links at all
+        const written = await repo.syncVariantStockForItem('org1', 'itm_pot', 0);
+
+        expect(written).toBe(0);
+        expect(variants().map((v: any) => v.stock)).toEqual([12, 3, null]);
+    });
+
+    it('never writes a negative level', async () => {
+        await repo.create(linked());
+        await repo.syncVariantStockForItem('org1', 'itm_pot', -4);
+
+        expect(variants()[0].stock).toBe(0);
+    });
+
+    it('skips the write when the variant is already true', async () => {
+        await repo.create(linked());
+        // v-s is 12, v-m is 3 — syncing to 12 should touch only v-m.
+        expect(await repo.syncVariantStockForItem('org1', 'itm_pot', 12)).toBe(1);
     });
 });

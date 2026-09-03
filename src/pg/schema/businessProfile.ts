@@ -27,6 +27,10 @@ export const businessProfiles = pgTable('business_profiles', {
     tradeName: text('trade_name'),
     abn: text('abn'),
     acn: text('acn'),
+    // Legal structure (sole trader, company, partnership, trust, ...). Free text
+    // rather than an enum so the set can grow without a migration; nullable
+    // because every existing profile predates the question.
+    entityType: text('entity_type'),
 
     // ─── Tax (single authoritative home) ────────────────────────
     gstRegistered: boolean('gst_registered'),
@@ -44,6 +48,35 @@ export const businessProfiles = pgTable('business_profiles', {
 
     // ─── Banking ────────────────────────────────────────────────
     bankDetails: text('bank_details'),
+
+    // Stripe Connect onboarding (representative + descriptors). Onboarding
+    // collects the full set Stripe Express asks an Australian connected
+    // account for, so Stripe is prefilled and the owner only confirms. The
+    // representative is the person who signs (sole-trader ICP: the owner).
+    // All nullable: every existing profile predates these questions.
+    representativeFirstName: text('representative_first_name'),
+    representativeLastName: text('representative_last_name'),
+    representativeEmail: text('representative_email'),
+    representativePhone: text('representative_phone'),
+    representativeAddress: text('representative_address'),
+    representativeSuburb: text('representative_suburb'),
+    representativeState: text('representative_state'),
+    representativePostcode: text('representative_postcode'),
+    // Merchant category code, 4 digits (validated at the DTO, free text here).
+    mcc: text('mcc'),
+    // Card-statement descriptor, max 22 chars per Stripe (validated at the DTO).
+    statementDescriptor: text('statement_descriptor'),
+    /**
+     * CIPHERTEXT ONLY, by contract. Holds the encrypted JSON blob
+     * `{ dob: { day, month, year }, bank: { bsb, accountNumber, accountHolderName } }`
+     * that Stripe needs for the representative + payout account. Core never
+     * encrypts or decrypts: the backend encrypts with its org-keyed seam
+     * BEFORE calling any repo write, so both Postgres and any mirror only
+     * ever hold opaque text. Never log it. Cleared (set NULL) once forwarded
+     * to Stripe; `connectSensitiveForwardedAt` remains as the audit stamp.
+     */
+    connectSensitive: text('connect_sensitive'),
+    connectSensitiveForwardedAt: timestamp('connect_sensitive_forwarded_at', { withTimezone: true, mode: 'date' }),
 
     // ─── Branding ───────────────────────────────────────────────
     logoKey: text('logo_key'),

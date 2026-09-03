@@ -152,3 +152,52 @@ describe('BusinessProfilePgRepo', () => {
         expect(updated).toMatchObject({ businessName: 'First Renamed', taxLabel: 'VAT' });
     });
 });
+
+describe('0043 connect onboarding columns', () => {
+    const repo = () => new BusinessProfilePgRepo(db);
+
+    // Pins the migration <-> Drizzle schema agreement for every column 0043
+    // adds: a column-name mismatch on either side fails here, not in prod.
+    it('round-trips the representative, descriptors, and the ciphertext blob', async () => {
+        await pglite.query(`INSERT INTO orgs (org_id, name, subscription_tier, seat_limit, currency, created_at, updated_at)
+            VALUES ('org_connect', 'Connect Co', 'free', 0, 'AUD', now(), now());`);
+        const id = await repo().create({
+            orgId: 'org_connect',
+            businessName: 'Connect Co',
+            representativeFirstName: 'Jo',
+            representativeLastName: 'Bloggs',
+            representativeEmail: 'jo@connect.test',
+            representativePhone: '0400000001',
+            representativeAddress: '1 Example St',
+            representativeSuburb: 'Fremantle',
+            representativeState: 'WA',
+            representativePostcode: '6160',
+            mcc: '1711',
+            statementDescriptor: 'CONNECT CO',
+            // Opaque by contract: core stores whatever the backend seam produced.
+            connectSensitive: 'v1:opaque-ciphertext',
+        });
+        const got = await repo().getById(id);
+        expect(got).toMatchObject({
+            representativeFirstName: 'Jo',
+            representativeLastName: 'Bloggs',
+            representativeEmail: 'jo@connect.test',
+            representativePhone: '0400000001',
+            representativeAddress: '1 Example St',
+            representativeSuburb: 'Fremantle',
+            representativeState: 'WA',
+            representativePostcode: '6160',
+            mcc: '1711',
+            statementDescriptor: 'CONNECT CO',
+            connectSensitive: 'v1:opaque-ciphertext',
+        });
+        expect(got?.connectSensitiveForwardedAt).toBeNull();
+
+        // Forwarded to Stripe: the blob is cleared, the stamp survives as ISO.
+        const forwardedAt = '2026-09-03T01:02:03.000Z';
+        await repo().update(id, { connectSensitive: null, connectSensitiveForwardedAt: forwardedAt });
+        const cleared = await repo().getById(id);
+        expect(cleared?.connectSensitive).toBeNull();
+        expect(cleared?.connectSensitiveForwardedAt).toBe(forwardedAt);
+    });
+});

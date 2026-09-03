@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, text, boolean, integer, numeric, doublePrecision, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, integer, numeric, doublePrecision, jsonb, timestamp, index, unique } from 'drizzle-orm/pg-core';
 import { orgs } from './identity';
 import { clients } from './billingCore';
 
@@ -24,6 +24,7 @@ export const jobs = pgTable('jobs', {
     address: text('address'),
     lat: doublePrecision('lat'),
     lng: doublePrecision('lng'),
+    addressStatus: text('address_status'),      // 0038 — AddressStatus; null = never looked up
     scheduledDate: text('scheduled_date'),
     scheduledTime: text('scheduled_time'),
     estimatedDuration: integer('estimated_duration'),
@@ -96,11 +97,15 @@ export const priceBookItems = pgTable('price_book_items', {
     costPrice: numeric('cost_price', { precision: 12, scale: 2 }),      // 0030
     qtyOnHand: numeric('qty_on_hand', { precision: 12, scale: 3 }),     // 0030 inventory-lite
     reorderPoint: numeric('reorder_point', { precision: 12, scale: 3 }), // 0030 inventory-lite
+    supplierId: text('supplier_id'),                                     // 0036 — who we buy it from
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('price_book_org_idx').on(t.orgId),
     index('price_book_profile_idx').on(t.businessProfileId),
+    // 0037 — the target for price_book_entries' composite (org_id, item_id) FK, so a
+    // cross-tenant entry is structurally impossible rather than merely unlikely.
+    unique('price_book_items_org_item_key').on(t.orgId, t.itemId),
 ]);
 
 export const receipts = pgTable('receipts', {

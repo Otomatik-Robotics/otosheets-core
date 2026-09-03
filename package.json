@@ -22,7 +22,7 @@
     "build": "tsc",
     "db:migrate": "node dist/pg/migrate.js",
     "clean": "rm -rf dist",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=4",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },

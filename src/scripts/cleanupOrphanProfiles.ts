@@ -28,12 +28,18 @@ import { orgs } from '../pg/schema/identity';
 
 /** Any content field being set means the profile is intentional, not a seed artifact. */
 const CONTENT_FIELDS = [
-    'abn', 'acn', 'legalName', 'tradeName', 'phone', 'businessEmail', 'website',
+    'abn', 'acn', 'entityType', 'legalName', 'tradeName', 'phone', 'businessEmail', 'website',
     'address', 'suburb', 'state', 'postcode', 'bankDetails', 'logoKey', 'brandColor',
     'accentColor', 'template', 'footerText', 'paymentInstructions', 'industry',
     'businessSize', 'operatingHours', 'about', 'serviceAreas', 'targetCustomers',
     'uniqueSellingPoints', 'commonQuestions', 'chatbotTone', 'chatbotInstructions',
     'googleReviewUrl', 'setupCompletedAt',
+    // Connect onboarding data is intentional content. `connectSensitive` is
+    // deliberately excluded: a profile holding only ciphertext is not content.
+    'representativeFirstName', 'representativeLastName', 'representativeEmail',
+    'representativePhone', 'representativeAddress', 'representativeSuburb',
+    'representativeState', 'representativePostcode', 'mcc', 'statementDescriptor',
+    'connectSensitiveForwardedAt',
 ] as const;
 
 /**

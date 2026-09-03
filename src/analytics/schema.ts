@@ -48,6 +48,11 @@ export interface AnalyticsOverview {
 export interface AnalyticsPageRow {
     path: string; pageviews: number; entries: number; exits: number; avgSeconds: number;
 }
+/** Per-path content stats (paths under a prefix, e.g. '/updates/') joined with
+ *  lead enquiries whose first-touch `attribution.landingPage` was that path. */
+export interface ContentStatRow {
+    path: string; pageviews: number; avgSeconds: number; enquiries: number;
+}
 export interface AnalyticsReferrerRow {
     source: string; medium: string; campaign: string; sessions: number; orders: number; revenueCents: number;
 }

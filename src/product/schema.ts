@@ -60,8 +60,25 @@ export const ProductVariantSchema = z.object({
      * site that has to make that decision.
      */
     priceCents: z.number().int().nonnegative().optional(),
-    /** null / undefined = untracked (always available). A number is decremented per sale. */
+    /**
+     * null / undefined = untracked (always available).
+     *
+     * When `priceBookItemId` is set this is a CACHE of the catalogue's on-hand
+     * figure, not an independent number — `applyStockDelta` pushes the true
+     * level here after every movement. It is still decremented conditionally at
+     * checkout, because that conditional IS the no-oversell guard; the push
+     * then corrects it to truth.
+     */
     stock: z.number().int().nonnegative().nullish(),
+    /**
+     * The catalogue item this variant draws stock from.
+     *
+     * Linked at the VARIANT, not the product: a variant is the SKU, so S/M/L
+     * are three stock items and one product-level link cannot serve them. The
+     * older product-level `priceBookItemId` still works for single-variant
+     * products and is used as the fallback.
+     */
+    priceBookItemId: z.string().nullish(),
     /** Index into the product's images[] for this variant's photo. */
     imageIndex: z.number().int().nonnegative().optional(),
 });
@@ -72,6 +89,7 @@ export interface ProductVariant {
     /** Absent = inherit `basePriceCents`. Resolve via `variantPriceCents()`. */
     priceCents?: number;
     stock?: number | null;
+    priceBookItemId?: string | null;
     imageIndex?: number;
 }
 

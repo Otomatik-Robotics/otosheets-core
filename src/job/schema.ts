@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AddressStatusSchema } from '../address/schema';
 
 export const JobMaterialSchema = z.object({
     id: z.string(),
@@ -25,6 +26,10 @@ export const JobBaseSchema = z.object({
     address: z.string().nullish(),
     lat: z.number().nullish(),
     lng: z.number().nullish(),
+    // What the place-index lookup concluded. Previously a failed geocode was a
+    // console.warn and a job with no coordinates and no way to know why — the
+    // geofence then silently never fired. See AddressStatusSchema.
+    addressStatus: AddressStatusSchema.nullish(),
     scheduledDate: z.string().nullish(),
     scheduledTime: z.string().nullish(),
     estimatedDuration: z.number().nullish(),
@@ -64,6 +69,7 @@ export const JobCreateRequestSchema = z.object({
     address: z.string().nullish(),
     lat: z.number().nullish(),
     lng: z.number().nullish(),
+    addressStatus: AddressStatusSchema.nullish(),
     scheduledDate: z.string().nullish(),
     scheduledTime: z.string().nullish(),
     estimatedDuration: z.number().nullish(),

@@ -1,0 +1,13 @@
+-- Leads learn which Conversation records hold their chat/DM history.
+--
+-- The lead timeline needs the structured messages, not just the prose
+-- `conversation_summary` slice. Conversations themselves stay Dynamo-only
+-- (hot-path, keyed), so this is a list of IDs, not a join — jsonb like the
+-- other document-shaped lead fields (photos, stage_history). Leads are
+-- PG-authoritative: without this column the attribute would be silently
+-- dropped in BOTH stores, because the Dynamo mirror is written from the
+-- PG read-back.
+--
+-- Additive and nullable — every existing row reads back as "no linked
+-- conversations", which is the truth for all of them.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS conversation_ids jsonb;
