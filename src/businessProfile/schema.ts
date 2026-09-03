@@ -171,8 +171,10 @@ export interface ResolvedBusinessProfile {
     representativePostcode?: string | null;
     mcc?: string | null;
     statementDescriptor?: string | null;
-    /** Ciphertext only; see BusinessProfileStoredSchema. */
-    connectSensitive?: string | null;
+    // `connectSensitive` is deliberately NOT part of the resolved profile:
+    // resolveBusinessProfile() strips it so rendering consumers never carry the
+    // ciphertext. Read it via BusinessProfileRepo.getById() on the owner-gated
+    // Stripe forwarding path only.
     connectSensitiveForwardedAt?: string | null;
     // Branding
     logoKey?: string | null;

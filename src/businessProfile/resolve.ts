@@ -2,10 +2,19 @@ import { getOrgRepo } from '../org/factory';
 import { getBusinessProfileRepo } from './factory';
 import { BusinessProfile, ResolvedBusinessProfile } from './schema';
 
-/** Apply tax defaults so consumers never need a fallback chain. */
+/**
+ * Apply tax defaults so consumers never need a fallback chain.
+ *
+ * `connectSensitive` is dropped here on purpose: this is the shared read entry
+ * point for rendering consumers (invoice PDFs, storefront, chat agents, the
+ * org-wide settings GET), none of which may see the encrypted DOB + bank blob
+ * even as ciphertext. The one owner-gated forwarding path reads it straight
+ * off `BusinessProfileRepo.getById()` instead.
+ */
 function withDefaults(p: BusinessProfile): ResolvedBusinessProfile {
+    const { connectSensitive: _sensitive, ...rest } = p;
     return {
-        ...p,
+        ...rest,
         taxLabel: p.taxLabel ?? 'GST',
         taxRate: p.taxRate ?? 10,
         gstRegistered: p.gstRegistered ?? false,
