@@ -124,6 +124,49 @@ describe('InvoicePgRepo', () => {
         expect(page.items.map(i => i.invoiceId)).not.toContain('inv_pl');
     });
 
+    // A chase used to leave no trace: digestChase read `lastReminderAt` behind an
+    // `(inv as any)` cast and it was always undefined, because no column held it.
+    // These pin the round trip. Drizzle's buildUpdateSet iterates the TABLE's
+    // columns, not the set's keys, so a missing column drops the write SILENTLY —
+    // no throw, and tsc cannot see it. Only a real round trip catches that.
+    it('lastReminderAt is absent until a chase is recorded, then round-trips', async () => {
+        await inv().createInvoice('org_1', 'user_1', 'inv_chase', { invoiceNumber: 'INV-CH', status: 'SENT' });
+
+        // Never chased reads as ABSENT, not null and not a zero value: toInvoiceDto
+        // drops nulls so pg mirrors DynamoDB's sparseness exactly.
+        const before = await inv().getInvoice('org_1', 'user_1', 'inv_chase');
+        expect(before!.lastReminderAt).toBeUndefined();
+
+        await inv().updateInvoice('org_1', 'user_1', 'inv_chase', { lastReminderAt: '2026-09-04T03:15:00.000Z' });
+        const after = await inv().getInvoice('org_1', 'user_1', 'inv_chase');
+        // Exact string, byte for byte — the reason the column is text and not
+        // timestamptz, which would normalize the format and shadow-diff the mirror.
+        expect(after!.lastReminderAt).toBe('2026-09-04T03:15:00.000Z');
+    });
+
+    it('a second chase overwrites rather than accumulating, so a redelivered send is a no-op', async () => {
+        await inv().updateInvoice('org_1', 'user_1', 'inv_chase', { lastReminderAt: '2026-09-05T09:00:00.000Z' });
+        const i = await inv().getInvoice('org_1', 'user_1', 'inv_chase');
+        expect(i!.lastReminderAt).toBe('2026-09-05T09:00:00.000Z');
+    });
+
+    it('updating another field leaves lastReminderAt alone', async () => {
+        await inv().updateInvoice('org_1', 'user_1', 'inv_chase', { status: 'PARTIAL' });
+        const i = await inv().getInvoice('org_1', 'user_1', 'inv_chase');
+        expect(i!.status).toBe('PARTIAL');
+        expect(i!.lastReminderAt).toBe('2026-09-05T09:00:00.000Z');
+    });
+
+    it('upsertInvoice preserves lastReminderAt on the mirror path', async () => {
+        await inv().upsertInvoice({
+            invoiceId: 'inv_chase_mirror', orgId: 'org_1', sk: 'user_1#inv_chase_mirror', createdBy: 'user_1',
+            invoiceNumber: 'MIR-CH', status: 'SENT', lastReminderAt: '2026-09-01T00:00:00.000Z',
+            createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-02T00:00:00.000Z', items: [],
+        } as any);
+        const i = await inv().getInvoice('org_1', 'user_1', 'inv_chase_mirror');
+        expect(i!.lastReminderAt).toBe('2026-09-01T00:00:00.000Z');
+    });
+
     it('upsertInvoice accepts a Dynamo-shaped DTO with ISO-string timestamps (mirror/backfill path)', async () => {
         // Regression: custom row mapper must convert string createdAt/updatedAt to Date.
         await inv().upsertInvoice({

@@ -104,6 +104,7 @@ export const invoices = pgTable('invoices', {
     followUpSequenceId: text('follow_up_sequence_id'),
     voidReason: text('void_reason'),                         // surfaced by drift report
     revisedFrom: text('revised_from'),                       // ref to a prior invoice version
+    lastReminderAt: text('last_reminder_at'),                 // ISO; last chase email actually sent (0045)
     legacyLineItems: jsonb('legacy_line_items'),             // deprecated `lineItems` alias of items
     legacyClientSnapshot: jsonb('legacy_client_snapshot'),   // backfill-only; drop at contract step
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),

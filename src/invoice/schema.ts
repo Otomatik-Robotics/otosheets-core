@@ -43,6 +43,8 @@ export const InvoiceBaseSchema = z.object({
     followUpSequenceId: z.string().nullish(),
     voidReason: z.string().nullish(),
     revisedFrom: z.string().nullish(),
+    /** ISO timestamp of the last chase email actually sent. Absent = never chased. */
+    lastReminderAt: z.string().nullish(),
     /** @deprecated legacy alias of `items` — preserved for lossless migration */
     lineItems: z.any().nullish(),
     createdAt: z.string(),
