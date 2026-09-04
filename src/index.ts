@@ -78,3 +78,6 @@ export * from './domainPurchase';
 export * from './analytics';
 export * from './adCampaign';
 export * from './form';
+export * from './asset';
+export * from './basPeriod';
+export * from './basReporting';

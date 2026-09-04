@@ -1,4 +1,4 @@
-import { and, eq, sql, desc, lt, or, gte, lte, notInArray } from 'drizzle-orm';
+import { and, eq, sql, desc, lt, or, gte, lte, notInArray, isNull } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { receipts } from '../pg/schema/opsEntities';
 import { keysetFromStartKey, keysetStartKey } from '../pg/cursor';
@@ -56,6 +56,15 @@ export interface ReceiptsPage {
     total: number;
 }
 
+export interface ListAssetCandidatesParams {
+    orgId: string;
+    /** Categories that look like capital purchases (matched case-insensitively). Empty → no candidates. */
+    categories: string[];
+    limit?: number;
+    /** Already-decoded keyset cursor from a prior page's `lastEvaluatedKey`. */
+    exclusiveStartKey?: Record<string, any>;
+}
+
 export interface ReceiptCategoryAgg {
     category: string;
     amount: number;
@@ -88,6 +97,95 @@ export class ReceiptPgRepo implements IReceiptRepo {
     async updateReceipt(o: string, _u: string, id: string, upd: Record<string, any>) { await this.db.update(receipts).set(dtoToRow(upd, NUM, STRIP) as any).where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id))); }
     async deleteReceipt(o: string, _u: string, id: string) { await this.db.delete(receipts).where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id))); }
     async upsertReceipt(receipt: Receipt) { const row = { ...dtoToRow(receipt as Record<string, any>, NUM, STRIP), ownerId: ownerFromSk(receipt as any) }; await this.db.insert(receipts).values(row as any).onConflictDoUpdate({ target: receipts.receiptId, set: row as any }); }
+
+    // ── Review + asset signals (0046). Each is a single conditional UPDATE … RETURNING:
+    //    true only when this call changed the row, so every caller is retry-safe. ──
+
+    async markOpened(o: string, id: string, userId: string): Promise<boolean> {
+        const rows = await this.db.update(receipts)
+            .set({ openedAt: new Date(), openedBy: userId })
+            .where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id), isNull(receipts.openedAt)))
+            .returning({ receiptId: receipts.receiptId });
+        return rows.length > 0;
+    }
+
+    async confirmCategory(o: string, id: string, opts: { category: string; userId: string }): Promise<boolean> {
+        const nowIso = new Date().toISOString();
+        const rows = await this.db.update(receipts)
+            .set({
+                category: opts.category,
+                categoryConfirmedAt: new Date(nowIso),
+                categoryConfirmedBy: opts.userId,
+                // Confirming the category is also an acknowledgement of the AI flag —
+                // the existing risk-ack view (reviewedAt) must agree with this one.
+                reviewedAt: sql`coalesce(${receipts.reviewedAt}, ${nowIso}::timestamptz)`,
+                reviewedBy: sql`coalesce(${receipts.reviewedBy}, ${opts.userId})`,
+            })
+            .where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id)))
+            .returning({ receiptId: receipts.receiptId });
+        return rows.length > 0;
+    }
+
+    async linkAsset(o: string, id: string, assetId: string): Promise<boolean> {
+        const rows = await this.db.update(receipts)
+            .set({ assetId })
+            .where(and(
+                eq(receipts.orgId, o), eq(receipts.receiptId, id),
+                or(isNull(receipts.assetId), eq(receipts.assetId, assetId)),
+            ))
+            .returning({ receiptId: receipts.receiptId });
+        return rows.length > 0;
+    }
+
+    async declineAssetOffer(o: string, id: string): Promise<boolean> {
+        const rows = await this.db.update(receipts)
+            .set({ assetDeclinedAt: new Date() })
+            .where(and(
+                eq(receipts.orgId, o), eq(receipts.receiptId, id),
+                isNull(receipts.assetDeclinedAt), isNull(receipts.assetId),
+            ))
+            .returning({ receiptId: receipts.receiptId });
+        return rows.length > 0;
+    }
+
+    /**
+     * Receipts that look like capital purchases and have neither been promoted
+     * to an asset nor had the offer declined — the "looks like an asset" card.
+     * Newest upload first, keyset on (created_at, receipt_id); served by the
+     * receipts_org_asset_candidates_idx partial index. Reporting-only: no
+     * Dynamo twin, so it lives on ReceiptPgRepo rather than IReceiptRepo.
+     */
+    async listAssetCandidates(params: ListAssetCandidatesParams): Promise<PaginatedResult<Receipt>> {
+        const cats = [...new Set(params.categories.map((c) => c.toUpperCase()))];
+        if (cats.length === 0) return { items: [] };
+        const limit = params.limit ?? 20;
+        const conds: any[] = [
+            eq(receipts.orgId, params.orgId),
+            sql`upper(${receipts.category}) IN (${sql.join(cats.map((c) => sql`${c}`), sql`, `)})`,
+            isNull(receipts.assetId),
+            isNull(receipts.assetDeclinedAt),
+            or(isNull(receipts.status), notInArray(receipts.status, ['DUPLICATE', 'ARCHIVED'])),
+        ];
+        const cursor = keysetFromStartKey(params.exclusiveStartKey, 'receiptId');
+        if (cursor) {
+            const at = new Date(cursor.createdAt);
+            conds.push(or(
+                lt(receipts.createdAt, at),
+                and(eq(receipts.createdAt, at), lt(receipts.receiptId, cursor.id)),
+            ));
+        }
+        const rows = await this.db.select().from(receipts)
+            .where(and(...conds))
+            .orderBy(desc(receipts.createdAt), desc(receipts.receiptId))
+            .limit(limit);
+        const last = rows[rows.length - 1] as any;
+        return {
+            items: rows.map(toDto),
+            lastEvaluatedKey: rows.length === limit && last
+                ? keysetStartKey({ createdAt: (last.createdAt as Date).toISOString(), id: last.receiptId })
+                : undefined,
+        };
+    }
 
     /** Shared WHERE for list + summary. Mirrors the Dynamo DateIndex semantics:
      *  scoped to org, DUPLICATE/ARCHIVED excluded, and (for the date-ordered

@@ -139,12 +139,24 @@ export const receipts = pgTable('receipts', {
     ruleApplied: boolean('rule_applied'),
     duplicateOf: text('duplicate_of'),
     possibleDuplicateOf: text('possible_duplicate_of'),
+    // Review signals for the BAS confidence score (0046). All nullable/sparse:
+    // a receipt is "reviewed" once it has been opened AND its category
+    // confirmed, and sits outside the exception set.
+    openedAt: timestamp('opened_at', { withTimezone: true, mode: 'date' }),
+    openedBy: text('opened_by'),
+    categoryConfirmedAt: timestamp('category_confirmed_at', { withTimezone: true, mode: 'date' }),
+    categoryConfirmedBy: text('category_confirmed_by'),
+    // Asset promotion (0046): the asset this receipt became, or when the
+    // "looks like an asset" offer was declined. Both null = still a candidate.
+    assetId: text('asset_id'),
+    assetDeclinedAt: timestamp('asset_declined_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('receipts_org_created_idx').on(t.orgId, t.createdAt.desc()),
     index('receipts_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
     index('receipts_org_category_idx').on(t.orgId, t.category),
     index('receipts_content_hash_idx').on(t.orgId, t.contentHash),
+    index('receipts_org_asset_candidates_idx').on(t.orgId).where(sql`asset_id IS NULL AND asset_declined_at IS NULL`),
 ]);
 
 export const trips = pgTable('trips', {
