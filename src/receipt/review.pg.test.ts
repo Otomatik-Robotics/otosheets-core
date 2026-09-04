@@ -120,3 +120,35 @@ describe('ReceiptPgRepo.listAssetCandidates', () => {
         expect(page.items.map((r) => r.receiptId)).toEqual(['c_a']);
     });
 });
+
+describe('ReceiptPgRepo.countAssetCandidates', () => {
+    it('counts the whole backlog, not a page of it', async () => {
+        // The register shows this as the number of receipts still to deal with.
+        // Counting a page caps the figure at the page size and stops moving as
+        // more arrive, so the count has to come from the query. Own org, so the
+        // earlier cases in this file cannot promote the fixture out from under it.
+        const org = 'org_backlog';
+        await pglite.query(`INSERT INTO orgs (org_id, name) VALUES ('${org}', 'Backlog') ON CONFLICT DO NOTHING`);
+        for (let i = 0; i < 5; i++) {
+            await repo.createReceipt(org, 'u1', `b_${i}`, { status: 'PROCESSED', totalAmount: 500, date: '2026-08-12', category: 'TOOLS' });
+        }
+        const cats = ['TOOLS'];
+
+        const page = await repo.listAssetCandidates({ orgId: org, categories: cats, limit: 2 });
+        const total = await repo.countAssetCandidates(org, cats);
+
+        expect(page.items).toHaveLength(2);
+        expect(total).toBe(5);
+    });
+
+    it('is case insensitive and answers zero for no categories', async () => {
+        expect(await repo.countAssetCandidates(ORG, ['equipment'])).toBe(
+            await repo.countAssetCandidates(ORG, ['EQUIPMENT']),
+        );
+        expect(await repo.countAssetCandidates(ORG, [])).toBe(0);
+    });
+
+    it('is scoped to the organisation', async () => {
+        expect(await repo.countAssetCandidates('org_2', ['EQUIPMENT', 'VEHICLE'])).toBe(0);
+    });
+});

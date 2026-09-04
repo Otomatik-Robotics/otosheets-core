@@ -40,6 +40,15 @@ export interface BasInputs {
         count: number;
         /** Business share of the GST on every receipt, capital purchases included. */
         gstPaid: number;
+        /**
+         * Business share of the GST on receipts that became an asset. The BAS
+         * reports capital purchases at G10 and the rest at G11, so the split
+         * has to be measured; deriving it from the register's business-use
+         * share is only right when that matches the receipt's.
+         */
+        capitalGstPaid: number;
+        /** Receipts that did NOT become an asset, the set expensesExGst sums. */
+        nonCapitalCount: number;
         /** Business share of the ex-GST amount on receipts that did NOT become an asset. */
         expensesExGst: number;
         /** Business share of the ex-GST amount on receipts that DID become an asset. */

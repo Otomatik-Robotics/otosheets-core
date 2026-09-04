@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { runMigrations, type SqlExecutor } from '../pg/migrate';
 import type { PgDb } from '../pg/client';
 import { BasPeriodPgRepo } from './repo.pg';
-import { parsePeriod } from './period';
+import { basPeriod, parsePeriod } from './period';
 import type { BasLodgementInput } from './schema';
 
 let db: PgDb;
@@ -109,5 +109,43 @@ describe('BasPeriodPgRepo', () => {
         expect(lodged.every((p) => p.lodgedAt)).toBe(true);
         expect(await repo.listLodged(ORG, 1)).toHaveLength(1);
         expect(await repo.listLodged('org_2')).toEqual([]);
+    });
+});
+
+describe('BasPeriodPgRepo.listLodgedPaginated', () => {
+    it('pages lodged quarters without ever returning a short or empty page', async () => {
+        // The reminder stamps put unlodged rows in front of the lodged ones.
+        // Paging every row and dropping the unlodged afterwards returns pages
+        // that are short, and can return an empty one while lodged quarters
+        // are still waiting behind it.
+        const org = 'org_lodged_paging';
+        await pglite.query(`INSERT INTO orgs (org_id, name) VALUES ('${org}', 'Paging') ON CONFLICT DO NOTHING`);
+        const repo2 = new BasPeriodPgRepo(db);
+
+        for (const q of [1, 2, 3, 4] as const) {
+            const info = basPeriod('FY25/26', q)!;
+            await repo2.stampReminder(org, info, 'before');
+            await repo2.markLodged(org, {
+                period: info.period, fy: info.fy, quarter: info.quarter,
+                periodStart: info.periodStart, periodEnd: info.periodEnd, dueDate: info.dueDate,
+                lodgedBy: 'u1', figures: { netGst: 100 * q }, confidence: 90, reasons: [],
+            });
+        }
+        // One quarter reminded but never lodged: it must not consume a slot.
+        const open = basPeriod('FY26/27', 1)!;
+        await repo2.stampReminder(org, open, 'before');
+
+        const p1 = await repo2.listLodgedPaginated(org, { limit: 2 });
+        expect(p1.items).toHaveLength(2);
+        expect(p1.lastEvaluatedKey).toBeTruthy();
+
+        const p2 = await repo2.listLodgedPaginated(org, { limit: 2, exclusiveStartKey: p1.lastEvaluatedKey });
+        expect(p2.items).toHaveLength(2);
+        expect(p2.lastEvaluatedKey).toBeUndefined();
+
+        const seen = [...p1.items, ...p2.items].map(r => r.period);
+        expect(new Set(seen).size).toBe(4);
+        expect(seen).not.toContain(open.period);
+        expect(seen.every(p => p.startsWith('FY25/26'))).toBe(true);
     });
 });

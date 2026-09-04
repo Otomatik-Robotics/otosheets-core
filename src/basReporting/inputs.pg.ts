@@ -105,6 +105,8 @@ export class BasReportingPgRepo {
         const receiptsQ = this.one(sql`
             SELECT count(*)::int AS count,
                    coalesce(sum(${gstOnReceipt} * ${share}), 0)::text AS gst_paid,
+                   coalesce(sum(CASE WHEN r.asset_id IS NOT NULL THEN ${gstOnReceipt} * ${share} ELSE 0 END), 0)::text AS capital_gst_paid,
+                   (count(*) FILTER (WHERE r.asset_id IS NULL))::int AS non_capital_count,
                    coalesce(sum(CASE WHEN r.asset_id IS NULL THEN ${exGst} * ${share} ELSE 0 END), 0)::text AS expenses_ex_gst,
                    coalesce(sum(CASE WHEN r.asset_id IS NOT NULL THEN ${exGst} * ${share} ELSE 0 END), 0)::text AS capital_ex_gst,
                    (count(*) FILTER (WHERE NOT (r.opened_at IS NOT NULL AND r.category_confirmed_at IS NOT NULL AND NOT ${exception})))::int AS unreviewed,
@@ -205,6 +207,8 @@ export class BasReportingPgRepo {
             receipts: {
                 count: num(rec.count),
                 gstPaid: round2(num(rec.gst_paid)),
+                capitalGstPaid: round2(num(rec.capital_gst_paid)),
+                nonCapitalCount: num(rec.non_capital_count),
                 expensesExGst: round2(num(rec.expenses_ex_gst)),
                 capitalExGst: round2(num(rec.capital_ex_gst)),
                 unreviewed: num(rec.unreviewed),

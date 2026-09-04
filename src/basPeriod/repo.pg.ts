@@ -149,10 +149,41 @@ export class BasPeriodPgRepo {
 
     /** Lodged quarters, most recently lodged first. */
     async listLodged(orgId: string, limit?: number): Promise<BasPeriodDTO[]> {
+        const { items } = await this.listLodgedPaginated(orgId, { limit });
+        return items;
+    }
+
+    /**
+     * Lodged quarters, most recently lodged first, keyset paginated.
+     *
+     * The filter belongs in the query: paging every period row and dropping
+     * the unlodged ones afterwards returns short pages, and can return an
+     * empty one while lodged quarters are still waiting behind it.
+     */
+    async listLodgedPaginated(
+        orgId: string,
+        opts: { limit?: number; exclusiveStartKey?: Record<string, any> } = {},
+    ): Promise<{ items: BasPeriodDTO[]; lastEvaluatedKey?: Record<string, any> }> {
+        const limit = clampLimit(opts.limit, 100);
+        const conds: any[] = [eq(basPeriods.orgId, orgId), isNotNull(basPeriods.lodgedAt)];
+        const cursor = opts.exclusiveStartKey;
+        if (cursor?.lodgedAt && cursor?.period) {
+            const at = new Date(cursor.lodgedAt);
+            conds.push(or(
+                lt(basPeriods.lodgedAt, at),
+                and(eq(basPeriods.lodgedAt, at), lt(basPeriods.period, String(cursor.period))),
+            ));
+        }
         const rows = await this.db.select().from(basPeriods)
-            .where(and(eq(basPeriods.orgId, orgId), isNotNull(basPeriods.lodgedAt)))
+            .where(and(...conds))
             .orderBy(desc(basPeriods.lodgedAt), desc(basPeriods.period))
-            .limit(clampLimit(limit, 100));
-        return rows.map(toDto);
+            .limit(limit + 1);
+        const page = rows.slice(0, limit);
+        const items = page.map(toDto);
+        const more = rows.length > limit;
+        const last = page[page.length - 1];
+        return more && last?.lodgedAt
+            ? { items, lastEvaluatedKey: { orgId, lodgedAt: last.lodgedAt.toISOString(), period: last.period } }
+            : { items };
     }
 }
