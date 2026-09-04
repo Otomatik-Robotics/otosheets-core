@@ -66,9 +66,13 @@ beforeAll(async () => {
 
     // ── Trips ──
     const trip = (o: Record<string, any>) => db.insert(trips).values({ orgId: ORG, ownerId: USER, createdBy: USER, createdAt: D('2026-07-01T00:00:00Z'), ...o });
-    await trip({ tripId: 't_1', date: '2026-07-08', distanceKm: '12.5' });
-    await trip({ tripId: 't_2', date: '2026-08-20', distanceKm: '7.5' });
-    await trip({ tripId: 't_old', date: '2026-06-01', distanceKm: '99' });
+    await trip({ tripId: 't_1', date: '2026-07-08', distanceKm: '12.5', purpose: 'WORK' });
+    await trip({ tripId: 't_2', date: '2026-08-20', distanceKm: '7.5', purpose: 'WORK' });
+    // In the window, but not a business trip: the deduction must not claim it.
+    await trip({ tripId: 't_personal', date: '2026-08-21', distanceKm: '40', purpose: 'PERSONAL' });
+    // In the window with no purpose recorded: unverified, so also not claimed.
+    await trip({ tripId: 't_unset', date: '2026-08-22', distanceKm: '30' });
+    await trip({ tripId: 't_old', date: '2026-06-01', distanceKm: '99', purpose: 'WORK' });
 
     // ── Statements: July covered; a duplicate statement covering August is ignored. ──
     await db.insert(statements).values([
@@ -154,6 +158,8 @@ describe('BasReportingPgRepo.inputs', () => {
             exception: { possibleDuplicate: 0, extractionFailed: 0, highRisk: 1, uncategorised: 1, noAmount: 1 },
         });
 
+        // t_1 + t_2 only: the personal trip, the trip with no purpose and the
+        // trip before the window are all out.
         expect(got.trips).toEqual({ count: 2, km: 20 });
 
         // July covered by stmt_1; August's only statement is a duplicate; the feed is disconnected.

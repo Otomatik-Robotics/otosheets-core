@@ -122,10 +122,15 @@ export class BasReportingPgRepo {
               AND (r.status IS NULL OR r.status NOT IN ('DUPLICATE', 'ARCHIVED'))`);
 
         // ── Trips ──
+        // Only WORK trips. The cents-per-kilometre deduction is for business
+        // travel, so a personal trip and one whose purpose was never set are
+        // both excluded; counting them over-claims the deduction, and the trips
+        // summary screen already reports the same split.
         const tripsQ = this.one(sql`
             SELECT count(*)::int AS count, coalesce(sum(t.distance_km), 0)::text AS km
             FROM trips t
-            WHERE t.org_id = ${orgId} AND t.trip_date >= ${dateFrom} AND t.trip_date <= ${dateTo}`);
+            WHERE t.org_id = ${orgId} AND t.trip_date >= ${dateFrom} AND t.trip_date <= ${dateTo}
+              AND upper(coalesce(t.purpose, '')) = 'WORK'`);
 
         // ── Bank coverage: statement periods overlapping the window, and whether a live feed is on. ──
         const periodsQ = this.many(sql`
