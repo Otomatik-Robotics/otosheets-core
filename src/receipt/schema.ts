@@ -17,6 +17,9 @@ export const ReceiptBaseSchema = z.object({
     isDeductible: z.boolean().nullish(),
     aiWarning: z.string().nullish(),
     isFuelReceipt: z.boolean().default(false),
+    /** Set once the owner has acknowledged an AI risk flag. */
+    reviewedAt: z.string().nullish(),
+    reviewedBy: z.string().nullish(),
     businessPercent: z.number().default(100),
     businessAmount: z.number().nullish(),
     ruleApplied: z.boolean().default(false),
@@ -47,6 +50,8 @@ export const ReceiptCreateRequestSchema = z.object({
     description: z.string().nullish(),
     isDeductible: z.boolean().nullish(),
     isFuelReceipt: z.boolean().optional(),
+    reviewedAt: z.string().nullish(),
+    reviewedBy: z.string().nullish(),
     businessPercent: z.number().optional(),
     businessAmount: z.number().nullish(),
 });

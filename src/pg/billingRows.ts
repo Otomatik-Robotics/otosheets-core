@@ -8,7 +8,11 @@ export function ownerFromSk(dto: Record<string, any>): string {
     return typeof dto.sk === 'string' ? dto.sk.split('#')[0] : (dto.createdBy ?? '');
 }
 
-const TS_KEYS = new Set(['createdAt', 'updatedAt']);
+// Keys whose DTO form is an ISO string but whose column is a timestamp. Drizzle
+// rejects a string on a `mode: 'date'` column, so anything missing from this set
+// throws at write time rather than converting — which is how `reviewedAt` was
+// found. Add a key here whenever a timestamptz column becomes DTO-writable.
+const TS_KEYS = new Set(['createdAt', 'updatedAt', 'reviewedAt']);
 
 /** DTO → column row. `strip` are keys handled specially by the caller (sk, derived keys). */
 export function dtoToRow(
