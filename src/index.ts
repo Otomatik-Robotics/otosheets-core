@@ -33,6 +33,7 @@ export * from './invoice';
 export * from './invoicePayment';
 export * from './client';
 export * from './clientOverview';
+export * from './leadReporting';
 export * from './address';
 export * from './callTrigger';
 export * from './job';

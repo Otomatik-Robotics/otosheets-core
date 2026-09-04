@@ -1,4 +1,4 @@
-import { and, eq, sql, desc, lt, or, gte, notInArray } from 'drizzle-orm';
+import { and, eq, sql, desc, lt, or, gte, notInArray, isNull } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { leads } from '../pg/schema/leadsPipelines';
 import { orgStageKey } from '../keys';
@@ -6,6 +6,7 @@ import { keysetFromStartKey, keysetStartKey } from '../pg/cursor';
 import { dtoToRow, rowToDto, ownerFromSk } from '../pg/billingRows';
 import { PaginatedResult } from '../types';
 import { Lead } from './schema';
+import type { LeadPageParams } from './repo';
 import type { ILeadRepo } from './repo';
 
 const NUMERIC_KEYS = ['quotedAmount'];
@@ -17,6 +18,38 @@ function toDto(row: any): Lead {
     dto.sk = `${row.ownerId}#${row.leadId}`;
     return dto as Lead;
 }
+
+
+/**
+ * Which leads belong to a pipeline, as SQL rather than as a filter over a page.
+ *
+ * Membership is not just `pipeline_id`: a lead that was never assigned one can
+ * still belong to a pipeline by matching its configured sources. The caller
+ * resolves those sources and passes them in, so the whole rule lives in the
+ * WHERE clause. Filtering a fetched page instead used to let a board show an
+ * empty page while later pages held its leads, and made every count derived
+ * from this endpoint wrong.
+ */
+function pipelineMembership(params: LeadPageParams): any | null {
+    const { pipelineId, includeUnassigned, pipelineSources } = params;
+    if (!pipelineId) return null;
+
+    const unassigned: any[] = [];
+    if (includeUnassigned) unassigned.push(sql`true`);
+    for (const src of pipelineSources ?? []) {
+        if (!src?.sourceType) continue;
+        unassigned.push(
+            src.channelId
+                ? and(eq(leads.source, src.sourceType), sql`COALESCE(${leads.channelId}, ${leads.pageId}) = ${src.channelId}`)
+                : eq(leads.source, src.sourceType),
+        );
+    }
+
+    // An unassigned lead only counts when something claims it.
+    if (unassigned.length === 0) return eq(leads.pipelineId, pipelineId);
+    return or(eq(leads.pipelineId, pipelineId), and(isNull(leads.pipelineId), or(...unassigned)));
+}
+
 
 export class LeadPgRepo implements ILeadRepo {
     constructor(private injected?: PgDb) {}
@@ -39,12 +72,14 @@ export class LeadPgRepo implements ILeadRepo {
         const rows = await this.db.select().from(leads).where(eq(leads.orgId, orgId));
         return rows.map(toDto);
     }
-    async listOrgLeadsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>> {
+    async listOrgLeadsPaginated(params: LeadPageParams): Promise<PaginatedResult<Lead>> {
         const { orgId, businessProfileId, limit = 20, exclusiveStartKey, stage, source, search } = params;
         const conds: any[] = [eq(leads.orgId, orgId)];
         if (businessProfileId) conds.push(eq(leads.businessProfileId, businessProfileId));
         if (stage) conds.push(eq(leads.stage, stage));
         if (source) conds.push(eq(leads.source, source));
+        const pipelineCond = pipelineMembership(params);
+        if (pipelineCond) conds.push(pipelineCond);
         if (search) { const like = `%${search}%`; conds.push(or(sql`${leads.clientName} ILIKE ${like}`, sql`${leads.clientEmail} ILIKE ${like}`, sql`${leads.suburb} ILIKE ${like}`)); }
         const cursor = keysetFromStartKey(exclusiveStartKey, 'leadId');
         if (cursor) conds.push(or(lt(leads.createdAt, new Date(cursor.createdAt)), and(eq(leads.createdAt, new Date(cursor.createdAt)), lt(leads.leadId, cursor.id))));
