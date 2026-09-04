@@ -10,6 +10,9 @@ import type {
     MatchRejectionRow, MatchSource, MatchTargetType, UnmatchedIncomeRow,
     InvoiceDepositCheck, InvoiceChipInfo, ReceiptChipInfo, UnmatchedIncomePage,
 } from './schema';
+import {
+    UNMATCHED_INCOME_MIN_CENTS, unmatchedIncomeStatementPredicate, unmatchedIncomeFeedPredicate,
+} from './unmatchedIncome';
 
 /** Dollars-NUMERIC → integer cents (invoices/receipts store dollars; bank rows store cents). */
 const toCents = (v: unknown): number => Math.round(Number(v ?? 0) * 100);
@@ -328,21 +331,16 @@ export class LedgerMatchPgRepo {
      * UNIONed with a display label for the account the money landed in.
      * `olderThan` is a YYYY-MM-DD cutoff supplied by the caller.
      *
-     * Noise a real bank account carries that is NEVER invoice income is
-     * filtered here — this predicate is the single definition of "unmatched
-     * income" for the whole platform:
-     *   - credits under `minCents` (default $50 — bank interest cents),
-     *   - payroll/salary/wages deposits, interest, and reversed direct
-     *     debits ("Return … Direct Debit"), by descriptor,
-     *   - rows a human already explained (category_source USER/ADVISOR —
-     *     e.g. deliberately categorised as other income).
-     * Keyset-paginated on (txn_date, txn_id) with a total for the entry pill.
+     * The row predicate lives in `./unmatchedIncome.ts` — the single
+     * definition of "unmatched income" for the whole platform, shared with
+     * the BAS confidence score. Keyset-paginated on (txn_date, txn_id) with a
+     * total for the entry pill.
      */
     async listUnmatchedIncome(userId: string, opts: {
         olderThan: string; limit?: number; nextToken?: string | null; minCents?: number;
     }): Promise<UnmatchedIncomePage> {
         const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
-        const minCents = opts.minCents ?? 5000;
+        const minCents = opts.minCents ?? UNMATCHED_INCOME_MIN_CENTS;
         let cursor: { d: string; id: string } | null = null;
         if (opts.nextToken) {
             try {
@@ -367,17 +365,8 @@ export class LedgerMatchPgRepo {
             FROM statement_transactions st
             JOIN statements s ON s.statement_id = st.statement_id
             WHERE st.user_id = ${userId}
-              AND st.amount_cents >= ${minCents}
-              AND (st.direction IS NULL OR st.direction = 'CREDIT')
-              AND (st.flow_class IS NULL OR st.flow_class = 'INCOME')
-              AND st.duplicate_of_txn_id IS NULL
-              AND st.transfer_pair_id IS NULL
-              AND st.matched_invoice_id IS NULL
-              AND st.txn_date IS NOT NULL AND st.txn_date <= ${opts.olderThan}::date
-              AND (st.category_source IS NULL OR st.category_source NOT IN ('USER', 'ADVISOR'))
-              AND (st.description IS NULL OR (
-                    st.description !~* '\\m(interest|payroll|salary|wages|reversal)\\M'
-                AND st.description !~* 'return.*direct debit'))
+              AND ${unmatchedIncomeStatementPredicate('st', minCents)}
+              AND st.txn_date <= ${opts.olderThan}::date
             UNION ALL
             SELECT
                 bt.txn_id            AS txn_id,
@@ -395,15 +384,8 @@ export class LedgerMatchPgRepo {
             FROM bank_transactions bt
             JOIN bank_accounts ba ON ba.account_id = bt.account_id
             WHERE bt.user_id = ${userId}
-              AND bt.amount_cents >= ${minCents}
-              AND (bt.direction IS NULL OR bt.direction = 'CREDIT')
-              AND bt.duplicate_of_txn_id IS NULL
-              AND bt.matched_invoice_id IS NULL
-              AND bt.txn_date IS NOT NULL AND bt.txn_date <= ${opts.olderThan}::date
-              AND (bt.category_source IS NULL OR bt.category_source NOT IN ('USER', 'ADVISOR'))
-              AND (bt.description IS NULL OR (
-                    bt.description !~* '\\m(interest|payroll|salary|wages|reversal)\\M'
-                AND bt.description !~* 'return.*direct debit'))
+              AND ${unmatchedIncomeFeedPredicate('bt', minCents)}
+              AND bt.txn_date <= ${opts.olderThan}::date
         `;
         const result: any = await this.db.execute(sql`
             WITH unified AS (${unified})

@@ -12,7 +12,11 @@ export function ownerFromSk(dto: Record<string, any>): string {
 // rejects a string on a `mode: 'date'` column, so anything missing from this set
 // throws at write time rather than converting — which is how `reviewedAt` was
 // found. Add a key here whenever a timestamptz column becomes DTO-writable.
-const TS_KEYS = new Set(['createdAt', 'updatedAt', 'reviewedAt']);
+// openedAt / categoryConfirmedAt / assetDeclinedAt: receipt review signals (0046).
+const TS_KEYS = new Set([
+    'createdAt', 'updatedAt', 'reviewedAt',
+    'openedAt', 'categoryConfirmedAt', 'assetDeclinedAt',
+]);
 
 /** DTO → column row. `strip` are keys handled specially by the caller (sk, derived keys). */
 export function dtoToRow(

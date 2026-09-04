@@ -18,10 +18,88 @@ export interface IReceiptRepo {
     updateReceipt(orgId: string, userId: string, receiptId: string, updates: Record<string, any>): Promise<void>;
     deleteReceipt(orgId: string, userId: string, receiptId: string): Promise<void>;
     upsertReceipt(receipt: Receipt): Promise<void>;
+
+    // ── Review + asset signals (0046) — each returns true only when THIS call changed the row ──
+    /** Record the first open by `userId`. Sets openedAt/openedBy only when unset; a re-open is a no-op (false). */
+    markOpened(orgId: string, receiptId: string, userId: string): Promise<boolean>;
+    /** Set the category as human-confirmed (also acknowledges the AI risk flag if not already). False when the receipt doesn't exist. */
+    confirmCategory(orgId: string, receiptId: string, opts: { category: string; userId: string }): Promise<boolean>;
+    /** Link the asset this receipt became. Conditional on no OTHER asset being linked; a replay with the same asset is true. */
+    linkAsset(orgId: string, receiptId: string, assetId: string): Promise<boolean>;
+    /** Decline the "looks like an asset" offer. False when already declined, already promoted, or missing. */
+    declineAssetOffer(orgId: string, receiptId: string): Promise<boolean>;
 }
+
+const isConditionalFailure = (err: any): boolean =>
+    err?.name === 'ConditionalCheckFailedException' || err?.code === 'ConditionalCheckFailedException';
 
 export class ReceiptDynamoRepo implements IReceiptRepo {
     constructor(private ddb: IDdb) {}
+
+    /** Receipts are keyed (orgId, ownerId#receiptId); by-id operations resolve the owner through ReceiptIdIndex. */
+    private async keyOf(orgId: string, receiptId: string): Promise<{ orgId: string; sk: string } | null> {
+        const found = await this.findReceiptByIdInOrg(orgId, receiptId);
+        return found ? { orgId, sk: sk(found.ownerId, receiptId) } : null;
+    }
+
+    /** A conditional update that reports "condition lost" as false instead of throwing. */
+    private async conditionalUpdate(key: { orgId: string; sk: string }, params: Record<string, any>): Promise<boolean> {
+        try {
+            await this.ddb.update(Tables.RECEIPTS, key, params);
+            return true;
+        } catch (err: any) {
+            if (isConditionalFailure(err)) return false;
+            throw err;
+        }
+    }
+
+    async markOpened(orgId: string, receiptId: string, userId: string): Promise<boolean> {
+        const key = await this.keyOf(orgId, receiptId);
+        if (!key) return false;
+        return this.conditionalUpdate(key, {
+            UpdateExpression: 'SET #openedAt = :now, #openedBy = :user',
+            ConditionExpression: 'attribute_exists(sk) AND attribute_not_exists(#openedAt)',
+            ExpressionAttributeNames: { '#openedAt': 'openedAt', '#openedBy': 'openedBy' },
+            ExpressionAttributeValues: { ':now': new Date().toISOString(), ':user': userId },
+        });
+    }
+
+    async confirmCategory(orgId: string, receiptId: string, opts: { category: string; userId: string }): Promise<boolean> {
+        const key = await this.keyOf(orgId, receiptId);
+        if (!key) return false;
+        return this.conditionalUpdate(key, {
+            UpdateExpression: 'SET #category = :category, #confirmedAt = :now, #confirmedBy = :user, '
+                + '#reviewedAt = if_not_exists(#reviewedAt, :now), #reviewedBy = if_not_exists(#reviewedBy, :user)',
+            ConditionExpression: 'attribute_exists(sk)',
+            ExpressionAttributeNames: {
+                '#category': 'category', '#confirmedAt': 'categoryConfirmedAt', '#confirmedBy': 'categoryConfirmedBy',
+                '#reviewedAt': 'reviewedAt', '#reviewedBy': 'reviewedBy',
+            },
+            ExpressionAttributeValues: { ':category': opts.category, ':now': new Date().toISOString(), ':user': opts.userId },
+        });
+    }
+
+    async linkAsset(orgId: string, receiptId: string, assetId: string): Promise<boolean> {
+        const key = await this.keyOf(orgId, receiptId);
+        if (!key) return false;
+        return this.conditionalUpdate(key, {
+            UpdateExpression: 'SET #assetId = :assetId',
+            ConditionExpression: 'attribute_exists(sk) AND (attribute_not_exists(#assetId) OR #assetId = :assetId)',
+            ExpressionAttributeNames: { '#assetId': 'assetId' },
+            ExpressionAttributeValues: { ':assetId': assetId },
+        });
+    }
+
+    async declineAssetOffer(orgId: string, receiptId: string): Promise<boolean> {
+        const key = await this.keyOf(orgId, receiptId);
+        if (!key) return false;
+        return this.conditionalUpdate(key, {
+            UpdateExpression: 'SET #declinedAt = :now',
+            ConditionExpression: 'attribute_exists(sk) AND attribute_not_exists(#declinedAt) AND attribute_not_exists(#assetId)',
+            ExpressionAttributeNames: { '#declinedAt': 'assetDeclinedAt', '#assetId': 'assetId' },
+            ExpressionAttributeValues: { ':now': new Date().toISOString() },
+        });
+    }
 
     async upsertReceipt(receipt: Receipt): Promise<void> {
         await this.ddb.put(Tables.RECEIPTS, receipt);

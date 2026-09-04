@@ -20,6 +20,15 @@ export const ReceiptBaseSchema = z.object({
     /** Set once the owner has acknowledged an AI risk flag. */
     reviewedAt: z.string().nullish(),
     reviewedBy: z.string().nullish(),
+    /** Review signals for the BAS confidence score (0046): first opened, category confirmed. */
+    openedAt: z.string().nullish(),
+    openedBy: z.string().nullish(),
+    categoryConfirmedAt: z.string().nullish(),
+    categoryConfirmedBy: z.string().nullish(),
+    /** The asset this receipt was promoted to; null/absent while still a candidate. */
+    assetId: z.string().nullish(),
+    /** Set when the owner declined the "looks like an asset" offer. */
+    assetDeclinedAt: z.string().nullish(),
     businessPercent: z.number().default(100),
     businessAmount: z.number().nullish(),
     ruleApplied: z.boolean().default(false),
