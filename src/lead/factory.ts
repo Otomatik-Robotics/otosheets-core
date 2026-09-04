@@ -5,11 +5,15 @@ import type { IDdb } from '../ddbPort';
 import { PaginatedResult } from '../types';
 import { Lead } from './schema';
 import { LeadDynamoRepo, type ILeadRepo } from './repo';
+import type { LeadPageParams } from './repo';
 import { LeadPgRepo } from './repo.pg';
 
 const DOMAIN = 'leads' as const;
 const ENTITY = 'lead';
-type PagParams = { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string };
+// The routed page params are the repo's, verbatim. A local restatement drifts:
+// the pipeline filter was added to both repos and silently could not be passed
+// through here, which is exactly the failure this avoids.
+type PagParams = LeadPageParams;
 
 export class RoutingLeadRepo implements ILeadRepo {
     constructor(private dynamo: ILeadRepo, private pg: ILeadRepo) {}
