@@ -32,6 +32,14 @@ export interface ReceiptListFilters {
     /** Inclusive YYYY-MM-DD bounds on the receipt date. */
     dateFrom?: string;
     dateTo?: string;
+    /**
+     * Narrow to one AI risk level, e.g. 'HIGH'. In the query, not over the
+     * page: the Home card counts flagged receipts and its row has to land on a
+     * list showing exactly those, which a post-pagination filter cannot promise.
+     */
+    risk?: string;
+    /** Only receipts whose risk flag has not been acknowledged yet. */
+    unreviewedOnly?: boolean;
 }
 
 export interface ListReceiptsPaginatedParams extends ReceiptListFilters {
@@ -99,6 +107,8 @@ export class ReceiptPgRepo implements IReceiptRepo {
         if (f.category) conds.push(eq(receipts.category, f.category));
         if (f.dateFrom) conds.push(gte(receipts.date, f.dateFrom));
         if (f.dateTo) conds.push(lte(receipts.date, f.dateTo));
+        if (f.risk) conds.push(sql`upper(${receipts.aiRiskLevel}) = ${f.risk.toUpperCase()}`);
+        if (f.unreviewedOnly) conds.push(sql`${receipts.reviewedAt} is null`);
         return conds;
     }
 

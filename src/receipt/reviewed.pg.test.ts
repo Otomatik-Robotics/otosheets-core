@@ -91,3 +91,33 @@ describe('highRiskCount', () => {
         expect(s.totalAmount).toBe(400);
     });
 });
+
+describe('the risk filter', () => {
+    it('narrows to one level in the query, not over a page', async () => {
+        const page = await repo.listReceiptsPaginated({ orgId: 'org_1', risk: 'HIGH', limit: 50 } as any);
+        expect(page.items.map((r: any) => r.receiptId).sort()).toEqual(['r_high_1', 'r_high_2']);
+    });
+
+    it('is case insensitive, so a querystring value works as typed', async () => {
+        const page = await repo.listReceiptsPaginated({ orgId: 'org_1', risk: 'high', limit: 50 } as any);
+        expect(page.items).toHaveLength(2);
+    });
+
+    it('can exclude the ones already acknowledged', async () => {
+        // Self-contained: an earlier test leaves both acknowledged, and a test
+        // that depends on the one before it is a test that lies later.
+        await repo.updateReceipt('org_1', 'u_1', 'r_high_1', { reviewedAt: new Date().toISOString() });
+        await repo.updateReceipt('org_1', 'u_1', 'r_high_2', { reviewedAt: null });
+        const page = await repo.listReceiptsPaginated({ orgId: 'org_1', risk: 'HIGH', unreviewedOnly: true, limit: 50 } as any);
+        expect(page.items.map((r: any) => r.receiptId)).toEqual(['r_high_2']);
+        // …and without the flag, the acknowledged one is still findable.
+        const all = await repo.listReceiptsPaginated({ orgId: 'org_1', risk: 'HIGH', limit: 50 } as any);
+        expect(all.items).toHaveLength(2);
+        await repo.updateReceipt('org_1', 'u_1', 'r_high_1', { reviewedAt: null });
+    });
+
+    it('is a no-op when no risk is asked for', async () => {
+        const page = await repo.listReceiptsPaginated({ orgId: 'org_1', limit: 50 } as any);
+        expect(page.items).toHaveLength(4);
+    });
+});
