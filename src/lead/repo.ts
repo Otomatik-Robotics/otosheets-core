@@ -5,12 +5,38 @@ import { Lead } from './schema';
 import { PaginatedResult } from '../types';
 
 /** Store-agnostic contract — LeadDynamoRepo + LeadPgRepo; LeadRepo (factory) routes. */
+/** A pipeline's configured source rules, for leads that carry no pipelineId. */
+export interface PipelineSourceRule {
+    sourceType: string;
+    channelId?: string | null;
+}
+
+export interface LeadPageParams {
+    orgId: string;
+    businessProfileId?: string;
+    limit?: number;
+    exclusiveStartKey?: Record<string, any>;
+    stage?: string;
+    source?: string;
+    search?: string;
+    /**
+     * Narrow to one pipeline. Applied in the query, not over the returned page:
+     * filtering a page let a board show nothing while later pages held its
+     * leads, and made every count derived from this endpoint wrong.
+     */
+    pipelineId?: string;
+    /** Count leads with no pipeline as belonging to this one (the default board). */
+    includeUnassigned?: boolean;
+    /** Claims unassigned leads by source. Resolved by the caller from the pipeline. */
+    pipelineSources?: PipelineSourceRule[];
+}
+
 export interface ILeadRepo {
     getLead(orgId: string, userId: string, leadId: string): Promise<Lead | null>;
     findLeadByIdInOrg(orgId: string, leadId: string): Promise<{ lead: Lead; ownerId: string } | null>;
     listUserLeads(orgId: string, userId: string): Promise<Lead[]>;
     listAllOrgLeads(orgId: string): Promise<Lead[]>;
-    listOrgLeadsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; stage?: string; source?: string; search?: string; }): Promise<PaginatedResult<Lead>>;
+    listOrgLeadsPaginated(params: LeadPageParams): Promise<PaginatedResult<Lead>>;
     findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
     countOrgLeads(orgId: string): Promise<number>;
     listRecentLeads(orgId: string, since: string): Promise<Lead[]>;
@@ -65,15 +91,8 @@ export class LeadDynamoRepo implements ILeadRepo {
         return (Items as Lead[]) ?? [];
     }
 
-    async listOrgLeadsPaginated(params: {
-        orgId: string;
-        limit?: number;
-        exclusiveStartKey?: Record<string, any>;
-        stage?: string;
-        source?: string;
-        search?: string;
-    }): Promise<PaginatedResult<Lead>> {
-        const { orgId, limit = 20, exclusiveStartKey, stage, source, search } = params;
+    async listOrgLeadsPaginated(params: LeadPageParams): Promise<PaginatedResult<Lead>> {
+        const { orgId, limit = 20, exclusiveStartKey, stage, source, search, pipelineId, includeUnassigned } = params;
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
@@ -94,6 +113,21 @@ export class LeadDynamoRepo implements ILeadRepo {
             names['#clientEmail'] = 'clientEmail';
             names['#suburb'] = 'suburb';
             values[':search'] = search;
+        }
+        if (pipelineId) {
+            // Best effort, and honest about it: DynamoDB applies a
+            // FilterExpression AFTER Limit, so this narrows the page rather
+            // than the set, exactly as the caller's own filter used to. The
+            // source-rule fallback is not expressible here at all. Postgres is
+            // authoritative for leads; this path is the rollback net, and it
+            // behaves no worse than it did before the filter moved.
+            names['#pipelineId'] = 'pipelineId';
+            values[':pipelineId'] = pipelineId;
+            filterParts.push(
+                includeUnassigned
+                    ? '(#pipelineId = :pipelineId OR attribute_not_exists(#pipelineId))'
+                    : '#pipelineId = :pipelineId',
+            );
         }
 
         const result = await this.ddb.query({
