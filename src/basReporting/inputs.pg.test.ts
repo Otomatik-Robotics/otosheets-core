@@ -149,6 +149,8 @@ describe('BasReportingPgRepo.inputs', () => {
         expect(got.receipts).toEqual({
             count: 5,
             gstPaid: 314.5,                     // 10 + 5×50% + 2 + 300 + 0
+            capitalGstPaid: 300,                // r_asset alone, at 100% business use
+            nonCapitalCount: 4,                 // every receipt in the window except r_asset
             expensesExGst: 145,                 // 100 + 50×50% + 20 + 0   (r_asset is capital)
             capitalExGst: 3000,
             unreviewed: 2,                      // r_high (not opened, HIGH), r_uncat (not opened, uncategorised, no amount)

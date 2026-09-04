@@ -155,17 +155,38 @@ export class ReceiptPgRepo implements IReceiptRepo {
      * receipts_org_asset_candidates_idx partial index. Reporting-only: no
      * Dynamo twin, so it lives on ReceiptPgRepo rather than IReceiptRepo.
      */
-    async listAssetCandidates(params: ListAssetCandidatesParams): Promise<PaginatedResult<Receipt>> {
-        const cats = [...new Set(params.categories.map((c) => c.toUpperCase()))];
-        if (cats.length === 0) return { items: [] };
-        const limit = params.limit ?? 20;
-        const conds: any[] = [
-            eq(receipts.orgId, params.orgId),
+    /** The candidate predicate, shared by the list and its count so they cannot drift. */
+    private assetCandidateConds(orgId: string, categories: string[]): any[] {
+        const cats = [...new Set(categories.map((c) => c.toUpperCase()))];
+        return [
+            eq(receipts.orgId, orgId),
             sql`upper(${receipts.category}) IN (${sql.join(cats.map((c) => sql`${c}`), sql`, `)})`,
             isNull(receipts.assetId),
             isNull(receipts.assetDeclinedAt),
             or(isNull(receipts.status), notInArray(receipts.status, ['DUPLICATE', 'ARCHIVED'])),
         ];
+    }
+
+    /**
+     * How many receipts could still become an asset. The register reports this
+     * as a backlog, so a page-length stand-in caps at the page size and stops
+     * moving; this counts in the query, on the partial candidates index.
+     */
+    async countAssetCandidates(orgId: string, categories: string[]): Promise<number> {
+        const cats = [...new Set(categories.map((c) => c.toUpperCase()))];
+        if (cats.length === 0) return 0;
+        const rows = await this.db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(receipts)
+            .where(and(...this.assetCandidateConds(orgId, cats)));
+        return Number(rows[0]?.n ?? 0);
+    }
+
+    async listAssetCandidates(params: ListAssetCandidatesParams): Promise<PaginatedResult<Receipt>> {
+        const cats = [...new Set(params.categories.map((c) => c.toUpperCase()))];
+        if (cats.length === 0) return { items: [] };
+        const limit = params.limit ?? 20;
+        const conds: any[] = this.assetCandidateConds(params.orgId, cats);
         const cursor = keysetFromStartKey(params.exclusiveStartKey, 'receiptId');
         if (cursor) {
             const at = new Date(cursor.createdAt);
