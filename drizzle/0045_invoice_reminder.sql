@@ -1,0 +1,22 @@
+-- Chasing an overdue invoice left no trace. The owner tapped Chase, an email
+-- went out, and the record was untouched — so on the next screen, the next day,
+-- the invoice looked exactly as unchased as before. digestChase has read
+-- `lastReminderAt` since it was written, behind an `(inv as any)` cast, and it
+-- has always been undefined because no column existed to hold it.
+--
+-- TEXT, not timestamptz, per this table's rule: DynamoDB holds the exact ISO
+-- string and a typed column would normalize the format, producing perpetual
+-- shadow-read diffs against the mirror. Same treatment as convertedAt and
+-- linkExpiresAt, which are also full ISO timestamps stored as text.
+--
+-- Nullable with no default, and permanently so: NOT NULL DEFAULT would
+-- materialize a value DynamoDB stores sparsely. Every existing invoice reads
+-- back as never-chased, which is the correct starting state. No contract step
+-- follows, and no index — the two writers are keyed single-row updates and the
+-- digest read is already served by invoices_org_status_due_idx.
+--
+-- Deliberately NOT a chase counter: escalation (getReminderStage) is derived
+-- from days overdue, nothing consumes a count, and a counter on an
+-- at-least-once send path cannot be incremented safely through updateInvoice.
+-- A timestamp is last-writer-wins, so a redelivered send is a no-op.
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS last_reminder_at text;
