@@ -126,6 +126,11 @@ export const receipts = pgTable('receipts', {
     category: text('category'),
     description: text('description'),
     aiRiskLevel: text('ai_risk_level'),
+    // When the owner acknowledged the AI flag (0044). The risk level itself is
+    // written once at ingest and never changes, so this is what clears the
+    // receipt off the Home card without destroying or archiving it.
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true, mode: 'date' }),
+    reviewedBy: text('reviewed_by'),
     isDeductible: boolean('is_deductible'),
     aiWarning: text('ai_warning'),
     isFuelReceipt: boolean('is_fuel_receipt'),

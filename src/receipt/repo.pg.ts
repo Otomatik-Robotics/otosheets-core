@@ -154,7 +154,9 @@ export class ReceiptPgRepo implements IReceiptRepo {
             totalAmount: sql<string>`coalesce(sum(${receipts.totalAmount}), 0)`,
             totalGst: sql<string>`coalesce(sum(coalesce(${receipts.taxAmount}, ${receipts.gstAmount})), 0)`,
             deductibleAmount: sql<string>`coalesce(sum(case when ${receipts.isDeductible} then coalesce(${receipts.businessAmount}, ${receipts.totalAmount} * coalesce(${receipts.businessPercent}, 100) / 100) else 0 end), 0)`,
-            highRiskCount: sql<number>`(count(*) filter (where upper(${receipts.aiRiskLevel}) = 'HIGH'))::int`,
+            // Flagged AND not yet acknowledged. Without the second half the flag is a
+            // permanent scar: it is written once at ingest and never changes.
+            highRiskCount: sql<number>`(count(*) filter (where upper(${receipts.aiRiskLevel}) = 'HIGH' and ${receipts.reviewedAt} is null))::int`,
         }).from(receipts).where(where);
 
         const catExpr = sql<string>`coalesce(${receipts.category}, 'UNCATEGORIZED')`;
