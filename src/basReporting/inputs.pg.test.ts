@@ -27,8 +27,10 @@ beforeAll(async () => {
     db = drizzle(pglite) as unknown as PgDb;
     repo = new BasReportingPgRepo(db);
 
-    // Three orgs: the fixture org, one with a live feed and nothing else, one empty.
-    await pglite.query(`INSERT INTO orgs (org_id, name) VALUES ('${ORG}', 'Acme'), ('org_a', 'Feed Co'), ('org_b', 'Empty Co')`);
+    // Five orgs: the fixture org, one with a live feed and nothing else, one
+    // empty, one whose only account came from a statement upload (no statements
+    // in the window), and one with such an account plus a July statement.
+    await pglite.query(`INSERT INTO orgs (org_id, name) VALUES ('${ORG}', 'Acme'), ('org_a', 'Feed Co'), ('org_b', 'Empty Co'), ('org_c', 'Stmt Acct Co'), ('org_d', 'Stmt July Co')`);
 
     // ── Invoices ──
     const inv = (o: Record<string, any>) => db.insert(invoices).values({
@@ -101,6 +103,13 @@ beforeAll(async () => {
 
     // ── org_a: a live feed, nothing else. ──
     await db.insert(bankAccounts).values({ accountId: 'acct_live', userId: 'u_a', organizationId: 'org_a', status: 'ACTIVE', createdAt: D('2026-01-01T00:00:00Z'), updatedAt: D('2026-01-01T00:00:00Z') });
+
+    // ── org_c: the account row statement ingest creates (provider 'statement', left ACTIVE) and no statements. ──
+    await db.insert(bankAccounts).values({ accountId: 'acct_stmt_c', userId: 'u_c', organizationId: 'org_c', provider: 'statement', status: 'ACTIVE', institutionName: 'CBA', accountNumberMasked: '4021', createdAt: D('2026-01-01T00:00:00Z'), updatedAt: D('2026-01-01T00:00:00Z') });
+
+    // ── org_d: the same account row plus one statement covering July. ──
+    await db.insert(bankAccounts).values({ accountId: 'acct_stmt_d', userId: 'u_d', organizationId: 'org_d', provider: 'statement', status: 'ACTIVE', institutionName: 'CBA', accountNumberMasked: '4022', createdAt: D('2026-01-01T00:00:00Z'), updatedAt: D('2026-01-01T00:00:00Z') });
+    await db.insert(statements).values({ statementId: 'stmt_d', userId: 'u_d', organizationId: 'org_d', fy: '2026-27', s3Key: 'kd', periodStart: '2026-07-01', periodEnd: '2026-07-31', createdAt: D('2026-08-01T00:00:00Z'), updatedAt: D('2026-08-01T00:00:00Z') });
 
     // ── Assets ──
     const asset = (o: Record<string, any>) => db.insert(assets).values({
@@ -202,6 +211,26 @@ describe('BasReportingPgRepo.inputs', () => {
         expect(composeConfidence(empty).reasons[0].code).toBe('NO_STATEMENT');
     });
 
+    it('an account created by a statement upload is not a feed: nothing covers the window until a statement does', async () => {
+        // org_c has the bank_accounts row every statement upload leaves behind
+        // and no statements in the window. It used to read as a live feed, so
+        // every month counted as covered and NO_STATEMENT never fired.
+        const none = await repo.inputs({ orgId: 'org_c', ...WINDOW });
+        expect(none.bank).toMatchObject({
+            hasStatement: false, feedActive: false, monthsInWindow: 2, monthsCovered: 0,
+            monthsMissing: ['2026-07', '2026-08'], statements: 0,
+        });
+        expect(composeConfidence(none).reasons[0].code).toBe('NO_STATEMENT');
+
+        // org_d: the same account row plus a July statement covers July only.
+        const july = await repo.inputs({ orgId: 'org_d', ...WINDOW });
+        expect(july.bank).toMatchObject({
+            hasStatement: true, feedActive: false, monthsCovered: 1, monthsMissing: ['2026-08'], statements: 1,
+        });
+        expect(composeConfidence(july).reasons.map((r) => r.code)).toContain('MONTH_MISSING');
+        expect(composeConfidence(july).reasons.map((r) => r.code)).not.toContain('NO_STATEMENT');
+    });
+
     it('is strictly org-scoped', async () => {
         const other = await repo.inputs({ orgId: 'org_b', ...WINDOW });
         expect(other.trips).toEqual({ count: 0, km: 0 });
@@ -215,13 +244,15 @@ describe('BasReportingPgRepo.listOrgIdsPaged', () => {
         const p1 = await repo.listOrgIdsPaged({ limit: 2 });
         expect(p1).toEqual({ orgIds: ['org_1', 'org_a'], nextAfterOrgId: 'org_a' });
         const p2 = await repo.listOrgIdsPaged({ limit: 2, afterOrgId: p1.nextAfterOrgId });
-        expect(p2).toEqual({ orgIds: ['org_b'], nextAfterOrgId: null });
+        expect(p2).toEqual({ orgIds: ['org_b', 'org_c'], nextAfterOrgId: 'org_c' });
+        const p3 = await repo.listOrgIdsPaged({ limit: 2, afterOrgId: p2.nextAfterOrgId });
+        expect(p3).toEqual({ orgIds: ['org_d'], nextAfterOrgId: null });
     });
 
     it('clamps the limit and reports no next page when the last page is exactly full', async () => {
         const all = await repo.listOrgIdsPaged({ limit: 5000 });
-        expect(all).toEqual({ orgIds: ['org_1', 'org_a', 'org_b'], nextAfterOrgId: null });
-        const exact = await repo.listOrgIdsPaged({ limit: 3 });
+        expect(all).toEqual({ orgIds: ['org_1', 'org_a', 'org_b', 'org_c', 'org_d'], nextAfterOrgId: null });
+        const exact = await repo.listOrgIdsPaged({ limit: 5 });
         expect(exact.nextAfterOrgId).toBeNull();
         const one = await repo.listOrgIdsPaged({ limit: 0 });
         expect(one).toEqual({ orgIds: ['org_1'], nextAfterOrgId: 'org_1' });
