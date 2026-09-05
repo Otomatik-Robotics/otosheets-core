@@ -75,7 +75,7 @@ export interface FlowSummaryRow {
  * each dollar total is deterministic vs LLM vs unknown.
  */
 export interface CoverageSummaryRow {
-    /** DETERMINISTIC (rule/user/advisor) | AI | UNCATEGORIZED */
+    /** DETERMINISTIC (rule/shared/user/advisor/payer link) | AI | UNCATEGORIZED */
     bucket: string;
     inCents: number;
     outCents: number;
@@ -458,15 +458,24 @@ export class StatementTransactionPgRepo {
     }
 
     /**
-     * Categorisation-provenance rollup — what fraction of the money is
-     * deterministic (rule/user/advisor), LLM-assigned, or uncategorised.
-     * Makes the trust gaps in the semantic totals visible instead of hidden.
+     * Categorisation-provenance rollup — what fraction of the money was decided
+     * deterministically (a rule, a cross-tenant consensus, a person, or a
+     * payer→client link a person made), what the model assigned on its own, and
+     * what is uncategorised. Makes the trust gaps in the semantic totals visible
+     * instead of hidden.
+     *
+     * PAYER belongs in the deterministic bucket for the same reason it counts as
+     * reconciled in `BasReportingPgRepo.inputs` and as confirmation in
+     * `summariseUncertainGst`: a person chose that client for that payer, and
+     * the attribution is then applied by lookup, not by the model. Reporting one
+     * row as model-decided here while the other two call it settled is the
+     * contradiction those aggregates exist to avoid.
      */
     async summariseCoverage(scope: TxnSummaryScope): Promise<CoverageSummaryRow[]> {
         const conditions = this.scopeConditions(scope, 'summariseCoverage');
         const bucketExpr = sql`CASE
             WHEN ${statementTransactions.category} IS NULL OR ${statementTransactions.category} = 'UNCATEGORIZED' THEN 'UNCATEGORIZED'
-            WHEN ${statementTransactions.categorySource} IN ('RULE', 'SHARED', 'USER', 'ADVISOR') THEN 'DETERMINISTIC'
+            WHEN ${statementTransactions.categorySource} IN ('RULE', 'SHARED', 'USER', 'ADVISOR', 'PAYER') THEN 'DETERMINISTIC'
             ELSE 'AI'
         END`;
         const rows = await this.db.select({
