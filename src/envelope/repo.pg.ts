@@ -242,6 +242,40 @@ export class EnvelopePgRepo {
         return row;
     }
 
+    async listVersions(envelopeId: string) {
+        return this.db.select().from(envelopeVersions)
+            .where(eq(envelopeVersions.envelopeId, envelopeId))
+            .orderBy(asc(envelopeVersions.versionNo));
+    }
+
+    /**
+     * How many signers still owe a signature on this version.
+     *
+     * Computed in the database rather than by walking a recipients list the
+     * caller loaded earlier. Completion decided from a stale read is how two
+     * final signers arriving at the same moment both conclude they were last,
+     * and the envelope gets completed (and emailed) twice.
+     *
+     * A revoked signer is not outstanding, and a voided signature does not
+     * count as given.
+     */
+    async countOutstandingSigners(envelopeId: string, versionId: string): Promise<number> {
+        const rows = await this.db.select({ n: sql<number>`count(*)::int` })
+            .from(envelopeRecipients)
+            .where(and(
+                eq(envelopeRecipients.envelopeId, envelopeId),
+                eq(envelopeRecipients.role, 'signer'),
+                sql`${envelopeRecipients.revokedAt} IS NULL`,
+                sql`NOT EXISTS (
+                    SELECT 1 FROM envelope_signatures s
+                     WHERE s.recipient_id = ${envelopeRecipients.recipientId}
+                       AND s.version_id = ${versionId}
+                       AND s.voided_at IS NULL
+                )`,
+            ));
+        return Number((rows[0] as any)?.n ?? 0);
+    }
+
     async get(envelopeId: string): Promise<EnvelopeDTO | null> {
         const r = await this.db.select().from(envelopes).where(eq(envelopes.envelopeId, envelopeId)).limit(1);
         return (r[0] as any) ?? null;
