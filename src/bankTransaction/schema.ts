@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-export const BankCategorySourceSchema = z.enum(['RULE', 'AI', 'USER', 'ADVISOR']);
+/**
+ * Who decided the category. 'PAYER' is a person's decision one step removed:
+ * the payer descriptor is linked to a client, so every credit from that payer
+ * is attributed to it, at ingest or by a later link sweep.
+ */
+export const BankCategorySourceSchema = z.enum(['RULE', 'AI', 'USER', 'ADVISOR', 'PAYER']);
 export type BankCategorySource = z.infer<typeof BankCategorySourceSchema>;
 
 export const BankGstTreatmentSchema = z.enum(['GST', 'GST_FREE', 'INPUT_TAXED', 'NOT_REPORTABLE']);

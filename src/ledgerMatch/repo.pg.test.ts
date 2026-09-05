@@ -241,6 +241,31 @@ describe('listUnmatchedIncome', () => {
         expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00055', 'stmt_1#00001', 'feed_1']);
         expect(page.totalCount).toBe(3);
     });
+
+    it('a feed credit whose descriptor names own-money movement is not unmatched income', async () => {
+        // The statement side gates on the flow class the ingest derived
+        // (stmt_1#00003, TRANSFER, already excluded above). A feed row has no
+        // such column, so the descriptor decides — and it has to, because the
+        // payer link's feed sweep refuses to re-attribute a transfer-classed
+        // row. Offering one here would be an action reporting success while
+        // the credit stayed on the list.
+        const feed = (o: any) => db.insert(bankTransactions).values({
+            accountId: 'acct_1', userId: USER, organizationId: ORG, fy: '2025-26',
+            direction: 'CREDIT', reviewStatus: 'PENDING',
+            createdAt: D('2026-01-20T00:00:00Z'), updatedAt: D('2026-01-20T00:00:00Z'), ...o,
+        });
+        await feed({ txnId: 'feed_tfr_1', txnDate: '2026-01-20', description: 'INTERNET TRANSFER FROM SMITH BUILDING', amountCents: 500000 });
+        await feed({ txnId: 'feed_tfr_2', txnDate: '2026-01-21', description: 'TFR FROM 062000 123456', amountCents: 250000 });
+        await feed({ txnId: 'feed_tfr_3', txnDate: '2026-01-22', description: 'ATO REFUND 4471', amountCents: 180000 });
+        await feed({ txnId: 'feed_tfr_4', txnDate: '2026-01-23', description: 'CREDIT CARD PAYMENT THANK YOU', amountCents: 120000 });
+        // The control: same account, same shape, a payer descriptor. It reaches
+        // the list, so the four above are excluded by their descriptors alone.
+        await feed({ txnId: 'feed_payment', txnDate: '2026-01-24', description: 'OSKO PAYMENT FROM HARBOUR CAFE', amountCents: 90000 });
+
+        const page = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01' });
+        expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00055', 'feed_payment', 'stmt_1#00001', 'feed_1']);
+        expect(page.totalCount).toBe(4);
+    });
 });
 
 describe('chip info', () => {

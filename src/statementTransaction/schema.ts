@@ -9,7 +9,12 @@ export const BboxSchema = z.object({
 });
 export type Bbox = z.infer<typeof BboxSchema>;
 
-export const CategorySourceSchema = z.enum(['RULE', 'AI', 'USER', 'ADVISOR']);
+/**
+ * Who decided the category. 'PAYER' is a person's decision one step removed:
+ * the payer descriptor is linked to a client, so every credit from that payer
+ * is attributed to it, at ingest or by a later link sweep.
+ */
+export const CategorySourceSchema = z.enum(['RULE', 'AI', 'USER', 'ADVISOR', 'PAYER']);
 export type CategorySource = z.infer<typeof CategorySourceSchema>;
 
 export const GstTreatmentSchema = z.enum(['GST', 'GST_FREE', 'INPUT_TAXED', 'NOT_REPORTABLE']);
