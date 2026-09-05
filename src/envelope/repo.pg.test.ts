@@ -196,6 +196,49 @@ describe('signing', () => {
     });
 });
 
+describe('completion', () => {
+    it('counts only signers who still owe a signature on this version', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const a = await addRecipient(envelopeId, 'signer');
+        const b = await addRecipient(envelopeId, 'signer');
+        await addRecipient(envelopeId, 'reviewer');   // never owes a signature
+        await addRecipient(envelopeId, 'viewer');     // nor does a viewer
+
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(2);
+
+        await repo.recordSignature({ signatureId: id('sig'), versionId, recipientId: a, typedName: 'A' });
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(1);
+
+        await repo.recordSignature({ signatureId: id('sig'), versionId, recipientId: b, typedName: 'B' });
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(0);
+    });
+
+    it('treats a voided signature as not given, so a new version is outstanding again', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const a = await addRecipient(envelopeId, 'signer');
+        await repo.recordSignature({ signatureId: id('sig'), versionId, recipientId: a, typedName: 'A' });
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(0);
+
+        await repo.voidSignaturesForVersion(versionId, 'clause 5 changed');
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(1);
+    });
+
+    it('does not wait on a signer whose link was revoked', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const a = await addRecipient(envelopeId, 'signer');
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(1);
+        await repo.revokeRecipient(a, 'removed from the document');
+        expect(await repo.countOutstandingSigners(envelopeId, versionId)).toBe(0);
+    });
+
+    it('lists versions in order', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const versions = await repo.listVersions(envelopeId);
+        expect(versions).toHaveLength(1);
+        expect((versions[0] as any).versionNo).toBe(1);
+    });
+});
+
 describe('the token', () => {
     it('resolves a live token and refuses a revoked or expired one', async () => {
         const { envelopeId } = await makeEnvelope();
