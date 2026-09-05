@@ -171,6 +171,7 @@ describe('BasReportingPgRepo.inputs', () => {
             monthsInWindow: 2,
             monthsCovered: 1,
             monthsMissing: ['2026-08'],
+            statements: 1,                      // stmt_1 covers July; stmt_dup is a duplicate
             rowsTotal: 6,                       // s1 s2 s3 s4 s7 + f1 (s5 dup, s6 transfer, s8 out of window)
             unreconciledRows: 4,                // s2 s3 s7 f1
             unmatchedCredits: 2,                // s2 + f1 (s7 is interest and under $50)
@@ -190,11 +191,11 @@ describe('BasReportingPgRepo.inputs', () => {
 
     it('a live feed covers every month; an empty org has no bank record at all', async () => {
         const feed = await repo.inputs({ orgId: 'org_a', ...WINDOW });
-        expect(feed.bank).toMatchObject({ hasStatement: true, feedActive: true, monthsCovered: 2, monthsMissing: [], rowsTotal: 0 });
+        expect(feed.bank).toMatchObject({ hasStatement: true, feedActive: true, monthsCovered: 2, monthsMissing: [], rowsTotal: 0, statements: 0 });
         expect(composeConfidence(feed)).toEqual({ score: 100, reasons: [] });
 
         const empty = await repo.inputs({ orgId: 'org_b', ...WINDOW });
-        expect(empty.bank).toMatchObject({ hasStatement: false, feedActive: false, monthsCovered: 0, monthsMissing: ['2026-07', '2026-08'] });
+        expect(empty.bank).toMatchObject({ hasStatement: false, feedActive: false, monthsCovered: 0, monthsMissing: ['2026-07', '2026-08'], statements: 0 });
         expect(empty.invoices.count).toBe(0);
         expect(empty.receipts.count).toBe(0);
         expect(composeConfidence(empty).score).toBe(50);

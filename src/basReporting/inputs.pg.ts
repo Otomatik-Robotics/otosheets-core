@@ -143,6 +143,21 @@ export class BasReportingPgRepo {
               AND s.period_start IS NOT NULL AND s.period_end IS NOT NULL
               AND s.period_end >= ${dateFrom}::date AND s.period_start <= ${dateTo}::date
             LIMIT 500`);
+        // How many statements cover the window. Period overlap OR a row dated
+        // inside it, so an unresolved-period statement is still counted as
+        // present -- the same reasoning as withBankPresence in the handler.
+        const statementCountQ = this.one(sql`
+            SELECT count(*)::int AS count
+            FROM statements s
+            WHERE s.organization_id = ${orgId}
+              AND s.duplicate_of_statement_id IS NULL
+              AND (
+                (s.period_start IS NOT NULL AND s.period_end IS NOT NULL
+                 AND s.period_end >= ${dateFrom}::date AND s.period_start <= ${dateTo}::date)
+                OR EXISTS (SELECT 1 FROM statement_transactions st
+                           WHERE st.statement_id = s.statement_id
+                             AND st.txn_date >= ${dateFrom}::date AND st.txn_date <= ${dateTo}::date)
+              )`);
         const feedQ = this.one(sql`
             SELECT EXISTS (SELECT 1 FROM bank_accounts ba
                            WHERE ba.organization_id = ${orgId} AND ba.status = 'ACTIVE') AS active`);
@@ -183,8 +198,8 @@ export class BasReportingPgRepo {
             FROM assets a
             WHERE a.org_id = ${orgId}`);
 
-        const [inv, unattributed, rec, trips, periods, feed, bank, assets] = await Promise.all([
-            invoicesQ, unattributedQ, receiptsQ, tripsQ, periodsQ, feedQ, bankRowsQ, assetsQ,
+        const [inv, unattributed, rec, trips, periods, statementCount, feed, bank, assets] = await Promise.all([
+            invoicesQ, unattributedQ, receiptsQ, tripsQ, periodsQ, statementCountQ, feedQ, bankRowsQ, assetsQ,
         ]);
 
         const months = monthsInWindow(dateFrom, dateTo);
@@ -230,6 +245,7 @@ export class BasReportingPgRepo {
                 monthsInWindow: months.length,
                 monthsCovered: covered.size,
                 monthsMissing,
+                statements: num(statementCount.count),
                 rowsTotal: num(bank.rows_total),
                 unreconciledRows: num(bank.unreconciled),
                 unmatchedCredits: num(bank.unmatched_credits),
