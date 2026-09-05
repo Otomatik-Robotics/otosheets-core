@@ -6,8 +6,8 @@ import {
 } from '../pg/schema/envelopes';
 import { hashChainEntry, verifyChain, type ChainEntryInput, type ChainVerdict, type ChainValue } from './chain';
 import {
-    tierForKind, isRefusedKind, canHoldFields, canSign,
-    type ArtifactKind, type EnvelopeDTO, type RecipientRole,
+    tierForKind, isRefusedKind, canHoldFields, canSign, canReturnVerdict,
+    type ArtifactKind, type EnvelopeDTO, type EnvelopeStatus, type RecipientRole, type ReviewVerdict,
 } from './schema';
 
 export interface AppendEventInput {
@@ -35,6 +35,26 @@ export interface CreateEnvelopeInput {
     s3Key?: string | null;
     sha256?: string | null;
     holdSignersForReview?: boolean;
+}
+
+export interface AddRecipientInput {
+    recipientId: string;
+    envelopeId: string;
+    role: RecipientRole;
+    email: string;
+    name?: string | null;
+    orderNo?: number;
+}
+
+export interface DispatchInput {
+    recipientId: string;
+    tokenHash: string;
+    expiresAt?: string | null;
+    sesMessageId?: string | null;
+    accessCodeHash?: string | null;
+    accessCodeSalt?: string | null;
+    accessCodeParams?: Record<string, unknown> | null;
+    accessCodeChannel?: string | null;
 }
 
 export interface RecordSignatureInput {
@@ -303,6 +323,145 @@ export class EnvelopePgRepo {
             ))
             .returning({ id: envelopeSignatures.signatureId });
         return rows.length;
+    }
+
+    /**
+     * Add a recipient. Idempotent on the id so a retried prepare does not create
+     * the person twice. A reviewer is added the same way a signer is: the role
+     * column, not a separate table, is what keeps one recipients list while the
+     * two lifecycles stay distinct.
+     */
+    async addRecipient(input: AddRecipientInput): Promise<{ recipientId: string; created: boolean }> {
+        const now = new Date().toISOString();
+        const inserted = await (this.db as any).insert(envelopeRecipients).values({
+            recipientId: input.recipientId,
+            envelopeId: input.envelopeId,
+            role: input.role,
+            orderNo: input.orderNo ?? 0,
+            name: input.name ?? null,
+            email: input.email,
+            status: 'pending',
+            createdAt: now,
+            updatedAt: now,
+        }).onConflictDoNothing({ target: envelopeRecipients.recipientId })
+            .returning({ id: envelopeRecipients.recipientId });
+
+        return { recipientId: input.recipientId, created: inserted.length > 0 };
+    }
+
+    async listRecipients(envelopeId: string) {
+        return this.db.select().from(envelopeRecipients)
+            .where(eq(envelopeRecipients.envelopeId, envelopeId))
+            .orderBy(asc(envelopeRecipients.orderNo));
+    }
+
+    /**
+     * Attach the credential and mark the link as sent.
+     *
+     * The SES message id is stored HERE, at the moment of sending, because it is
+     * the only handle a later bounce notification carries. Captured afterwards
+     * it correlates nothing, and the reminder sweep goes on mailing an address
+     * that never received anything.
+     */
+    async markDispatched(input: DispatchInput): Promise<void> {
+        await (this.db as any).update(envelopeRecipients).set({
+            tokenHash: input.tokenHash,
+            expiresAt: input.expiresAt ?? null,
+            sesMessageId: input.sesMessageId ?? null,
+            accessCodeHash: input.accessCodeHash ?? null,
+            accessCodeSalt: input.accessCodeSalt ?? null,
+            accessCodeParams: (input.accessCodeParams ?? null) as any,
+            accessCodeChannel: input.accessCodeChannel ?? null,
+            status: 'dispatched',
+            dispatchedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        }).where(eq(envelopeRecipients.recipientId, input.recipientId));
+    }
+
+    /** First open only. Re-opening is not a new fact worth another chain entry. */
+    async markOpened(recipientId: string): Promise<{ firstOpen: boolean }> {
+        const now = new Date().toISOString();
+        const rows = await (this.db as any).update(envelopeRecipients)
+            .set({ firstOpenedAt: now, status: 'opened', updatedAt: now })
+            .where(and(
+                eq(envelopeRecipients.recipientId, recipientId),
+                sql`${envelopeRecipients.firstOpenedAt} IS NULL`,
+            ))
+            .returning({ id: envelopeRecipients.recipientId });
+        return { firstOpen: rows.length > 0 };
+    }
+
+    /**
+     * Correlate a bounce back to the recipient by the message id captured at
+     * send. Returns the recipients it matched so the caller can write the chain
+     * entry and stop reminding them.
+     */
+    async markBouncedByMessageId(sesMessageId: string, bounceType: string, reason: string) {
+        const now = new Date().toISOString();
+        return await (this.db as any).update(envelopeRecipients)
+            .set({ status: 'bounced', bouncedAt: now, bounceType, bounceReason: reason, updatedAt: now })
+            .where(and(
+                eq(envelopeRecipients.sesMessageId, sesMessageId),
+                sql`${envelopeRecipients.bouncedAt} IS NULL`,
+            ))
+            .returning({ recipientId: envelopeRecipients.recipientId, envelopeId: envelopeRecipients.envelopeId });
+    }
+
+    /** Only a reviewer returns a verdict, and only once. */
+    async recordVerdict(recipientId: string, verdict: ReviewVerdict, note?: string | null): Promise<{ recorded: boolean }> {
+        const recipient = await this.getRecipient(recipientId);
+        if (!recipient) throw new Error('Unknown recipient');
+        if (!canReturnVerdict(recipient.role as RecipientRole)) {
+            throw new Error(`A ${recipient.role} cannot return a verdict`);
+        }
+        const now = new Date().toISOString();
+        const rows = await (this.db as any).update(envelopeRecipients)
+            .set({ verdict, verdictAt: now, verdictNote: note ?? null, status: 'reviewed', updatedAt: now })
+            .where(and(
+                eq(envelopeRecipients.recipientId, recipientId),
+                sql`${envelopeRecipients.verdict} IS NULL`,
+            ))
+            .returning({ id: envelopeRecipients.recipientId });
+        return { recorded: rows.length > 0 };
+    }
+
+    /** Revoking is a column write, which is the whole reason the token is stored rather than keyed. */
+    async revokeRecipient(recipientId: string, reason: string): Promise<void> {
+        const now = new Date().toISOString();
+        await (this.db as any).update(envelopeRecipients)
+            .set({ revokedAt: now, revokedReason: reason, status: 'revoked', updatedAt: now })
+            .where(eq(envelopeRecipients.recipientId, recipientId));
+    }
+
+    async setEnvelopeStatus(envelopeId: string, status: EnvelopeStatus): Promise<void> {
+        await (this.db as any).update(envelopes)
+            .set({ status, updatedAt: new Date().toISOString() })
+            .where(eq(envelopes.envelopeId, envelopeId));
+    }
+
+    /**
+     * Count a wrong access code and lock the link once there have been too many.
+     * Incremented in the statement rather than read-modify-written, so parallel
+     * guesses cannot each read the same low count.
+     */
+    async registerFailedCodeAttempt(recipientId: string, maxAttempts: number, lockedUntil: string): Promise<{ attempts: number; locked: boolean }> {
+        const rows = await (this.db as any).update(envelopeRecipients)
+            .set({
+                failedAttempts: sql`${envelopeRecipients.failedAttempts} + 1`,
+                lockedUntil: sql`CASE WHEN ${envelopeRecipients.failedAttempts} + 1 >= ${maxAttempts} THEN ${lockedUntil} ELSE ${envelopeRecipients.lockedUntil} END`,
+                updatedAt: new Date().toISOString(),
+            })
+            .where(eq(envelopeRecipients.recipientId, recipientId))
+            .returning({ attempts: envelopeRecipients.failedAttempts, lockedUntil: envelopeRecipients.lockedUntil });
+        const attempts = rows[0]?.attempts ?? 0;
+        return { attempts, locked: attempts >= maxAttempts };
+    }
+
+    /** A correct code clears the counter so an honest typo does not accumulate for ever. */
+    async clearFailedCodeAttempts(recipientId: string): Promise<void> {
+        await (this.db as any).update(envelopeRecipients)
+            .set({ failedAttempts: 0, lockedUntil: null, updatedAt: new Date().toISOString() })
+            .where(eq(envelopeRecipients.recipientId, recipientId));
     }
 
     // ── fields ───────────────────────────────────────────────────────────

@@ -210,6 +210,96 @@ describe('the token', () => {
     });
 });
 
+describe('recipients and delivery', () => {
+    it('adds recipients idempotently and lists them in order', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        expect((await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com', orderNo: 1 })).created).toBe(true);
+        expect((await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com', orderNo: 1 })).created).toBe(false);
+        await repo.addRecipient({ recipientId: id('rcp'), envelopeId, role: 'reviewer', email: 'r@x.com', orderNo: 0 });
+
+        const list = await repo.listRecipients(envelopeId);
+        expect(list).toHaveLength(2);
+        expect((list[0] as any).role).toBe('reviewer'); // orderNo 0 first
+    });
+
+    it('captures the message id at send, which is what a bounce is matched on', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com' });
+        await repo.markDispatched({ recipientId: rid, tokenHash: 'th_1', sesMessageId: 'msg-1', expiresAt: '2099-01-01T00:00:00.000Z' });
+
+        const r = await repo.getRecipient(rid);
+        expect(r.status).toBe('dispatched');
+        expect(r.sesMessageId).toBe('msg-1');
+        expect(r.dispatchedAt).toBeTruthy();
+        expect((await repo.resolveByTokenHash('th_1'))?.recipientId).toBe(rid);
+    });
+
+    it('correlates a bounce back to the recipient and only once', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com' });
+        await repo.markDispatched({ recipientId: rid, tokenHash: id('th'), sesMessageId: 'msg-bounce' });
+
+        const first = await repo.markBouncedByMessageId('msg-bounce', 'Permanent', 'mailbox does not exist');
+        expect(first).toHaveLength(1);
+        expect(first[0].recipientId).toBe(rid);
+        expect((await repo.getRecipient(rid)).status).toBe('bounced');
+
+        // SNS redelivers; a second notification must not re-fire anything.
+        expect(await repo.markBouncedByMessageId('msg-bounce', 'Permanent', 'again')).toHaveLength(0);
+        expect(await repo.markBouncedByMessageId('msg-unknown', 'Permanent', 'x')).toHaveLength(0);
+    });
+
+    it('records the first open only', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com' });
+        expect((await repo.markOpened(rid)).firstOpen).toBe(true);
+        expect((await repo.markOpened(rid)).firstOpen).toBe(false);
+    });
+
+    it('takes a verdict from a reviewer, once, and refuses one from a signer', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const reviewerId = await addRecipient(envelopeId, 'reviewer');
+        const signerId = await addRecipient(envelopeId, 'signer');
+
+        expect((await repo.recordVerdict(reviewerId, 'changes_proposed', 'clause 5')).recorded).toBe(true);
+        expect((await repo.recordVerdict(reviewerId, 'approved')).recorded).toBe(false);
+        await expect(repo.recordVerdict(signerId, 'approved')).rejects.toThrow(/cannot return a verdict/);
+    });
+
+    it('revokes a link so it stops resolving', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        await repo.addRecipient({ recipientId: rid, envelopeId, role: 'reviewer', email: 'r@x.com' });
+        await repo.markDispatched({ recipientId: rid, tokenHash: 'th_revoke' });
+        expect(await repo.resolveByTokenHash('th_revoke')).toBeTruthy();
+
+        await repo.revokeRecipient(rid, 'verdict returned');
+        expect(await repo.resolveByTokenHash('th_revoke')).toBeNull();
+    });
+
+    it('counts wrong codes atomically and locks out', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com' });
+        const until = '2099-01-01T00:00:00.000Z';
+
+        // Parallel guesses must each be counted, not collapse into one.
+        const results = await Promise.all(Array.from({ length: 5 }, () => repo.registerFailedCodeAttempt(rid, 5, until)));
+        expect((await repo.getRecipient(rid)).failedAttempts).toBe(5);
+        expect(results.some(r => r.locked)).toBe(true);
+        expect((await repo.getRecipient(rid)).lockedUntil).toBe(until);
+
+        await repo.clearFailedCodeAttempts(rid);
+        const cleared = await repo.getRecipient(rid);
+        expect(cleared.failedAttempts).toBe(0);
+        expect(cleared.lockedUntil).toBeNull();
+    });
+});
+
 describe('sealing', () => {
     it('seals once and reports the existing artifact afterwards', async () => {
         const { envelopeId, versionId } = await makeEnvelope();
