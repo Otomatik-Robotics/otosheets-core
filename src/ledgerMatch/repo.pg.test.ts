@@ -219,6 +219,28 @@ describe('listUnmatchedIncome', () => {
         expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00055', 'stmt_1#00001', 'feed_1']);
         expect(page.totalCount).toBe(3);
     });
+
+    it('a credit attributed to a known client (PAYER) has a client and is not unmatched', async () => {
+        const stx = (o: any) => db.insert(statementTransactions).values({
+            userId: USER, statementId: 'stmt_1', fy: '2025-26', direction: 'CREDIT',
+            flowClass: 'INCOME', reviewStatus: 'CONFIRMED',
+            createdAt: D('2026-04-01T00:00:00Z'), updatedAt: D('2026-04-01T00:00:00Z'), ...o,
+        });
+        // Attributed at ingest (payer alias hit) and by a later link alike:
+        // category_source PAYER, confirmed by the machine, no invoice yet.
+        await stx({ txnId: 'stmt_1#00057', seq: 57, txnDate: '2026-01-12', description: 'OSKO PAYMENT BETTERLABS PTY LTD', amountCents: 1108594, category: 'INCOME', categorySource: 'PAYER', confirmedBy: 'auto:payer' });
+        // A feed row attributed the same way leaves too: both sources share the definition.
+        await db.insert(bankTransactions).values({
+            txnId: 'feed_payer', accountId: 'acct_1', userId: USER, organizationId: ORG, fy: '2025-26',
+            txnDate: '2026-01-13', description: 'OSKO PAYMENT BETTERLABS PTY LTD', amountCents: 1206563, direction: 'CREDIT',
+            category: 'INCOME', categorySource: 'PAYER', reviewStatus: 'CONFIRMED', confirmedBy: 'auto:payer',
+            createdAt: D('2026-01-13T00:00:00Z'), updatedAt: D('2026-01-13T00:00:00Z'),
+        });
+
+        const page = await repo.listUnmatchedIncome(USER, { olderThan: '2026-03-01' });
+        expect(page.items.map((r) => r.txnId)).toEqual(['stmt_1#00055', 'stmt_1#00001', 'feed_1']);
+        expect(page.totalCount).toBe(3);
+    });
 });
 
 describe('chip info', () => {

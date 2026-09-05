@@ -158,9 +158,16 @@ export class BasReportingPgRepo {
                            WHERE st.statement_id = s.statement_id
                              AND st.txn_date >= ${dateFrom}::date AND st.txn_date <= ${dateTo}::date)
               )`);
+        // Only a live open-banking feed covers a month by itself. Statement
+        // ingest also creates bank_accounts rows (provider 'statement', ACTIVE)
+        // so statements and feed rows share one account identity; those are
+        // not a feed, and counting them said "every month uploaded" for any
+        // org that had ever uploaded a statement, statements or not.
         const feedQ = this.one(sql`
             SELECT EXISTS (SELECT 1 FROM bank_accounts ba
-                           WHERE ba.organization_id = ${orgId} AND ba.status = 'ACTIVE') AS active`);
+                           WHERE ba.organization_id = ${orgId}
+                             AND ba.status = 'ACTIVE'
+                             AND ba.provider <> 'statement') AS active`);
 
         // ── Bank rows: statement + feed rows in the window, duplicates and transfer legs excluded. ──
         // NOTE: coalesce on category_source — a NULL would make the NOT(...) NULL and drop the row from the count.
