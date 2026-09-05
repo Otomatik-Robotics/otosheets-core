@@ -171,7 +171,19 @@ export class BasReportingPgRepo {
 
         // ── Bank rows: statement + feed rows in the window, duplicates and transfer legs excluded. ──
         // NOTE: coalesce on category_source — a NULL would make the NOT(...) NULL and drop the row from the count.
+        //
+        // A row is reconciled when it is matched to an invoice or a receipt, when
+        // a person confirmed it as it stands (USER / ADVISOR), or when it carries
+        // a PAYER stamp: a person chose the client that payer descriptor belongs
+        // to, so the row is explained by that choice even though the confirm it
+        // rode in on was written by the sweep ('auto:payer'). PAYER stands on its
+        // own, independent of review_status, because the unmatched income
+        // predicate ignores review_status too (ledgerMatch/unmatchedIncome.ts) —
+        // inside the CONFIRMED clause a PAYER row that kept an integrity flag
+        // would be off the watchlist and still counted unreconciled, which is the
+        // contradiction this expression exists to avoid.
         const reconciled = sql`(b.matched_invoice_id IS NOT NULL OR b.matched_receipt_id IS NOT NULL
+            OR coalesce(b.category_source, '') = 'PAYER'
             OR (b.review_status = 'CONFIRMED' AND coalesce(b.category_source, '') IN ('USER', 'ADVISOR')))`;
         const bankRowsQ = this.one(sql`
             WITH bank_rows AS (

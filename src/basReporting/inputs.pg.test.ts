@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { eq, inArray } from 'drizzle-orm';
 import { PGlite } from '@electric-sql/pglite';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -92,6 +93,12 @@ beforeAll(async () => {
     await stx({ txnId: 's6', seq: 6, txnDate: '2026-07-20', description: 'TRANSFER FROM SAVINGS', amountCents: 50000, direction: 'CREDIT', flowClass: 'TRANSFER', transferPairId: 's6', reviewStatus: 'CONFIRMED' });
     await stx({ txnId: 's7', seq: 7, txnDate: '2026-07-21', description: 'INTEREST', amountCents: 3000, direction: 'CREDIT', flowClass: 'INCOME', reviewStatus: 'PENDING' }); // under $50 + noise
     await stx({ txnId: 's8', seq: 8, txnDate: '2026-09-01', description: 'OUT OF WINDOW', amountCents: 99900, direction: 'CREDIT', flowClass: 'INCOME', reviewStatus: 'PENDING' });
+    // Credits attributed to a client by a payer link. A person chose that
+    // client for that payer, so both are explained: off the watchlist AND
+    // reconciled. s10 kept an integrity review flag, so its review_status is
+    // still PENDING — the PAYER stamp alone has to carry it.
+    await stx({ txnId: 's9', seq: 9, txnDate: '2026-07-22', description: 'OSKO BETTERLABS PTY LTD', amountCents: 110000, direction: 'CREDIT', flowClass: 'INCOME', reviewStatus: 'CONFIRMED', categorySource: 'PAYER', category: 'INCOME', confirmedBy: 'auto:payer' });
+    await stx({ txnId: 's10', seq: 10, txnDate: '2026-07-23', description: 'OSKO BETTERLABS PTY LTD', amountCents: 90000, direction: 'CREDIT', flowClass: 'INCOME', reviewStatus: 'PENDING', reviewReason: 'CHAIN_BREAK', categorySource: 'PAYER', category: 'INCOME', confirmedBy: 'auto:payer' });
 
     // ── A disconnected feed account with one August row: rows count, but the feed is not "active". ──
     await db.insert(bankAccounts).values({ accountId: 'acct_off', userId: USER, organizationId: ORG, status: 'DISCONNECTED', createdAt: D('2026-01-01T00:00:00Z'), updatedAt: D('2026-01-01T00:00:00Z') });
@@ -99,6 +106,13 @@ beforeAll(async () => {
         txnId: 'f1', accountId: 'acct_off', userId: USER, organizationId: ORG, fy: '2026-27', txnDate: '2026-08-10',
         description: 'CASH DEPOSIT', amountCents: 12000, direction: 'CREDIT', reviewStatus: 'PENDING',
         createdAt: D('2026-08-10T00:00:00Z'), updatedAt: D('2026-08-10T00:00:00Z'),
+    });
+    // The feed twin of s9: a feed credit the payer sweep attributed to a client.
+    await db.insert(bankTransactions).values({
+        txnId: 'f2', accountId: 'acct_off', userId: USER, organizationId: ORG, fy: '2026-27', txnDate: '2026-08-11',
+        description: 'OSKO BETTERLABS PTY LTD', amountCents: 66000, direction: 'CREDIT', reviewStatus: 'CONFIRMED',
+        categorySource: 'PAYER', category: 'INCOME', confirmedBy: 'auto:payer',
+        createdAt: D('2026-08-11T00:00:00Z'), updatedAt: D('2026-08-11T00:00:00Z'),
     });
 
     // ── org_a: a live feed, nothing else. ──
@@ -181,8 +195,8 @@ describe('BasReportingPgRepo.inputs', () => {
             monthsCovered: 1,
             monthsMissing: ['2026-08'],
             statements: 1,                      // stmt_1 covers July; stmt_dup is a duplicate
-            rowsTotal: 6,                       // s1 s2 s3 s4 s7 + f1 (s5 dup, s6 transfer, s8 out of window)
-            unreconciledRows: 4,                // s2 s3 s7 f1
+            rowsTotal: 9,                       // s1 s2 s3 s4 s7 s9 s10 + f1 f2 (s5 dup, s6 transfer, s8 out of window)
+            unreconciledRows: 4,                // s2 s3 s7 f1 — the three PAYER rows are explained
             unmatchedCredits: 2,                // s2 + f1 (s7 is interest and under $50)
             unmatchedCreditsAmount: 920,
         });
@@ -229,6 +243,33 @@ describe('BasReportingPgRepo.inputs', () => {
         });
         expect(composeConfidence(july).reasons.map((r) => r.code)).toContain('MONTH_MISSING');
         expect(composeConfidence(july).reasons.map((r) => r.code)).not.toContain('NO_STATEMENT');
+    });
+
+    it('counts a credit attributed to a client by a payer link as reconciled, on the statement and on the feed', async () => {
+        // The contradiction this closes: the unmatched income predicate drops a
+        // PAYER row (a person chose the client), so the credit left the
+        // watchlist while still counting in "Unreconciled rows" and dragging
+        // the confidence down. s9 (statement, confirmed), s10 (statement, still
+        // PENDING behind an integrity flag) and f2 (feed) are all explained.
+        const got = await repo.inputs({ orgId: ORG, ...WINDOW });
+        expect(got.bank.rowsTotal).toBe(9);
+        expect(got.bank.unreconciledRows).toBe(4);       // s2 s3 s7 f1 only
+        expect(got.bank.unmatchedCredits).toBe(2);       // unchanged: PAYER was already off the watchlist
+
+        // Same rows with an AI stamp instead: each one counts unreconciled again.
+        await db.update(statementTransactions).set({ categorySource: 'AI' })
+            .where(inArray(statementTransactions.txnId, ['s9', 's10']));
+        await db.update(bankTransactions).set({ categorySource: 'AI' })
+            .where(eq(bankTransactions.txnId, 'f2'));
+        const asAi = await repo.inputs({ orgId: ORG, ...WINDOW });
+        expect(asAi.bank.unreconciledRows).toBe(7);      // all three join the count (a CONFIRMED row with an AI stamp is not a person's decision)
+        expect(asAi.bank.unmatchedCredits).toBe(5);      // and all three return to the watchlist
+
+        // Put the fixture back for any test that runs after this one.
+        await db.update(statementTransactions).set({ categorySource: 'PAYER' })
+            .where(inArray(statementTransactions.txnId, ['s9', 's10']));
+        await db.update(bankTransactions).set({ categorySource: 'PAYER' })
+            .where(eq(bankTransactions.txnId, 'f2'));
     });
 
     it('is strictly org-scoped', async () => {
