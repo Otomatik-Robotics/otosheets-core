@@ -72,6 +72,12 @@ export interface BasInputs {
         monthsCovered: number;
         /** 'YYYY-MM' of every month nothing covers. */
         monthsMissing: string[];
+        /**
+         * Statements that cover the window: a period overlapping it, or at
+         * least one transaction dated inside it. A statement whose printed
+         * period could not be resolved still counts, because its rows do.
+         */
+        statements: number;
         /** Statement + feed rows dated in the window, duplicates and transfer legs excluded. */
         rowsTotal: number;
         /** Rows with no invoice/receipt link and no human-confirmed category. */
