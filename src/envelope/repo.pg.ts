@@ -2,12 +2,13 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
 import {
     envelopes, envelopeVersions, envelopeRecipients, envelopeFields,
-    envelopeSignatures, envelopeEvents, envelopeArtifacts,
+    envelopeSignatures, envelopeEvents, envelopeArtifacts, envelopeComments,
 } from '../pg/schema/envelopes';
 import { hashChainEntry, verifyChain, type ChainEntryInput, type ChainVerdict, type ChainValue } from './chain';
 import {
     tierForKind, isRefusedKind, canHoldFields, canSign, canReturnVerdict,
-    type ArtifactKind, type EnvelopeDTO, type EnvelopeStatus, type RecipientRole, type ReviewVerdict,
+    type ArtifactKind, type EnvelopeDTO, type EnvelopeStatus, type FieldType,
+    type RecipientRole, type ReviewVerdict,
 } from './schema';
 
 export interface AppendEventInput {
@@ -55,6 +56,58 @@ export interface DispatchInput {
     accessCodeSalt?: string | null;
     accessCodeParams?: Record<string, unknown> | null;
     accessCodeChannel?: string | null;
+}
+
+export interface AddFieldInput {
+    fieldId: string;
+    versionId: string;
+    recipientId?: string | null;
+    type: FieldType;
+    label?: string | null;
+    required?: boolean;
+    page: number;
+    x: number | string;
+    y: number | string;
+    w: number | string;
+    h: number | string;
+}
+
+export interface CreateVersionInput {
+    versionId: string;
+    envelopeId: string;
+    createdBy: string;
+    bodyMarkdown?: string | null;
+    s3Key?: string | null;
+    sha256?: string | null;
+    createdReason?: string;
+}
+
+export interface AddCommentInput {
+    commentId: string;
+    envelopeId: string;
+    versionId: string;
+    recipientId?: string | null;
+    authorLabel: string;
+    page?: number | null;
+    x?: number | string | null;
+    y?: number | string | null;
+    anchorQuote?: string | null;
+    body: string;
+    proposedText?: string | null;
+}
+
+export interface EnvelopeCursor { createdAt: string; envelopeId: string }
+
+export interface ListEnvelopesParams {
+    orgId: string;
+    limit?: number;
+    cursor?: EnvelopeCursor | null;
+    status?: EnvelopeStatus;
+}
+
+export interface ListEnvelopesResult {
+    items: EnvelopeDTO[];
+    nextCursor: EnvelopeCursor | null;
 }
 
 export interface RecordSignatureInput {
@@ -513,6 +566,160 @@ export class EnvelopePgRepo {
         return this.db.select().from(envelopeFields)
             .where(eq(envelopeFields.versionId, versionId))
             .orderBy(asc(envelopeFields.page));
+    }
+
+    /**
+     * Place a field. Refuses a recipient who cannot hold one, so the rule lives
+     * with the write rather than only in whatever screen happens to call it.
+     */
+    async addField(input: AddFieldInput): Promise<{ fieldId: string; created: boolean }> {
+        if (input.recipientId) await this.assertFieldAssignable(input.recipientId);
+        const inserted = await (this.db as any).insert(envelopeFields).values({
+            fieldId: input.fieldId,
+            versionId: input.versionId,
+            recipientId: input.recipientId ?? null,
+            type: input.type,
+            label: input.label ?? null,
+            required: input.required ?? true,
+            page: input.page,
+            x: String(input.x), y: String(input.y), w: String(input.w), h: String(input.h),
+            createdAt: new Date().toISOString(),
+        }).onConflictDoNothing({ target: envelopeFields.fieldId })
+            .returning({ id: envelopeFields.fieldId });
+        return { fieldId: input.fieldId, created: inserted.length > 0 };
+    }
+
+    async removeField(fieldId: string): Promise<void> {
+        await (this.db as any).delete(envelopeFields).where(eq(envelopeFields.fieldId, fieldId));
+    }
+
+    /** Fill one field as part of signing. */
+    async fillField(fieldId: string, value: string): Promise<void> {
+        await (this.db as any).update(envelopeFields)
+            .set({ value, filledAt: new Date().toISOString() })
+            .where(eq(envelopeFields.fieldId, fieldId));
+    }
+
+    // ── versions ─────────────────────────────────────────────────────────
+
+    /**
+     * Supersede the current version with a new one. Used when a reviewer's
+     * proposed edit is accepted: the caller voids the signatures on the old
+     * version separately, because consent to v1 does not carry to v2.
+     */
+    async createVersion(input: CreateVersionInput): Promise<{ versionId: string; versionNo: number }> {
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const latest = await tx.select({ n: envelopeVersions.versionNo })
+                .from(envelopeVersions)
+                .where(eq(envelopeVersions.envelopeId, input.envelopeId))
+                .orderBy(desc(envelopeVersions.versionNo))
+                .limit(1);
+            const versionNo = (latest[0]?.n ?? 0) + 1;
+            const now = new Date().toISOString();
+
+            await tx.update(envelopeVersions)
+                .set({ supersededAt: now })
+                .where(and(
+                    eq(envelopeVersions.envelopeId, input.envelopeId),
+                    sql`${envelopeVersions.supersededAt} IS NULL`,
+                ));
+
+            await tx.insert(envelopeVersions).values({
+                versionId: input.versionId,
+                envelopeId: input.envelopeId,
+                versionNo,
+                bodyMarkdown: input.bodyMarkdown ?? null,
+                s3Key: input.s3Key ?? null,
+                sha256: input.sha256 ?? null,
+                createdBy: input.createdBy,
+                createdReason: input.createdReason ?? 'reviewer_edit_accepted',
+                createdAt: now,
+            });
+
+            await tx.update(envelopes)
+                .set({ currentVersionNo: versionNo, updatedAt: now })
+                .where(eq(envelopes.envelopeId, input.envelopeId));
+
+            return { versionId: input.versionId, versionNo };
+        });
+    }
+
+    // ── comments ─────────────────────────────────────────────────────────
+
+    async addComment(input: AddCommentInput): Promise<{ commentId: string; created: boolean }> {
+        const inserted = await (this.db as any).insert(envelopeComments).values({
+            commentId: input.commentId,
+            envelopeId: input.envelopeId,
+            versionId: input.versionId,
+            recipientId: input.recipientId ?? null,
+            authorLabel: input.authorLabel,
+            page: input.page ?? null,
+            x: input.x != null ? String(input.x) : null,
+            y: input.y != null ? String(input.y) : null,
+            anchorQuote: input.anchorQuote ?? null,
+            body: input.body,
+            proposedText: input.proposedText ?? null,
+            createdAt: new Date().toISOString(),
+        }).onConflictDoNothing({ target: envelopeComments.commentId })
+            .returning({ id: envelopeComments.commentId });
+        return { commentId: input.commentId, created: inserted.length > 0 };
+    }
+
+    async listComments(versionId: string) {
+        return this.db.select().from(envelopeComments)
+            .where(eq(envelopeComments.versionId, versionId))
+            .orderBy(asc(envelopeComments.createdAt));
+    }
+
+    async resolveComment(commentId: string): Promise<void> {
+        await (this.db as any).update(envelopeComments)
+            .set({ resolvedAt: new Date().toISOString() })
+            .where(and(
+                eq(envelopeComments.commentId, commentId),
+                sql`${envelopeComments.resolvedAt} IS NULL`,
+            ));
+    }
+
+    // ── the vault ────────────────────────────────────────────────────────
+
+    /**
+     * Keyset pagination, the house contract: `limit` in, an opaque `nextToken`
+     * out. Never returns the whole table, whatever the caller asks for.
+     */
+    async listEnvelopes(params: ListEnvelopesParams): Promise<ListEnvelopesResult> {
+        const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
+        const clauses = [eq(envelopes.orgId, params.orgId)];
+        if (params.status) clauses.push(eq(envelopes.status, params.status));
+        if (params.cursor) {
+            clauses.push(sql`(${envelopes.createdAt}, ${envelopes.envelopeId}) < (${params.cursor.createdAt}, ${params.cursor.envelopeId})`);
+        }
+
+        const rows = await this.db.select().from(envelopes)
+            .where(and(...clauses))
+            .orderBy(desc(envelopes.createdAt), desc(envelopes.envelopeId))
+            .limit(limit + 1);
+
+        const items = rows.slice(0, limit) as any[];
+        const more = rows.length > limit;
+        const last = items[items.length - 1];
+        return {
+            items,
+            nextCursor: more && last ? { createdAt: last.createdAt, envelopeId: last.envelopeId } : null,
+        };
+    }
+
+    /**
+     * The vault's column counts, as one grouped query. Counting by reducing over
+     * a loaded page works at a dozen documents and is silently wrong at sixty.
+     */
+    async countByStatus(orgId: string): Promise<Record<string, number>> {
+        const rows = await this.db.select({ status: envelopes.status, n: sql<number>`count(*)::int` })
+            .from(envelopes)
+            .where(eq(envelopes.orgId, orgId))
+            .groupBy(envelopes.status);
+        const out: Record<string, number> = {};
+        for (const r of rows as any[]) out[r.status] = Number(r.n);
+        return out;
     }
 
     // ── artifacts ────────────────────────────────────────────────────────

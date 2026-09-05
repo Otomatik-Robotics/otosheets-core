@@ -343,6 +343,97 @@ describe('recipients and delivery', () => {
     });
 });
 
+describe('authoring', () => {
+    it('places a field on a signer and refuses one on a reviewer', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const signerId = await addRecipient(envelopeId, 'signer');
+        const reviewerId = await addRecipient(envelopeId, 'reviewer');
+
+        const f = await repo.addField({ fieldId: id('fld'), versionId, recipientId: signerId, type: 'signature', page: 1, x: 8, y: 70, w: 34, h: 9 });
+        expect(f.created).toBe(true);
+        await expect(repo.addField({ fieldId: id('fld'), versionId, recipientId: reviewerId, type: 'signature', page: 1, x: 8, y: 83, w: 34, h: 9 }))
+            .rejects.toThrow(/cannot be assigned a field/);
+
+        expect(await repo.listFields(versionId)).toHaveLength(1);
+    });
+
+    it('is retry-safe on the field id, and can remove one', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const signerId = await addRecipient(envelopeId, 'signer');
+        const fieldId = id('fld');
+        const args = { fieldId, versionId, recipientId: signerId, type: 'date' as const, page: 1, x: 1, y: 2, w: 3, h: 4 };
+        expect((await repo.addField(args)).created).toBe(true);
+        expect((await repo.addField(args)).created).toBe(false);
+        await repo.removeField(fieldId);
+        expect(await repo.listFields(versionId)).toHaveLength(0);
+    });
+
+    it('supersedes the current version and moves the envelope onto it', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const v2 = await repo.createVersion({ versionId: id('ver'), envelopeId, createdBy: 'user_1', bodyMarkdown: '## v2' });
+
+        expect(v2.versionNo).toBe(2);
+        expect((await repo.get(envelopeId))?.currentVersionNo).toBe(2);
+
+        const versions = await repo.listVersions(envelopeId);
+        expect(versions).toHaveLength(2);
+        expect((versions[0] as any).versionId).toBe(versionId);
+        expect((versions[0] as any).supersededAt).toBeTruthy();
+        expect((versions[1] as any).supersededAt).toBeNull();
+    });
+
+    it('records reviewer comments individually and resolves one at a time', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const reviewerId = await addRecipient(envelopeId, 'reviewer');
+        const c1 = id('cmt');
+        await repo.addComment({ commentId: c1, envelopeId, versionId, recipientId: reviewerId, authorLabel: 'Ruth', body: 'Clause 5 is too long', page: 1, x: 20, y: 40, proposedText: 'thirty (30) days' });
+        await repo.addComment({ commentId: id('cmt'), envelopeId, versionId, authorLabel: 'Ruth', body: 'Second point' });
+
+        expect(await repo.listComments(versionId)).toHaveLength(2);
+        await repo.resolveComment(c1);
+        const after = await repo.listComments(versionId);
+        expect((after.find((c: any) => c.commentId === c1) as any).resolvedAt).toBeTruthy();
+        expect((after.find((c: any) => c.commentId !== c1) as any).resolvedAt).toBeNull();
+    });
+});
+
+describe('the vault', () => {
+    it('pages with a cursor rather than returning everything', async () => {
+        const org = 'org_vault';
+        await pglite.query("INSERT INTO orgs (org_id, name) VALUES ($1, 'Vault') ON CONFLICT DO NOTHING", [org]);
+        for (let i = 0; i < 5; i++) {
+            await repo.create({ envelopeId: `venv_${i}`, orgId: org, createdBy: 'u', title: `Doc ${i}`, kind: 'proposal', versionId: `vver_${i}` });
+        }
+
+        const page1 = await repo.listEnvelopes({ orgId: org, limit: 2 });
+        expect(page1.items).toHaveLength(2);
+        expect(page1.nextCursor).toBeTruthy();
+
+        const page2 = await repo.listEnvelopes({ orgId: org, limit: 2, cursor: page1.nextCursor });
+        expect(page2.items).toHaveLength(2);
+        const seen = [...page1.items, ...page2.items].map((e: any) => e.envelopeId);
+        expect(new Set(seen).size).toBe(4); // no overlap between pages
+
+        const last = await repo.listEnvelopes({ orgId: org, limit: 2, cursor: page2.nextCursor });
+        expect(last.items).toHaveLength(1);
+        expect(last.nextCursor).toBeNull();
+    });
+
+    it('is scoped to the org and can filter by status', async () => {
+        const org = 'org_vault';
+        await repo.setEnvelopeStatus('venv_0', 'completed');
+        const completed = await repo.listEnvelopes({ orgId: org, status: 'completed' });
+        expect(completed.items.map((e: any) => e.envelopeId)).toEqual(['venv_0']);
+        expect((await repo.listEnvelopes({ orgId: 'org_1', status: 'completed' })).items.every((e: any) => e.orgId === 'org_1')).toBe(true);
+    });
+
+    it('counts by status in one query', async () => {
+        const counts = await repo.countByStatus('org_vault');
+        expect(counts.completed).toBe(1);
+        expect(counts.draft).toBe(4);
+    });
+});
+
 describe('sealing', () => {
     it('seals once and reports the existing artifact afterwards', async () => {
         const { envelopeId, versionId } = await makeEnvelope();
