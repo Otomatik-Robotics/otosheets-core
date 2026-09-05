@@ -14,4 +14,5 @@ export * from './analytics';
 export * from './commerce';
 export * from './adCampaigns';
 export * from './forms';
+export * from './envelopes';
 export * from './bookkeeping';
