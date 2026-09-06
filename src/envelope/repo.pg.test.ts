@@ -216,6 +216,31 @@ describe('the chain', () => {
         expect(row.declinedReason).toBe('price changed');
     });
 
+    it('pages the template list rather than returning the table', async () => {
+        // org_1 is the fixture org the other template tests use; it may already
+        // hold templates, so this asserts the SHAPE of paging rather than exact
+        // counts across the org.
+        const tag = Math.random().toString(36).slice(2, 8);
+        for (let i = 0; i < 5; i++) {
+            await repo.createTemplate({
+                templateId: `tpl_${tag}_${i}`, orgId: 'org_1', createdBy: 'u1',
+                name: `Template ${tag} ${i}`, kind: 'proposal', bodyMarkdown: '## x',
+            } as any);
+        }
+
+        const first = await repo.listTemplates('org_1', { limit: 2 });
+        expect(first.items).toHaveLength(2);
+        expect(first.nextCursor).not.toBeNull();
+
+        const second = await repo.listTemplates('org_1', { limit: 2, cursor: first.nextCursor });
+        expect(second.items).toHaveLength(2);
+
+        // The cursor is strictly after the last row of the page it came from,
+        // so a row cannot appear on two pages and paging cannot loop.
+        const seen = new Set(first.items.map((t: any) => t.templateId));
+        for (const t of second.items) expect(seen.has(t.templateId)).toBe(false);
+    });
+
     it('bounds the chain read, and walks the rest by seq', async () => {
         // A chain grows for as long as anyone touches a document, and every
         // refused access attempt is an entry, so reading all of it unbounded is
@@ -697,7 +722,7 @@ describe('reusable documents', () => {
         expect((await repo.createTemplate(args)).created).toBe(true);
         expect((await repo.createTemplate(args)).created).toBe(false);
 
-        const list = await repo.listTemplates('org_1');
+        const { items: list } = await repo.listTemplates('org_1');
         expect(list.map((t: any) => t.templateId)).toContain(templateId);
         expect((await repo.getTemplate(templateId)).timesUsed).toBe(0);
     });
@@ -759,8 +784,8 @@ describe('reusable documents', () => {
         await repo.createTemplate({ templateId, orgId: 'org_1', createdBy: 'u', name: 'Old', kind: 'proposal', bodyMarkdown: 'x' });
         await repo.archiveTemplate(templateId);
 
-        expect((await repo.listTemplates('org_1')).map((t: any) => t.templateId)).not.toContain(templateId);
-        expect((await repo.listTemplates('org_1', true)).map((t: any) => t.templateId)).toContain(templateId);
+        expect((await repo.listTemplates('org_1')).items.map((t: any) => t.templateId)).not.toContain(templateId);
+        expect((await repo.listTemplates('org_1', { includeArchived: true })).items.map((t: any) => t.templateId)).toContain(templateId);
         expect(await repo.getTemplate(templateId)).toBeTruthy();
     });
 });
