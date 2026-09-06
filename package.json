@@ -1,7 +1,7 @@
 {
   "name": "@otosheets/core",
   "version": "1.3.0",
-  "description": "Shared DynamoDB data layer for the Otosheets platform — repos, schemas, adapters",
+  "description": "Shared DynamoDB data layer for the Otosheets platform \u2014 repos, schemas, adapters",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -12,6 +12,10 @@
     "./schemas": {
       "types": "./dist/schemas.d.ts",
       "default": "./dist/schemas.js"
+    },
+    "./registry": {
+      "types": "./dist/envelope/registry.d.ts",
+      "default": "./dist/envelope/registry.js"
     }
   },
   "files": [

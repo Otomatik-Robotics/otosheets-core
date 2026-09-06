@@ -19,6 +19,20 @@
  * paperwork calls them.
  */
 
+/**
+ * IMPORTED BY THE BROWSER, which is why this file has no runtime imports.
+ *
+ * It is published as its own entry point, `@otosheets/core/registry`, and the
+ * frontend must import from THAT rather than from the package root. The root
+ * barrel pulls the repos, and with them drizzle, the Neon client and the SSM
+ * client, none of which run in a browser: the first symptom is
+ * "process is not defined" thrown from inside a vendor chunk, a long way from
+ * whatever innocent-looking import caused it.
+ *
+ * So keep this file pure. The one import below is type-only and erased at
+ * compile time. Anything that needs a repo, a client or an environment
+ * variable belongs somewhere else.
+ */
 import type { RecipientRole } from './schema';
 
 export const ENVELOPE_KINDS = [
