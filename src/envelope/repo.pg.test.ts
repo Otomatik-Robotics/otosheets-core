@@ -216,6 +216,68 @@ describe('the chain', () => {
         expect(row.declinedReason).toBe('price changed');
     });
 
+    it('searches templates in the database, not over a loaded page', async () => {
+        const tag = Math.random().toString(36).slice(2, 8);
+        await repo.createTemplate({
+            templateId: `tpl_s_${tag}_a`, orgId: 'org_1', createdBy: 'u1',
+            name: `Roof replacement ${tag}`, kind: 'proposal', bodyMarkdown: '## x',
+        } as any);
+        await repo.createTemplate({
+            templateId: `tpl_s_${tag}_b`, orgId: 'org_1', createdBy: 'u1',
+            name: `Bathroom ${tag}`, kind: 'proposal', bodyMarkdown: '## x',
+        } as any);
+
+        const hit = await repo.listTemplates('org_1', { limit: 50, search: `Roof replacement ${tag}` });
+        expect(hit.items.map((t: any) => t.templateId)).toEqual([`tpl_s_${tag}_a`]);
+
+        // Case-insensitive, and a substring is enough.
+        const loose = await repo.listTemplates('org_1', { limit: 50, search: `roof replacement ${tag}`.toUpperCase() });
+        expect(loose.items.map((t: any) => t.templateId)).toContain(`tpl_s_${tag}_a`);
+
+        const miss = await repo.listTemplates('org_1', { limit: 50, search: `nothing_${tag}` });
+        expect(miss.items).toHaveLength(0);
+    });
+
+    it('reports who each document is still waiting on, in one query for the page', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const waiting = await repo.addRecipient({
+            recipientId: `r_${Math.random().toString(36).slice(2, 8)}`,
+            envelopeId, email: 'waiting@x.com', name: 'Waiting', role: 'signer',
+        } as any);
+        const done = await repo.addRecipient({
+            recipientId: `r_${Math.random().toString(36).slice(2, 8)}`,
+            envelopeId, email: 'done@x.com', name: 'Done', role: 'signer',
+        } as any);
+        await repo.setRecipientStatus?.(done.recipientId, 'signed').catch(() => undefined);
+
+        const map = await repo.waitingOnFor([envelopeId]);
+        const emails = (map[envelopeId] ?? []).map((r: any) => r.email);
+        expect(emails).toContain('waiting@x.com');
+
+        // Nothing for an id that is not ours, and no query at all for none.
+        expect(await repo.waitingOnFor([])).toEqual({});
+    });
+
+    it('counts the roles and fields on a page of templates', async () => {
+        const tag = Math.random().toString(36).slice(2, 8);
+        const templateId = `tpl_shape_${tag}`;
+        await repo.createTemplate({
+            templateId, orgId: 'org_1', createdBy: 'u1',
+            name: `Shape ${tag}`, kind: 'proposal', bodyMarkdown: '## x',
+        } as any);
+        await repo.addTemplateRole({
+            templateRoleId: `${templateId}:client`, templateId,
+            roleKey: 'client', label: 'The client', signingRole: 'signer',
+        } as any);
+
+        const shape = await repo.templateShapeFor([templateId]);
+        expect(shape[templateId]).toEqual({ roles: 1, fields: 0 });
+
+        // A template with nothing on it still gets an entry, so the list never
+        // has to tell an empty count apart from a missing one.
+        expect(await repo.templateShapeFor([])).toEqual({});
+    });
+
     it('pages the template list rather than returning the table', async () => {
         // org_1 is the fixture org the other template tests use; it may already
         // hold templates, so this asserts the SHAPE of paging rather than exact

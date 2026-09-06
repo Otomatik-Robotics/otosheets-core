@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { makeSweepQueries } from './sweep.pg';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
 import {
@@ -205,6 +205,8 @@ export interface ListEnvelopesParams {
     limit?: number;
     cursor?: EnvelopeCursor | null;
     status?: EnvelopeStatus;
+    /** Matched against the title with ILIKE. Trimmed; blank is not a search. */
+    search?: string | null;
 }
 
 export interface ListEnvelopesResult {
@@ -1117,11 +1119,28 @@ export class EnvelopePgRepo {
      */
     async listTemplates(
         orgId: string,
-        opts: { includeArchived?: boolean; limit?: number; cursor?: { createdAt: string; templateId: string } | null } = {},
+        opts: {
+            includeArchived?: boolean; limit?: number;
+            cursor?: { createdAt: string; templateId: string } | null;
+            search?: string | null;
+        } = {},
     ): Promise<{ items: any[]; nextCursor: { createdAt: string; templateId: string } | null }> {
         const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
         const clauses = [eq(envelopeTemplates.orgId, orgId)];
         if (!opts.includeArchived) clauses.push(sql`${envelopeTemplates.archivedAt} IS NULL`);
+
+        // Matched in the DATABASE, not over the loaded page. With infinite
+        // scroll only the rows somebody has scrolled to are in memory, so
+        // filtering there searches whatever happens to have loaded and quietly
+        // misses the rest. Same ILIKE shape the price book already uses.
+        const q = opts.search?.trim();
+        if (q) {
+            const like = `%${q}%`;
+            clauses.push(or(
+                ilike(envelopeTemplates.name, like),
+                ilike(envelopeTemplates.description, like),
+            ) as any);
+        }
         if (opts.cursor) {
             clauses.push(sql`(${envelopeTemplates.createdAt}, ${envelopeTemplates.templateId})
                               < (${opts.cursor.createdAt}, ${opts.cursor.templateId})`);
@@ -1140,6 +1159,62 @@ export class EnvelopePgRepo {
                 ? { createdAt: last.createdAt, templateId: last.templateId }
                 : null,
         };
+    }
+
+    /**
+     * Who each of these documents is waiting on, for a page of the list.
+     *
+     * One query for the whole page rather than one per row. The list is what
+     * somebody scans to answer "who has not signed", and a query per row turns
+     * a twenty-row page into twenty-one round trips to answer it.
+     *
+     * Only the people still being waited on: a signer who has signed, a link
+     * that was revoked and a bounce are all settled, and showing them as
+     * outstanding is how the list stops being trusted.
+     */
+    async waitingOnFor(envelopeIds: string[]): Promise<Record<string, Array<{ name: string | null; email: string; role: string; status: string }>>> {
+        if (envelopeIds.length === 0) return {};
+        const rows = await this.db.select({
+            envelopeId: envelopeRecipients.envelopeId,
+            name: envelopeRecipients.name,
+            email: envelopeRecipients.email,
+            role: envelopeRecipients.role,
+            status: envelopeRecipients.status,
+        })
+            .from(envelopeRecipients)
+            .where(and(
+                inArray(envelopeRecipients.envelopeId, envelopeIds),
+                isNull(envelopeRecipients.revokedAt),
+                sql`${envelopeRecipients.status} NOT IN ('signed','declined','bounced','reviewed')`,
+            ))
+            .orderBy(asc(envelopeRecipients.orderNo), asc(envelopeRecipients.email));
+
+        const out: Record<string, any[]> = {};
+        for (const r of rows as any[]) (out[r.envelopeId] ??= []).push({
+            name: r.name, email: r.email, role: r.role, status: r.status,
+        });
+        return out;
+    }
+
+    /** How many roles and fields each template carries, for a page of the list. */
+    async templateShapeFor(templateIds: string[]): Promise<Record<string, { roles: number; fields: number }>> {
+        if (templateIds.length === 0) return {};
+        const [roleRows, fieldRows] = await Promise.all([
+            this.db.select({ id: envelopeTemplateRoles.templateId, n: sql<number>`count(*)::int` })
+                .from(envelopeTemplateRoles)
+                .where(inArray(envelopeTemplateRoles.templateId, templateIds))
+                .groupBy(envelopeTemplateRoles.templateId),
+            this.db.select({ id: envelopeTemplateFields.templateId, n: sql<number>`count(*)::int` })
+                .from(envelopeTemplateFields)
+                .where(inArray(envelopeTemplateFields.templateId, templateIds))
+                .groupBy(envelopeTemplateFields.templateId),
+        ]);
+
+        const out: Record<string, { roles: number; fields: number }> = {};
+        for (const id of templateIds) out[id] = { roles: 0, fields: 0 };
+        for (const r of roleRows as any[]) out[r.id].roles = Number(r.n);
+        for (const r of fieldRows as any[]) out[r.id].fields = Number(r.n);
+        return out;
     }
 
     async getTemplate(templateId: string) {
@@ -1269,6 +1344,12 @@ export class EnvelopePgRepo {
         const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
         const clauses = [eq(envelopes.orgId, params.orgId)];
         if (params.status) clauses.push(eq(envelopes.status, params.status));
+
+        // In the database, for the reason listTemplates says: filtering an
+        // infinite-scrolled list on the client searches only what has loaded.
+        const q = params.search?.trim();
+        if (q) clauses.push(ilike(envelopes.title, `%${q}%`));
+
         if (params.cursor) {
             clauses.push(sql`(${envelopes.createdAt}, ${envelopes.envelopeId}) < (${params.cursor.createdAt}, ${params.cursor.envelopeId})`);
         }
