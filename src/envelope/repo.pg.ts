@@ -1103,12 +1103,43 @@ export class EnvelopePgRepo {
             .where(eq(envelopeTemplateFields.templateFieldId, templateFieldId));
     }
 
-    async listTemplates(orgId: string, includeArchived = false) {
+    /**
+     * A page of templates, newest first.
+     *
+     * It used to return every non-archived row. A template list is a table like
+     * any other: it looks small on the day it is written and it is the whole
+     * table by the time anyone notices, and the failure at the payload limit is
+     * silent rather than loud.
+     *
+     * Keyset on (created_at, template_id), the same shape the envelope vault
+     * uses, so the two lists behave identically and the cursor is stable when a
+     * template is created while somebody is paging.
+     */
+    async listTemplates(
+        orgId: string,
+        opts: { includeArchived?: boolean; limit?: number; cursor?: { createdAt: string; templateId: string } | null } = {},
+    ): Promise<{ items: any[]; nextCursor: { createdAt: string; templateId: string } | null }> {
+        const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
         const clauses = [eq(envelopeTemplates.orgId, orgId)];
-        if (!includeArchived) clauses.push(sql`${envelopeTemplates.archivedAt} IS NULL`);
-        return this.db.select().from(envelopeTemplates)
+        if (!opts.includeArchived) clauses.push(sql`${envelopeTemplates.archivedAt} IS NULL`);
+        if (opts.cursor) {
+            clauses.push(sql`(${envelopeTemplates.createdAt}, ${envelopeTemplates.templateId})
+                              < (${opts.cursor.createdAt}, ${opts.cursor.templateId})`);
+        }
+
+        const rows = await this.db.select().from(envelopeTemplates)
             .where(and(...clauses))
-            .orderBy(desc(envelopeTemplates.createdAt));
+            .orderBy(desc(envelopeTemplates.createdAt), desc(envelopeTemplates.templateId))
+            .limit(limit + 1);
+
+        const items = rows.slice(0, limit) as any[];
+        const last = items[items.length - 1];
+        return {
+            items,
+            nextCursor: rows.length > limit && last
+                ? { createdAt: last.createdAt, templateId: last.templateId }
+                : null,
+        };
     }
 
     async getTemplate(templateId: string) {
