@@ -999,3 +999,50 @@ export function defaultAnswers(kind: string): EnvelopeAnswers {
     }
     return out;
 }
+
+// ── The tier gate ───────────────────────────────────────────────────────
+//
+// Here rather than in schema.ts because it is a pure lookup over the data
+// above, and because the browser needs it: a type grid has to know which kinds
+// are refused, and schema.ts is on the path that pulls a database driver.
+
+export function isEnvelopeKind(v: unknown): v is EnvelopeKind {
+    return typeof v === 'string' && (ENVELOPE_KINDS as readonly string[]).includes(v);
+}
+
+/** The only way a tier is ever set. Throws rather than defaulting, so an unknown kind cannot land as tier 0. */
+export function tierForKind(kind: string): EnvelopeTier {
+    if (!isEnvelopeKind(kind)) throw new Error(`Unknown document kind: ${kind}`);
+    return CONTRACT_TYPES[kind].tier;
+}
+
+/** Tier 2 is refused at both entry points. Fails closed on an unknown kind. */
+export function isRefusedKind(kind: string): boolean {
+    try {
+        return tierForKind(kind) >= 2;
+    } catch {
+        return true;
+    }
+}
+
+/** How this kind may be drafted, if at all. Empty for an unknown kind and for tier 2. */
+export function draftModesForKind(kind: string): readonly DraftMode[] {
+    return tryContractType(kind)?.draftModes ?? [];
+}
+
+/**
+ * Free-text drafting: "describe the job and we write it". Tier 0 only.
+ *
+ * Kept as the narrow gate it has always been. Tier 1 became draftable through
+ * the questionnaire, not through a brief, so widening this function would open
+ * the wrong door: callers that ask it are asking whether a paragraph of prose
+ * may become a document.
+ */
+export function canDraftKind(kind: string): boolean {
+    return draftModesForKind(kind).includes('free_text');
+}
+
+/** Structured drafting: fixed clauses, and the answers are the only variables. Tier 0 and tier 1. */
+export function canDraftFromQuestionnaire(kind: string): boolean {
+    return draftModesForKind(kind).includes('questionnaire');
+}
