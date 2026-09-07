@@ -47,6 +47,10 @@ export class WorkflowRuntimeRepo {
         return workflowPage<Record<string, unknown>>(this.db, scope(orgId), `EXECLOG#${runId}#`, options, { runId, nodeId: options.nodeId });
     }
 
+    listStepsPage(orgId: string, runId: string, options: WorkflowPageOptions & { nodeId?: string } = {}) {
+        return workflowPage<WorkflowRuntimeStep>(this.db, scope(orgId), `WFSTEP#${encodeURIComponent(runId)}#`, options, { runId, nodeId: options.nodeId });
+    }
+
     async get(orgId: string, runId: string): Promise<WorkflowRuntimeRun | null> {
         const { Item } = await this.db.getItem(Tables.ONBOARDING, runKey(orgId, runId), { ConsistentRead: true });
         return Item as WorkflowRuntimeRun ?? null;

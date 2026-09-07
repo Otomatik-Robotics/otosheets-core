@@ -40,3 +40,11 @@ test('log node filters execute in the database and cannot reuse another node or 
  }
  expect(query).toHaveBeenCalledTimes(2);
 });
+
+test('durable step history reads the encoded checkpoint prefix with scoped node filtering', async () => {
+ const query = vi.fn().mockResolvedValue({ Items: [{ nodeId: 'sms', status: 'DONE', outcome: { data: { smsMessageId: 'accepted' } } }] });
+ const repo = new WorkflowRuntimeRepo({ query } as unknown as IDdb);
+ const page = await repo.listStepsPage('org', 'wf#manual#one/two', { nodeId: 'sms', limit: 1 });
+ expect(page.items[0].outcome).toEqual({ data: { smsMessageId: 'accepted' } });
+ expect(query.mock.calls[0][0]).toMatchObject({ Limit: 1, ExpressionAttributeValues: { ':prefix': 'WFSTEP#wf%23manual%23one%2Ftwo#', ':runId': 'wf#manual#one/two', ':nodeId': 'sms' } });
+});
