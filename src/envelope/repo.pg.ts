@@ -1083,6 +1083,20 @@ export class EnvelopePgRepo {
         return { removed: rows.length > 0 };
     }
 
+    /** Only the current draft can move. Keep assignment, requirement and id intact. */
+    async moveField(envelopeId: string, orgId: string, fieldId: string, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
+        return (this.tx as any).transaction(async (tx: any) => {
+            const [env] = await tx.select().from(envelopes).where(and(eq(envelopes.envelopeId, envelopeId), eq(envelopes.orgId, orgId))).for('update');
+            if (!env || env.status !== 'draft') return false;
+            const rows = await tx.update(envelopeFields)
+                .set({ x: String(rect.x), y: String(rect.y), w: String(rect.w), h: String(rect.h) })
+                .where(and(eq(envelopeFields.fieldId, fieldId), sql`${envelopeFields.versionId} IN (
+                    SELECT version_id FROM envelope_versions WHERE envelope_id = ${envelopeId} AND version_no = ${env.currentVersionNo}
+                )`)).returning({ id: envelopeFields.fieldId });
+            return rows.length > 0;
+        });
+    }
+
     /** Fill one field as part of signing. */
     async fillField(fieldId: string, value: string): Promise<void> {
         await (this.db as any).update(envelopeFields)
@@ -1247,6 +1261,67 @@ export class EnvelopePgRepo {
         return { templateFieldId: input.templateFieldId, created: inserted.length > 0 };
     }
 
+    /** Replace geometry in place so a move cannot leave duplicate signing boxes. */
+    async moveTemplateField(templateId: string, fieldId: string, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
+        const rows = await this.db.update(envelopeTemplateFields)
+            .set({ x: String(rect.x), y: String(rect.y), w: String(rect.w), h: String(rect.h) })
+            .where(and(eq(envelopeTemplateFields.templateId, templateId), eq(envelopeTemplateFields.templateFieldId, fieldId)))
+            .returning({ id: envelopeTemplateFields.templateFieldId });
+        return rows.length > 0;
+    }
+
+    /** Commit the PDF and its measured fields together. A stale render must not replace newer wording. */
+    async prepareTemplate(input: {
+        templateId: string; orgId: string; expectedUpdatedAt: string; s3Key: string;
+        fields: TemplateFieldInput[];
+    }): Promise<boolean> {
+        return (this.tx as any).transaction(async (tx: any) => {
+            const [template] = await tx.select().from(envelopeTemplates).where(and(
+                eq(envelopeTemplates.templateId, input.templateId), eq(envelopeTemplates.orgId, input.orgId),
+            )).for('update');
+            if (!template) throw new Error('No such template');
+            if (template.s3Key) return false;
+            if (template.updatedAt !== input.expectedUpdatedAt) throw new Error('Template changed during preparation. Try again.');
+            const scoped = new EnvelopePgRepo(tx, tx);
+            await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, input.templateId));
+            for (const field of input.fields) {
+                await scoped.addTemplateField({ ...field, templateId: input.templateId });
+            }
+            await tx.update(envelopeTemplates).set({ s3Key: input.s3Key, updatedAt: new Date().toISOString() })
+                .where(eq(envelopeTemplates.templateId, input.templateId));
+            return true;
+        });
+    }
+
+    /** Role definitions belong to the template; recipient identities belong to each use. */
+    async configureTemplate(templateId: string, orgId: string, roles: TemplateRoleInput[], signatureMethod: 'digital' | 'wet'): Promise<void> {
+        return (this.tx as any).transaction(async (tx: any) => {
+            const [template] = await tx.select().from(envelopeTemplates).where(and(
+                eq(envelopeTemplates.templateId, templateId), eq(envelopeTemplates.orgId, orgId),
+            )).for('update');
+            if (!template) throw new Error('No such template');
+            const scoped = new EnvelopePgRepo(tx, tx);
+            const before = await scoped.listTemplateRoles(templateId);
+            const shape = (rows: any[]) => JSON.stringify(rows.map(r => [r.roleKey, r.label, r.signingRole, r.signingCapacity || 'principal', r.orderNo || 0, r.required ?? true]));
+            if (shape(before) === shape(roles) && (template.signatureMethod || 'digital') === signatureMethod) return;
+            const layoutChanged = shape(before) !== shape(roles);
+            // Generated pages contain the role labels. Changing roles requires new pages.
+            if (layoutChanged && template.bodyMarkdown) {
+                await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, templateId));
+            } else {
+                const fieldRoles = roles.filter(r => canHoldFields(r.signingRole)).map(r => r.roleKey);
+                const fields = await scoped.listTemplateFields(templateId);
+                for (const field of fields) if (!fieldRoles.includes(field.roleKey)) await scoped.removeTemplateField(field.templateFieldId);
+            }
+            await tx.delete(envelopeTemplateRoles).where(eq(envelopeTemplateRoles.templateId, templateId));
+            for (const role of roles) await scoped.addTemplateRole({ ...role, templateId });
+            await tx.update(envelopeTemplates).set({
+                signatureMethod, updatedAt: new Date().toISOString(),
+                ...(layoutChanged && template.bodyMarkdown ? { s3Key: null } : {}),
+            }).where(eq(envelopeTemplates.templateId, templateId));
+        });
+    }
+
     async listTemplateFields(templateId: string) {
         return this.db.select().from(envelopeTemplateFields)
             .where(eq(envelopeTemplateFields.templateId, templateId))
@@ -1382,12 +1457,15 @@ export class EnvelopePgRepo {
      * fields are placed would silently re-tier a prepared template.
      */
     async updateTemplate(templateId: string, patch: { name?: string; bodyMarkdown?: string; description?: string }): Promise<void> {
-        const set: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-        if (patch.name !== undefined) set.name = patch.name;
-        if (patch.bodyMarkdown !== undefined) set.bodyMarkdown = patch.bodyMarkdown;
-        if (patch.description !== undefined) set.description = patch.description;
-        await (this.db as any).update(envelopeTemplates).set(set)
-            .where(eq(envelopeTemplates.templateId, templateId));
+        await (this.tx as any).transaction(async (tx: any) => {
+            const [template] = await tx.select().from(envelopeTemplates).where(eq(envelopeTemplates.templateId, templateId)).for('update');
+            if (!template) throw new Error('No such template');
+            const changed = (patch.bodyMarkdown !== undefined && patch.bodyMarkdown !== template.bodyMarkdown)
+                || (patch.name !== undefined && patch.name !== template.name && !!template.bodyMarkdown);
+            const set = { ...patch, updatedAt: new Date().toISOString(), ...(changed ? { s3Key: null } : {}) };
+            if (changed) await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, templateId));
+            await tx.update(envelopeTemplates).set(set).where(eq(envelopeTemplates.templateId, templateId));
+        });
     }
 
     /** Archived rather than deleted: a document already sent from it still names it. */

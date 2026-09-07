@@ -1202,3 +1202,67 @@ describe('reusable prepared templates', () => {
         expect((await repo.get(input.envelopeId))?.currentVersionNo).toBe(1);
     });
 });
+
+describe('prepared reusable templates', () => {
+    async function makeTemplate() {
+        const templateId = id('prepared');
+        await repo.createTemplate({ templateId, orgId: 'org_1', createdBy: 'user_1', name: 'NDA', kind: 'nda', bodyMarkdown: 'Confidential terms' });
+        await repo.configureTemplate(templateId, 'org_1', [{ templateRoleId: `${templateId}:client`, templateId, roleKey: 'client', label: 'Client', signingRole: 'signer', signingCapacity: 'principal' }], 'digital');
+        return templateId;
+    }
+    it('attaches generated pages and fields together, reuses their positions, and moves fields without duplicates', async () => {
+        const templateId = await makeTemplate();
+        const template = await repo.getTemplate(templateId);
+        const input = { templateId, orgId: 'org_1', expectedUpdatedAt: template.updatedAt, s3Key: 'documents/org_1/prepared.pdf', fields: [
+            { templateId, templateFieldId: `${templateId}:signature`, roleKey: 'client', type: 'signature' as const, page: 3, x: 10, y: 70, w: 40, h: 5 },
+            { templateId, templateFieldId: `${templateId}:date`, roleKey: 'client', type: 'date' as const, page: 3, x: 10, y: 80, w: 20, h: 4 },
+        ] };
+        expect(await repo.prepareTemplate(input)).toBe(true);
+        expect(await repo.prepareTemplate(input)).toBe(false);
+        expect(await repo.moveTemplateField(templateId, `${templateId}:signature`, { x: 20, y: 60, w: 35, h: 6 })).toBe(true);
+        const envelopeId = id('reuse'); const versionId = id('reuse_ver');
+        await repo.createFromTemplate({ templateId, orgId: 'org_1', createdBy: 'user_1', envelopeId, versionId, prepareOnly: true });
+        const fields = await repo.listFields(versionId);
+        expect(fields).toHaveLength(2);
+        expect(fields.find(f => f.type === 'signature')).toMatchObject({ page: 3, x: '20', y: '60', w: '35' });
+        expect((await repo.listVersions(envelopeId))[0].s3Key).toBe(input.s3Key);
+        expect((await repo.listRecipients(envelopeId))[0]).toMatchObject({ email: '', roleLabel: 'Client' });
+        await repo.updateTemplate(templateId, { bodyMarkdown: 'Changed terms' });
+        expect((await repo.getTemplate(templateId)).s3Key).toBeNull();
+        expect(await repo.listTemplateFields(templateId)).toHaveLength(0);
+        expect((await repo.listVersions(envelopeId))[0].s3Key).toBe(input.s3Key);
+        expect(await repo.listFields(versionId)).toHaveLength(2);
+    });
+    it('rolls back pages and fields if any generated field has an invalid role', async () => {
+        const templateId = await makeTemplate();
+        const template = await repo.getTemplate(templateId);
+        await expect(repo.prepareTemplate({ templateId, orgId: 'org_1', expectedUpdatedAt: template.updatedAt, s3Key: 'bad.pdf', fields: [
+            { templateId, templateFieldId: id('field'), roleKey: 'unknown', type: 'signature', page: 1, x: 10, y: 10, w: 30, h: 5 },
+        ] })).rejects.toThrow(/no role/);
+        expect((await repo.getTemplate(templateId)).s3Key).toBeNull();
+        expect(await repo.listTemplateFields(templateId)).toHaveLength(0);
+    });
+    it('refuses another org and stale rendered wording', async () => {
+        const templateId = await makeTemplate();
+        const input = { templateId, orgId: 'org_2', expectedUpdatedAt: 'stale', s3Key: 'bad.pdf', fields: [] };
+        await expect(repo.prepareTemplate(input)).rejects.toThrow(/No such template/);
+        await expect(repo.prepareTemplate({ ...input, orgId: 'org_1' })).rejects.toThrow(/changed during preparation/);
+        await expect(repo.configureTemplate(templateId, 'org_2', [], 'wet')).rejects.toThrow(/No such template/);
+    });
+});
+
+describe('moving a draft signing box', () => {
+    it('keeps the field identity and refuses sent or cross-tenant changes', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const recipientId = await addRecipient(envelopeId, 'signer');
+        const fieldId = id('movable');
+        await repo.addField({ fieldId, versionId, recipientId, type: 'signature', label: 'Client acceptance', required: false, page: 1, x: 10, y: 20, w: 40, h: 5 });
+        const rect = { x: 20, y: 50, w: 35, h: 6 };
+        expect(await repo.moveField(envelopeId, 'org_2', fieldId, rect)).toBe(false);
+        expect(await repo.moveField(envelopeId, 'org_1', fieldId, rect)).toBe(true);
+        expect(await repo.moveField(envelopeId, 'org_1', fieldId, rect)).toBe(true);
+        expect(await repo.listFields(versionId)).toEqual([expect.objectContaining({ fieldId, recipientId, label: 'Client acceptance', required: false, page: 1, x: '20', y: '50' })]);
+        await pglite.query("UPDATE envelopes SET status = 'out_for_signing' WHERE envelope_id = $1", [envelopeId]);
+        expect(await repo.moveField(envelopeId, 'org_1', fieldId, { ...rect, x: 30 })).toBe(false);
+    });
+});
