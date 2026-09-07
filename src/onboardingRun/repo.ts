@@ -123,17 +123,19 @@ export class WorkflowApprovalDynamoRepo {
         } catch (error) { if (approvalConflict(error)) return false; throw error; }
     }
 
-    async listPendingPage(orgId: string, membershipId: string, nextToken?: string, limit = 20): Promise<{ approvals: WorkflowApproval[]; nextToken?: string }> {
+    async listPendingPage(orgId: string, membershipId: string, nextToken?: string, limit = 20, businessProfileId?: string): Promise<{ approvals: WorkflowApproval[]; nextToken?: string }> {
         const key = nextToken ? JSON.parse(Buffer.from(nextToken, 'base64').toString('utf8')) : undefined;
         if (key && (key.orgId !== orgId || typeof key.sk !== 'string' || !key.sk.startsWith('APPROVAL#'))) throw new Error('Invalid nextToken');
+        if (key && key.businessProfileId !== businessProfileId) throw new Error('Invalid nextToken');
+        const exclusiveStartKey = key ? { orgId: key.orgId, sk: key.sk } : undefined;
         const page = await this.ddb.query({ TableName: Tables.ONBOARDING,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
-            FilterExpression: '#status = :pending AND contains(assignedTo, :member) AND (attribute_not_exists(expiresAt) OR expiresAt > :now)',
+            FilterExpression: '#status = :pending AND contains(assignedTo, :member) AND (attribute_not_exists(expiresAt) OR expiresAt > :now)' + (businessProfileId ? ' AND businessProfileId = :profile' : ''),
             ExpressionAttributeNames: { '#status': 'status' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'APPROVAL#', ':pending': 'pending', ':member': membershipId, ':now': new Date().toISOString() },
-            Limit: Math.max(1, Math.min(100, Number.isFinite(limit) ? Math.floor(limit) : 20)), ExclusiveStartKey: key,
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'APPROVAL#', ':pending': 'pending', ':member': membershipId, ':now': new Date().toISOString(), ...(businessProfileId ? { ':profile': businessProfileId } : {}) },
+            Limit: Math.max(1, Math.min(100, Number.isFinite(limit) ? Math.floor(limit) : 20)), ExclusiveStartKey: exclusiveStartKey,
         });
-        return { approvals: (page.Items ?? []) as WorkflowApproval[], ...(page.LastEvaluatedKey ? { nextToken: Buffer.from(JSON.stringify(page.LastEvaluatedKey)).toString('base64') } : {}) };
+        return { approvals: (page.Items ?? []) as WorkflowApproval[], ...(page.LastEvaluatedKey ? { nextToken: Buffer.from(JSON.stringify({ ...page.LastEvaluatedKey, ...(businessProfileId ? { businessProfileId } : {}) })).toString('base64') } : {}) };
     }
 
     async put(approval: Omit<WorkflowApproval, 'sk'>): Promise<void> {
@@ -151,11 +153,12 @@ export class WorkflowApprovalDynamoRepo {
         return (Item as WorkflowApproval) ?? null;
     }
 
-    async listPending(orgId: string): Promise<WorkflowApproval[]> {
+    async listPending(orgId: string, businessProfileId?: string): Promise<WorkflowApproval[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.ONBOARDING,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
-            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'APPROVAL#' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'APPROVAL#', ...(businessProfileId ? { ':profile': businessProfileId } : {}) },
+            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :profile' } : {}),
         });
         const all = (Items as WorkflowApproval[]) ?? [];
         return all.filter(a => a.status === 'pending');

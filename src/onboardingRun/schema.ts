@@ -50,6 +50,7 @@ export const OnboardingRunStoredSchema = WorkflowRunStoredSchema;
 export type OnboardingRun = WorkflowRun;
 
 export const WorkflowApprovalStoredSchema = z.object({
+    businessProfileId: z.string().optional(),
     orgId: z.string(),
     sk: z.string(),
     approvalId: z.string(),

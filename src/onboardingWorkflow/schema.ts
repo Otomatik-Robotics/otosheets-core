@@ -129,6 +129,7 @@ const WorkflowEdgeSchema = z.object({
 });
 
 export const OnboardingWorkflowStoredSchema = z.object({
+    businessProfileId: z.string().optional(),
     orgId: z.string(),
     sk: z.string(),
     workflowId: z.string(),

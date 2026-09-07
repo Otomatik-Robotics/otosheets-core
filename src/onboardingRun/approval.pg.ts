@@ -5,7 +5,7 @@ import { clean, workflowScope, pageLimit, pageToken, nextPage } from '../workflo
 import type { WorkflowApproval } from './schema';
 import type { IWorkflowApprovalRepo } from './repo';
 const where = (orgId: string, approvalId: string) => and(eq(approvals.orgId, workflowScope(orgId)), eq(approvals.approvalId, approvalId));
-const row = (a: Omit<WorkflowApproval, 'sk'>) => ({ orgId: workflowScope(a.orgId), approvalId: a.approvalId, runId: a.runId, status: a.status, requestedAt: a.requestedAt, expiresAt: a.expiresAt ?? null, assignedTo: a.assignedTo, payload: clean({ ...a, sk: `APPROVAL#${a.approvalId}` }) });
+const row = (a: Omit<WorkflowApproval, 'sk'>) => ({ businessProfileId: a.businessProfileId ?? null, orgId: workflowScope(a.orgId), approvalId: a.approvalId, runId: a.runId, status: a.status, requestedAt: a.requestedAt, expiresAt: a.expiresAt ?? null, assignedTo: a.assignedTo, payload: clean({ ...a, sk: `APPROVAL#${a.approvalId}` }) });
 export class WorkflowApprovalPgRepo implements IWorkflowApprovalRepo {
     constructor(private readonly injected?: PgDb) {}
     private get db() { return this.injected ?? getPgTx(); }
@@ -23,12 +23,12 @@ export class WorkflowApprovalPgRepo implements IWorkflowApprovalRepo {
             if (!a || a.status !== 'pending' || !a.expiresAt || a.expiresAt > now) return false; await tx.update(approvals).set(row({ ...a, status: 'expired', decidedAt: now })).where(where(orgId, approvalId)); return true;
         });
     }
-    async listPendingPage(orgId: string, membershipId: string, nextToken?: string, requestedLimit = 20) {
-        const scope = [workflowScope(orgId), 'approvals', membershipId]; const key = pageToken(nextToken, scope); const limit = pageLimit(requestedLimit);
-        const rows = await this.db.select().from(approvals).where(and(eq(approvals.orgId, orgId), eq(approvals.status, 'pending'), sql`${approvals.assignedTo} @> ${JSON.stringify([membershipId])}::jsonb`, sql`(${approvals.expiresAt} is null or ${approvals.expiresAt} > ${new Date().toISOString()})`, key ? or(lt(approvals.requestedAt, key[0]), and(eq(approvals.requestedAt, key[0]), lt(approvals.approvalId, key[1]))) : undefined)).orderBy(desc(approvals.requestedAt), desc(approvals.approvalId)).limit(limit + 1);
+    async listPendingPage(orgId: string, membershipId: string, nextToken?: string, requestedLimit = 20, businessProfileId?: string) {
+        const scope = [workflowScope(orgId), 'approvals', membershipId, businessProfileId ?? null]; const key = pageToken(nextToken, scope); const limit = pageLimit(requestedLimit);
+        const rows = await this.db.select().from(approvals).where(and(eq(approvals.orgId, orgId), businessProfileId ? eq(approvals.businessProfileId, businessProfileId) : undefined, eq(approvals.status, 'pending'), sql`${approvals.assignedTo} @> ${JSON.stringify([membershipId])}::jsonb`, sql`(${approvals.expiresAt} is null or ${approvals.expiresAt} > ${new Date().toISOString()})`, key ? or(lt(approvals.requestedAt, key[0]), and(eq(approvals.requestedAt, key[0]), lt(approvals.approvalId, key[1]))) : undefined)).orderBy(desc(approvals.requestedAt), desc(approvals.approvalId)).limit(limit + 1);
         const items = rows.slice(0, limit); const last = items.at(-1); return { approvals: items.map(r => r.payload as WorkflowApproval), ...(rows.length > limit && last ? { nextToken: nextPage(scope, [last.requestedAt, last.approvalId]) } : {}) };
     }
-    async listPending(orgId: string): Promise<WorkflowApproval[]> { return (await this.db.select().from(approvals).where(and(eq(approvals.orgId, workflowScope(orgId)), eq(approvals.status, 'pending')))).map(r => r.payload as WorkflowApproval); }
+    async listPending(orgId: string, businessProfileId?: string): Promise<WorkflowApproval[]> { return (await this.db.select().from(approvals).where(and(eq(approvals.orgId, workflowScope(orgId)), businessProfileId ? eq(approvals.businessProfileId, businessProfileId) : undefined, eq(approvals.status, 'pending')))).map(r => r.payload as WorkflowApproval); }
     async resolve(orgId: string, approvalId: string, status: 'approved' | 'rejected', resolvedBy: string, comment?: string): Promise<void> {
         await this.db.transaction(async tx => { const a = (await tx.select().from(approvals).where(where(orgId, approvalId)).for('update'))[0]?.payload as WorkflowApproval | undefined; if (!a) throw new Error('Approval not found'); await tx.update(approvals).set(row({ ...a, status, resolvedAt: new Date().toISOString(), resolvedBy, ...(comment ? { comment } : {}) })).where(where(orgId, approvalId)); });
     }

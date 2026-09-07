@@ -4,6 +4,7 @@ import type { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 
 export interface WorkflowRuntimeRun extends Record<string, unknown> {
+    businessProfileId?: string;
     orgId: string; runId: string; workflowId: string;
     status: 'IN_PROGRESS' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'NEEDS_REVIEW' | 'WAITING_FOR_INPUT';
     inputRequest?: WorkflowInputRequest;
@@ -42,7 +43,7 @@ export class WorkflowRuntimeDynamoRepo {
     constructor(private readonly db: IDdb) {}
 
     listRunsPage(orgId: string, options: WorkflowPageOptions & { workflowId?: string; status?: string } = {}) {
-        return workflowPage<WorkflowRuntimeRun>(this.db, scope(orgId), 'WFRUN#', options, { workflowId: options.workflowId, status: options.status });
+        return workflowPage<WorkflowRuntimeRun>(this.db, scope(orgId), 'WFRUN#', options, { businessProfileId: options.businessProfileId, workflowId: options.workflowId, status: options.status });
     }
 
     listExecutionLogsPage(orgId: string, runId: string, options: WorkflowPageOptions & { nodeId?: string } = {}) {

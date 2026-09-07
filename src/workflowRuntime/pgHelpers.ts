@@ -13,7 +13,7 @@ export async function lockedRun(db: PgDb, orgId: string, runId: string): Promise
     const rows = await db.select().from(workflowRuns).where(runWhere(orgId, runId)).for('update');
     return rows[0]?.payload as WorkflowRuntimeRun ?? null;
 }
-export const runRow = (orgId: string, run: Record<string, any>) => ({ orgId: workflowScope(orgId), runId: String(run.runId), workflowId: String(run.workflowId), status: String(run.status), startedAt: String(run.startedAt ?? ''), payload: clean({ ...run, orgId, sk: `WFRUN#${run.runId}` }) });
+export const runRow = (orgId: string, run: Record<string, any>) => ({ businessProfileId: run.businessProfileId ?? null, orgId: workflowScope(orgId), runId: String(run.runId), workflowId: String(run.workflowId), status: String(run.status), startedAt: String(run.startedAt ?? ''), payload: clean({ ...run, orgId, sk: `WFRUN#${run.runId}` }) });
 export async function writeRun(db: PgDb, orgId: string, run: WorkflowRuntimeRun): Promise<void> { await db.update(workflowRuns).set(runRow(orgId, run)).where(runWhere(orgId, run.runId)); }
 export const wakeRow = (wake: WorkflowWake) => {
     workflowScope(wake.orgId); const dueAt = new Date(wake.dueAt).toISOString();

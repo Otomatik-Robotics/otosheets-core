@@ -16,7 +16,7 @@ const run = (runId = 'run', extra: Record<string, unknown> = {}) => ({ orgId: or
 const wake = (wakeId = 'wake') => ({ orgId: org, wakeId, runId: 'run', workflowId: 'wf', workflowVersion: 1, dueAt: '2026-09-08T01:00:00.000Z', kind: 'wait' as const });
 beforeAll(async () => {
     pg = new PGlite();
-    const migration = readFileSync('drizzle/0054_workflow_storage.sql', 'utf8');
+    const migration = readFileSync('drizzle/0054_workflow_storage.sql', 'utf8') + '\n--> statement-breakpoint\n' + readFileSync('drizzle/0055_workflow_business_profiles.sql', 'utf8');
     for (let repeat = 0; repeat < 2; repeat++) for (const statement of migration.split('--> statement-breakpoint')) await pg.exec(statement);
     db = drizzle(pg) as unknown as PgDb;
     definitions = new OnboardingWorkflowPgRepo(db); runtime = new WorkflowRuntimePgRepo(db); due = new WorkflowDuePgRepo(db); approvals = new WorkflowApprovalPgRepo(db);
@@ -132,4 +132,19 @@ test('maintenance fails closed and explicit Postgres mode avoids Dynamo fallback
     const before = process.env.DATA_BACKEND_WORKFLOWS;
     try { resetWorkflowStorageCache(); process.env.DATA_BACKEND_WORKFLOWS = 'maintenance'; await expect(workflowStorageMode()).rejects.toThrow('migration'); process.env.DATA_BACKEND_WORKFLOWS = 'pg'; expect(await workflowStorageMode()).toBe('pg'); process.env.DATA_BACKEND_WORKFLOWS = 'dual_pg'; await expect(workflowStorageMode()).rejects.toThrow('Invalid'); }
     finally { if (before === undefined) delete process.env.DATA_BACKEND_WORKFLOWS; else process.env.DATA_BACKEND_WORKFLOWS = before; resetWorkflowStorageCache(); }
+});
+
+test('profile filters precede pagination and tokens cannot cross profiles under the same org', async () => {
+    for (const id of ['a1', 'b1', 'a2']) {
+        const businessProfileId = id[0];
+        await definitions.saveVersion(org, { ...definition, workflowId: id, businessProfileId }, 0, id);
+        await runtime.create(org, run(id, { workflowId: id, businessProfileId }));
+    }
+    const first = await definitions.listPage(org, { businessProfileId: 'a', limit: 1 });
+    expect(first.items).toHaveLength(1);
+    expect(first.items[0].businessProfileId).toBe('a');
+    await expect(definitions.listPage(org, { businessProfileId: 'b', nextToken: first.nextToken })).rejects.toThrow('nextToken');
+    expect((await definitions.listVersionsPage(org, 'a1', { businessProfileId: 'b' })).items).toEqual([]);
+    expect((await runtime.listRunsPage(org, { businessProfileId: 'b' })).items.map(r => r.runId)).toEqual(['b1']);
+    expect(await definitions.saveVersion(org, { ...definition, workflowId: 'a1', businessProfileId: 'b' }, 1, 'steal')).toMatchObject({ status: 'conflict' });
 });
