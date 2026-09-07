@@ -1093,3 +1093,33 @@ describe('sealing', () => {
         expect(after.existingS3Key).toBe('sealed/done.pdf');
     });
 });
+
+describe('document studio drafts', () => {
+    it('keeps named parties on a draft before email addresses are supplied', async () => {
+        const envelopeId = id('studio');
+        await repo.create({ envelopeId, versionId: id('ver'), orgId: 'org_1', createdBy: 'user_1', title: 'Proposal', kind: 'proposal', bodyMarkdown: 'Original',
+            recipients: [{ recipientId: id('party'), role: 'signer', roleKey: 'counterparty', name: 'Alex', email: '' }],
+        });
+        expect(await repo.listRecipients(envelopeId)).toEqual([expect.objectContaining({ name: 'Alex', email: '', roleKey: 'counterparty' })]);
+    });
+    it('versions a wording change once, retains recipients, and rejects stale edits', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const r = await addRecipient(envelopeId, 'signer');
+        const input = { envelopeId, orgId: 'org_1', expectedVersionNo: 1, versionId: id('edit'), createdBy: 'user_1', bodyMarkdown: 'Revised scope', recipients: [{ recipientId: r, name: 'Alex', email: 'alex@example.com' }] };
+        expect(await repo.saveDraft(input)).toEqual({ versionNo: 2, changed: true });
+        expect(await repo.saveDraft(input)).toEqual({ versionNo: 2, changed: false });
+        expect(await repo.listRecipients(envelopeId)).toEqual([expect.objectContaining({ name: 'Alex', email: 'alex@example.com' })]);
+        await expect(repo.saveDraft({ ...input, versionId: id('edit'), bodyMarkdown: 'Stale edit' })).rejects.toThrow(/changed/);
+        await expect(repo.saveDraft({ ...input, orgId: 'org_2' })).rejects.toThrow(/No such/);
+    });
+    it('does not discard prepared pages for an email-only correction and freezes once sending starts', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const r = await addRecipient(envelopeId, 'signer');
+        await repo.attachRendered(envelopeId, versionId, { s3Key: 'ready.pdf', sha256: 'hash' });
+        await repo.saveDraft({ envelopeId, orgId: 'org_1', expectedVersionNo: 1, versionId: id('edit'), createdBy: 'user_1', recipients: [{ recipientId: r, name: null, email: 'correct@example.com' }] });
+        expect((await repo.listVersions(envelopeId))[0].s3Key).toBe('ready.pdf');
+        expect(await repo.beginDraftSend(envelopeId, 'org_1', 1, 'out_for_signing')).toBe(true);
+        expect(await repo.beginDraftSend(envelopeId, 'org_1', 1, 'out_for_signing')).toBe(false);
+        await expect(repo.saveDraft({ envelopeId, orgId: 'org_1', expectedVersionNo: 1, versionId: id('edit'), createdBy: 'user_1', bodyMarkdown: 'Too late' })).rejects.toThrow(/already/);
+    });
+});
