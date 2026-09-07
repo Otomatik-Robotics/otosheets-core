@@ -85,3 +85,5 @@ export * from './basReporting';
 export * from './incomeReporting';
 
 export * from "./workflowRuntime";
+
+export * from "./smsDelivery";
