@@ -1123,3 +1123,24 @@ describe('document studio drafts', () => {
         await expect(repo.saveDraft({ envelopeId, orgId: 'org_1', expectedVersionNo: 1, versionId: id('edit'), createdBy: 'user_1', bodyMarkdown: 'Too late' })).rejects.toThrow(/already/);
     });
 });
+
+
+describe('draft rendering concurrency', () => {
+    it('moves a name correction to a new version even when the first render is in flight', async () => {
+        const envelopeId = id('studio');
+        const firstVersion = id('ver');
+        const recipientId = id('party');
+        await repo.create({ envelopeId, versionId: firstVersion, orgId: 'org_1', createdBy: 'user_1', title: 'Proposal', kind: 'proposal', bodyMarkdown: 'Prepared for {{client}}',
+            recipients: [{ recipientId, role: 'signer', roleKey: 'client', name: 'Alex', email: '' }],
+        });
+        const result = await repo.saveDraft({ envelopeId, orgId: 'org_1', expectedVersionNo: 1, versionId: id('edit'), createdBy: 'user_1',
+            recipients: [{ recipientId, name: 'Alexandra', email: 'alex@example.com' }],
+        });
+        expect(result).toEqual({ versionNo: 2, changed: true });
+        // The old render can finish, but its bytes cannot become the current copy.
+        await repo.attachRendered(envelopeId, firstVersion, { s3Key: 'old-name.pdf', sha256: 'old' });
+        expect((await repo.get(envelopeId))?.currentVersionNo).toBe(2);
+        expect((await repo.listVersions(envelopeId)).find(v => v.versionNo === 2)?.s3Key).toBeNull();
+        expect(await repo.beginDraftSend(envelopeId, 'org_1', 1, 'out_for_signing')).toBe(false);
+    });
+});

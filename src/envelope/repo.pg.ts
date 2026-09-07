@@ -468,8 +468,6 @@ export class EnvelopePgRepo {
                 .onConflictDoNothing({ target: envelopeEvents.eventId });
         });
 
-
-
         const row = await this.get(input.envelopeId);
         if (!row) throw new Error('Envelope vanished immediately after creation');
         return row;
@@ -508,7 +506,7 @@ export class EnvelopePgRepo {
             }
             const changedBody = input.bodyMarkdown !== undefined && input.bodyMarkdown !== current.bodyMarkdown;
             if (changedBody && current.s3Key && !current.bodyMarkdown) throw new Error('Edit an uploaded document in its original file');
-            if (!changedBody && !(changedNames && current.bodyMarkdown && current.s3Key)) {
+            if (!changedBody && !(changedNames && current.bodyMarkdown)) {
                 return { versionNo: current.versionNo, changed: false };
             }
             const now = new Date().toISOString();
