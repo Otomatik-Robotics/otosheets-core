@@ -22,7 +22,7 @@ function versionConflict(error: unknown): boolean {
     return failure.name === 'ConditionalCheckFailedException' || (failure.name === 'TransactionCanceledException' && failure.CancellationReasons?.some(reason => reason.Code === 'ConditionalCheckFailed') === true);
 }
 
-export class OnboardingWorkflowRepo {
+export class OnboardingWorkflowDynamoRepo {
     constructor(private ddb: IDdb) {}
 
     async get(orgId: string, workflowId: string): Promise<OnboardingWorkflow | null> {
@@ -117,3 +117,6 @@ export class OnboardingWorkflowRepo {
         });
     }
 }
+
+export interface IOnboardingWorkflowRepo extends Pick<OnboardingWorkflowDynamoRepo, keyof OnboardingWorkflowDynamoRepo> {}
+export { OnboardingWorkflowRepo } from './factory';

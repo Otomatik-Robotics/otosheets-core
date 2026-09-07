@@ -90,7 +90,7 @@ function approvalConflict(error: unknown): boolean {
     return failure.name === 'ConditionalCheckFailedException' || (failure.name === 'TransactionCanceledException' && failure.CancellationReasons?.some(reason => reason.Code === 'ConditionalCheckFailed') === true);
 }
 
-export class WorkflowApprovalRepo {
+export class WorkflowApprovalDynamoRepo {
     constructor(private ddb: IDdb) {}
 
     async create(approval: Omit<WorkflowApproval, 'sk'>): Promise<boolean> {
@@ -179,3 +179,6 @@ export class WorkflowApprovalRepo {
         });
     }
 }
+
+export interface IWorkflowApprovalRepo extends Pick<WorkflowApprovalDynamoRepo, keyof WorkflowApprovalDynamoRepo> {}
+export { WorkflowApprovalRepo } from './approval.factory';

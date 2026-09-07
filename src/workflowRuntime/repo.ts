@@ -38,7 +38,7 @@ function conflict(error: unknown) {
 }
 
 /** Tenant data operations. Every write is conditional on creation or the active lease. */
-export class WorkflowRuntimeRepo {
+export class WorkflowRuntimeDynamoRepo {
     constructor(private readonly db: IDdb) {}
 
     listRunsPage(orgId: string, options: WorkflowPageOptions & { workflowId?: string; status?: string } = {}) {
@@ -215,7 +215,7 @@ export class WorkflowRuntimeRepo {
 }
 
 /** Privileged scheduling metadata only. Do not expose this repo to tenant requests. */
-export class WorkflowDueRepo {
+export class WorkflowDueDynamoRepo {
     constructor(private readonly db: IDdb) {}
     async listDue(now: string, nextToken?: string, limit = 20): Promise<{ items: WorkflowDueLocator[]; nextToken?: string }> {
         const dueThrough = `${new Date(now).toISOString()}#~`;
@@ -233,3 +233,7 @@ export class WorkflowDueRepo {
         };
     }
 }
+
+export interface IWorkflowRuntimeRepo extends Pick<WorkflowRuntimeDynamoRepo, keyof WorkflowRuntimeDynamoRepo> {}
+export interface IWorkflowDueRepo extends Pick<WorkflowDueDynamoRepo, keyof WorkflowDueDynamoRepo> {}
+export { WorkflowRuntimeRepo, WorkflowDueRepo } from './factory';
