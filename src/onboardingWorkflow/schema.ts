@@ -57,6 +57,10 @@ const WorkflowNodeDataSchema = z.object({
     toolDomain: z.enum(['billing', 'operations', 'growth', 'team']).optional(),
 
     // APPROVAL fields
+    approverType: z.string().optional(),
+    approverUserId: z.string().optional(),
+    approvalMessage: z.string().optional(),
+    expiryDays: z.number().int().min(1).max(30).optional(),
     approverIds: z.array(z.string()).optional(),
     approvalMode: z.enum(['any', 'all']).optional(),
     approvalTimeoutDays: z.number().optional(),
