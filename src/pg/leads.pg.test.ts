@@ -69,6 +69,16 @@ describe('LeadPgRepo', () => {
 
 describe('BookingPgRepo', () => {
     const r = () => new BookingPgRepo(db);
+    it('filters profile and date before pagination for bookings with the same owner', async () => {
+        for (const [id, profile, date] of [['scoped_a1', 'a', '2026-09-10'], ['scoped_a2', 'a', '2026-09-11'], ['scoped_b', 'b', '2026-09-10'], ['scoped_later', 'a', '2026-10-10']]) {
+            await r().createBooking('org_1', 'u1', id, { businessProfileId: profile, date, startTime: '09:00', endTime: '10:00', clientName: id, status: 'CONFIRMED' });
+        }
+        const params = { orgId: 'org_1', businessProfileId: 'a', from: '2026-09-01', to: '2026-09-30', limit: 1 };
+        const first = await r().listOrgBookingsPaginated(params);
+        const second = await r().listOrgBookingsPaginated({ ...params, exclusiveStartKey: first.lastEvaluatedKey });
+        expect([...first.items, ...second.items].map(b => b.bookingId).sort()).toEqual(['scoped_a1', 'scoped_a2']);
+        expect((await r().listBookingsByDate('org_1', params.from, params.to, 'b')).map(b => b.bookingId)).toEqual(['scoped_b']);
+    });
     it('create reconstructs sk/dateSk; date-range query', async () => {
         await r().createBooking('org_1', 'u1', 'b_1', { date: '2026-07-10', startTime: '09:00', endTime: '10:00', clientName: 'Sue', status: 'CONFIRMED', source: 'WEB' });
         const b = await r().getBooking('org_1', 'u1', 'b_1');

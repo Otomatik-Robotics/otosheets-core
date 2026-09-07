@@ -1,3 +1,4 @@
+import type { BookingListParams } from './repo';
 import { and, eq, sql, desc, lt, or, gte, lte } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { bookings } from '../pg/schema/leadsPipelines';
@@ -35,10 +36,12 @@ export class BookingPgRepo implements IBookingRepo {
         const rows = await this.db.select().from(bookings).where(eq(bookings.orgId, orgId));
         return rows.map(toDto);
     }
-    async listOrgBookingsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; status?: string; }): Promise<PaginatedResult<Booking>> {
-        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status } = params;
+    async listOrgBookingsPaginated(params: BookingListParams): Promise<PaginatedResult<Booking>> {
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status, from, to } = params;
         const conds: any[] = [eq(bookings.orgId, orgId)];
         if (businessProfileId) conds.push(eq(bookings.businessProfileId, businessProfileId));
+        if (from) conds.push(gte(bookings.date, from));
+        if (to) conds.push(lte(bookings.date, to));
         if (status) conds.push(eq(bookings.status, status));
         const cursor = keysetFromStartKey(exclusiveStartKey, 'bookingId');
         if (cursor) conds.push(or(lt(bookings.createdAt, new Date(cursor.createdAt)), and(eq(bookings.createdAt, new Date(cursor.createdAt)), lt(bookings.bookingId, cursor.id))));
@@ -47,8 +50,8 @@ export class BookingPgRepo implements IBookingRepo {
         const lastEvaluatedKey = rows.length === limit && last ? keysetStartKey({ createdAt: (last.createdAt as Date).toISOString(), id: last.bookingId }) : undefined;
         return { items: rows.map(toDto), lastEvaluatedKey };
     }
-    async listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]> {
-        const rows = await this.db.select().from(bookings).where(and(eq(bookings.orgId, orgId), gte(bookings.date, from), lte(bookings.date, to)));
+    async listBookingsByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Booking[]> {
+        const rows = await this.db.select().from(bookings).where(and(eq(bookings.orgId, orgId), gte(bookings.date, from), lte(bookings.date, to), businessProfileId ? eq(bookings.businessProfileId, businessProfileId) : undefined));
         return rows.map(toDto);
     }
     async listBookingsByLead(orgId: string, leadId: string): Promise<Booking[]> {
