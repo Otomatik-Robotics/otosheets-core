@@ -12,6 +12,10 @@ export interface WorkflowRuntimeStep {
     status: 'STARTED' | 'DONE' | 'FAILED' | 'WAITING';
     outcome?: Record<string, unknown>; dueAt?: string; startedAt?: number;
 }
+export interface WorkflowDeliveryReview {
+    reviewKey: string; nodeId: string; expectedOwner: string; expectedStartedAt: number;
+    decision: 'retry' | 'resume' | 'stop'; expectedStatus?: 'STARTED' | 'DONE'; actorUserId: string; note: string; confirmedNotDelivered?: boolean;
+}
 export interface WorkflowWake {
     orgId: string; wakeId: string; runId: string; workflowId: string; dueAt: string;
     kind?: 'wait' | 'schedule'; workflowVersion?: number;
@@ -71,6 +75,55 @@ export class WorkflowRuntimeRepo {
             ConditionExpression: 'leaseOwner = :owner', ExpressionAttributeValues: { ':owner': owner },
         } }]);
     }
+    /** An explicit operator decision releases only the reviewed attempt, atomically with its wake. */
+    async resolveDeliveryReview(orgId: string, runId: string, review: WorkflowDeliveryReview, now = Date.now()): Promise<'resolved' | 'replayed' | 'conflict'> {
+        scope(orgId);
+        if (!runId || !review.nodeId || !review.expectedOwner || !review.actorUserId || !/^[a-zA-Z0-9_-]{1,100}$/.test(review.reviewKey) ||
+            !Number.isFinite(review.expectedStartedAt) || !Number.isFinite(now) || !review.note.trim() || review.note.length > 2000 ||
+            !['retry', 'resume', 'stop'].includes(review.decision) || !['STARTED', 'DONE'].includes(review.expectedStatus ?? 'STARTED') || (review.decision === 'retry' && (review.confirmedNotDelivered !== true || review.expectedStatus === 'DONE')) || (review.decision === 'resume' && review.expectedStatus !== 'DONE')) throw new Error('Invalid workflow delivery review');
+        const key = { orgId, sk: `WFREVIEW#${encodeURIComponent(runId)}#${review.reviewKey}` };
+        const fingerprint = JSON.stringify([review.nodeId, review.expectedOwner, review.expectedStartedAt, review.decision, review.actorUserId, review.note.trim(), review.confirmedNotDelivered === true, review.expectedStatus ?? 'STARTED']);
+        const replay = async () => {
+            const { Item } = await this.db.getItem(Tables.ONBOARDING, key, { ConsistentRead: true });
+            return Item ? (Item.fingerprint === fingerprint ? 'replayed' : 'conflict') as 'replayed' | 'conflict' : null;
+        };
+        const existing = await replay();
+        if (existing) return existing;
+        const run = await this.get(orgId, runId);
+        if (!run || run.status !== 'NEEDS_REVIEW' || typeof run.workflowVersion !== 'number') return 'conflict';
+        const reviewedAt = new Date(now).toISOString();
+        const lastDeliveryReview = { nodeId: review.nodeId, decision: review.decision, actorUserId: review.actorUserId, note: review.note.trim(), reviewedAt, reviewKey: review.reviewKey };
+        const ttl = Math.floor(now / 1000) + 455 * 86400;
+        const stepCondition = {
+            TableName: Tables.ONBOARDING, Key: stepKey(orgId, runId, review.nodeId),
+            ConditionExpression: review.expectedStatus === 'DONE' ? '#status = :started AND #owner = :owner AND attribute_exists(outcome)' : '#status = :started AND #owner = :owner AND startedAt = :startedAt',
+            ExpressionAttributeNames: { '#status': 'status', '#owner': 'owner' },
+            ExpressionAttributeValues: { ':started': review.expectedStatus ?? 'STARTED', ':owner': review.expectedOwner, ...(review.expectedStatus === 'DONE' ? {} : { ':startedAt': review.expectedStartedAt }) },
+        };
+        const operations: Parameters<IDdb['transactWrite']>[0] = [
+            { Update: {
+                TableName: Tables.ONBOARDING, Key: runKey(orgId, runId),
+                UpdateExpression: review.decision !== 'stop'
+                    ? 'SET #status = :status, leaseUntil = :zero, lastDeliveryReview = :review, ttl = :ttl REMOVE #error, completedAt, reviewNodeId, leaseOwner'
+                    : 'SET #status = :status, leaseUntil = :zero, lastDeliveryReview = :review, ttl = :ttl, completedAt = :at, #error = :error REMOVE reviewNodeId, leaseOwner',
+                ConditionExpression: '#status = :needsReview AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :now) AND workflowVersion = :version AND #nodes.#node = :paused',
+                ExpressionAttributeNames: { '#status': 'status', '#error': 'error', '#nodes': 'nodeStatuses', '#node': review.nodeId },
+                ExpressionAttributeValues: { ':status': review.decision !== 'stop' ? 'PAUSED' : 'FAILED', ':zero': 0, ':review': lastDeliveryReview, ':ttl': ttl,
+                    ':needsReview': 'NEEDS_REVIEW', ':now': now, ':version': run.workflowVersion, ':paused': 'paused',
+                    ...(review.decision === 'stop' ? { ':at': reviewedAt, ':error': 'Stopped after delivery review' } : {}) },
+            } },
+            review.decision === 'retry' ? { Delete: stepCondition } : { ConditionCheck: stepCondition },
+            { Put: { TableName: Tables.ONBOARDING, Item: { ...key, runId, ...lastDeliveryReview, fingerprint, ttl }, ConditionExpression: 'attribute_not_exists(sk)' } },
+        ];
+        if (review.decision !== 'stop') {
+            const wake: WorkflowWake = { orgId, runId, workflowId: run.workflowId, workflowVersion: run.workflowVersion as number,
+                wakeId: `review-${encodeURIComponent(runId)}-${review.reviewKey}`, dueAt: reviewedAt, kind: 'wait' };
+            operations.push({ Put: { TableName: Tables.ONBOARDING, Item: { ...wake, ...wakeKey(orgId, wake.wakeId), ...dueKey(wake), ttl }, ConditionExpression: 'attribute_not_exists(sk)' } });
+        }
+        try { await this.db.transactWrite(operations); return 'resolved'; }
+        catch (error) { if (conflict(error)) return (await replay()) ?? 'conflict'; throw error; }
+    }
+
     async getStep(orgId: string, runId: string, nodeId: string): Promise<WorkflowRuntimeStep | null> {
         const { Item } = await this.db.getItem(Tables.ONBOARDING, stepKey(orgId, runId, nodeId), { ConsistentRead: true });
         return Item as WorkflowRuntimeStep ?? null;
