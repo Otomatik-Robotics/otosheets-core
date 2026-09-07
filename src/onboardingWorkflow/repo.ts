@@ -36,9 +36,9 @@ export class OnboardingWorkflowRepo {
 
     async put(orgId: string, workflow: Omit<OnboardingWorkflow, 'orgId' | 'sk'>): Promise<void> {
         await this.ddb.put(Tables.ONBOARDING, {
+            ...workflow,
             orgId,
             sk: onboardingWorkflowSk(workflow.workflowId),
-            ...workflow,
         });
     }
 

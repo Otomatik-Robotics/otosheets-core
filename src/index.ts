@@ -83,3 +83,5 @@ export * from './asset';
 export * from './basPeriod';
 export * from './basReporting';
 export * from './incomeReporting';
+
+export * from "./workflowRuntime";

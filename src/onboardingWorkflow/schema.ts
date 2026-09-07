@@ -19,6 +19,8 @@ const WorkflowNodeDataSchema = z.object({
         'TOOL_CALL',
         'APPROVAL',
         'AGENT',
+        'SEND_EMAIL', 'SEND_SMS', 'GENERATE_DOCUMENT', 'FILL_TEMPLATE',
+        'CREATE_CALENDAR_EVENT', 'SCHEDULE_CALL', 'DELAY', 'SYSTEM',
     ]),
 
     /** Plain-English instructions describing what this step does and why */
@@ -26,6 +28,12 @@ const WorkflowNodeDataSchema = z.object({
 
     // TRIGGER fields
     eventType: z.string().optional(),
+    schedule: z.object({
+        frequency: z.enum(['once', 'weekly', 'monthly']),
+        timeZone: z.string(), time: z.string(), date: z.string().optional(),
+        daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
+        dayOfMonth: z.union([z.number().int().min(1).max(31), z.literal('last')]).optional(),
+    }).optional(),
     eventFilters: z.array(EventFilterSchema).optional(),
     roleFilters: z.array(z.string()).optional(),
     teamFilters: z.array(z.string()).optional(),
@@ -57,6 +65,38 @@ const WorkflowNodeDataSchema = z.object({
     agentToolDomains: z.array(z.enum(['billing', 'operations', 'growth', 'team'])).optional(),
     agentOutputKey: z.string().optional(),
     agentMaxTurns: z.number().optional(),
+
+    emailTo: z.string().optional(),
+    emailSubject: z.string().optional(),
+    emailBody: z.string().optional(),
+    emailAttachments: z.array(z.object({ documentId: z.string(), filename: z.string().optional() })).max(5).optional(),
+    smsTo: z.string().optional(),
+    smsBody: z.string().optional(),
+    fillTemplateId: z.string().optional(),
+    fillVariables: z.record(z.string()).optional(),
+    fillFilename: z.string().optional(),
+    calendarTitle: z.string().optional(),
+    calendarStart: z.string().optional(),
+    calendarEnd: z.string().optional(),
+    calendarTimezone: z.string().optional(),
+    calendarDescription: z.string().optional(),
+    calendarLocation: z.string().optional(),
+    documentTemplateId: z.string().optional(),
+    documentTitle: z.string().optional(),
+    documentRoles: z.array(z.object({ roleKey: z.string(), name: z.string().optional(), email: z.string().optional() })).optional(),
+    documentSend: z.boolean().optional(),
+    callLeadField: z.string().optional(),
+    callDirective: z.string().optional(),
+    callFirstMessage: z.string().optional(),
+    callKnownCustomer: z.boolean().optional(),
+    callVerifyIdentity: z.boolean().optional(),
+    callAllowVoicemail: z.boolean().optional(),
+    callBrief: z.boolean().optional(),
+    delayDays: z.number().int().min(0).optional(),
+    delayHours: z.number().int().min(0).max(23).optional(),
+    delayMinutes: z.number().int().min(0).max(59).optional(),
+    delayUntil: z.string().optional(),
+    delayTimezone: z.string().optional(),
 
     // Variable capture (available on any node)
     outputVariables: z.array(z.object({
