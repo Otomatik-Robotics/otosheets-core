@@ -27,3 +27,16 @@ test('workflow search is applied in the database and version/log pages stay with
  await expect(repo.listPage('org', { nextToken: 'invalid' })).rejects.toThrow('page token');
  await expect(repo.listPage('org', { limit: 101 })).rejects.toThrow('limit');
 });
+test('log node filters execute in the database and cannot reuse another node or run token', async () => {
+ const query = vi.fn().mockResolvedValue({ Items: [], LastEvaluatedKey: { orgId: 'org', sk: 'EXECLOG#run#020' } });
+ const repo = new WorkflowRuntimeRepo({ query } as unknown as IDdb);
+ const first = await repo.listExecutionLogsPage('org', 'run', { nodeId: 'email' });
+ expect(first.items).toEqual([]); expect(first.nextToken).toBeTruthy();
+ expect(query.mock.calls[0][0]).toMatchObject({ Limit: 20, FilterExpression: '#runId = :runId AND #nodeId = :nodeId', ExpressionAttributeValues: { ':runId': 'run', ':nodeId': 'email' } });
+ await repo.listExecutionLogsPage('org', 'run', { nodeId: 'email', nextToken: first.nextToken });
+ expect(query.mock.calls[1][0].ExclusiveStartKey).toEqual({ orgId: 'org', sk: 'EXECLOG#run#020' });
+ for (const [org, run, nodeId] of [['org', 'run', 'sms'], ['org', 'other', 'email'], ['other', 'run', 'email']]) {
+  await expect(repo.listExecutionLogsPage(org, run, { nodeId, nextToken: first.nextToken })).rejects.toThrow('page token');
+ }
+ expect(query).toHaveBeenCalledTimes(2);
+});

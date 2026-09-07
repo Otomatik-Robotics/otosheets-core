@@ -43,8 +43,8 @@ export class WorkflowRuntimeRepo {
         return workflowPage<WorkflowRuntimeRun>(this.db, scope(orgId), 'WFRUN#', options, { workflowId: options.workflowId, status: options.status });
     }
 
-    listExecutionLogsPage(orgId: string, runId: string, options: WorkflowPageOptions = {}) {
-        return workflowPage<Record<string, unknown>>(this.db, scope(orgId), `EXECLOG#${runId}#`, options, { runId });
+    listExecutionLogsPage(orgId: string, runId: string, options: WorkflowPageOptions & { nodeId?: string } = {}) {
+        return workflowPage<Record<string, unknown>>(this.db, scope(orgId), `EXECLOG#${runId}#`, options, { runId, nodeId: options.nodeId });
     }
 
     async get(orgId: string, runId: string): Promise<WorkflowRuntimeRun | null> {

@@ -2,7 +2,7 @@ import type { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 
 export interface WorkflowPageOptions { nextToken?: string; limit?: number }
-interface Filters { workflowId?: string; runId?: string; status?: string; isActive?: boolean; search?: string }
+interface Filters { workflowId?: string; runId?: string; nodeId?: string; status?: string; isActive?: boolean; search?: string }
 
 /** Pagination tokens belong to one tenant, record prefix and filter selection. */
 export async function workflowPage<T>(db: IDdb, orgId: string, prefix: string, options: WorkflowPageOptions, filters: Filters = {}): Promise<{ items: T[]; nextToken?: string }> {
@@ -12,7 +12,7 @@ export async function workflowPage<T>(db: IDdb, orgId: string, prefix: string, o
     const values: Record<string, unknown> = { ':org': orgId, ':prefix': prefix };
     const names: Record<string, string> = {};
     const conditions: string[] = [];
-    for (const field of ['workflowId', 'runId', 'status', 'isActive'] as const) {
+    for (const field of ['workflowId', 'runId', 'nodeId', 'status', 'isActive'] as const) {
         if (filters[field] === undefined) continue;
         names[`#${field}`] = field;
         values[`:${field}`] = filters[field];
