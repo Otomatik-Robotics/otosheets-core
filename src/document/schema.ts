@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const DocumentStoredSchema = z.object({
     orgId: z.string(),
+    businessProfileId: z.string().nullish(),
     sk: z.string(),                       // DOC#{documentId}
     documentId: z.string(),
     name: z.string(),                     // Display name (editable)

@@ -21,6 +21,28 @@ export class DocumentRepo {
         return (Items as DocumentStored[]) ?? [];
     }
 
+    async listPage(orgId: string, options: { businessProfileId: string; limit?: number; nextToken?: string }): Promise<{ items: DocumentStored[]; nextToken?: string }> {
+        if (!options.businessProfileId) throw new Error('Business profile is required');
+        const scope = { orgId, businessProfileId: options.businessProfileId };
+        let key: Record<string, any> | undefined;
+        if (options.nextToken) {
+            try {
+                const token = JSON.parse(Buffer.from(options.nextToken, 'base64url').toString());
+                if (token.orgId !== orgId || token.businessProfileId !== options.businessProfileId || token.key?.orgId !== orgId || !String(token.key?.sk).startsWith('DOC#')) throw new Error();
+                key = token.key;
+            } catch { throw new Error('Invalid document nextToken'); }
+        }
+        const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 20)));
+        const page = await this.ddb.query({
+            TableName: Tables.ONBOARDING,
+            KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
+            FilterExpression: 'businessProfileId = :profile',
+            ExpressionAttributeValues: { ':orgId': orgId, ':prefix': 'DOC#', ':profile': options.businessProfileId },
+            Limit: limit, ExclusiveStartKey: key,
+        });
+        return { items: (page.Items ?? []) as DocumentStored[], ...(page.LastEvaluatedKey ? { nextToken: Buffer.from(JSON.stringify({ ...scope, key: page.LastEvaluatedKey })).toString('base64url') } : {}) };
+    }
+
     async create(orgId: string, doc: Omit<DocumentStored, 'orgId' | 'sk' | 'createdAt'>): Promise<DocumentStored> {
         const now = new Date().toISOString();
         const item: DocumentStored = {
@@ -29,8 +51,15 @@ export class DocumentRepo {
             ...doc,
             createdAt: now,
         };
-        await this.ddb.put(Tables.ONBOARDING, item);
-        return item;
+        try {
+            await this.ddb.transactWrite([{ Put: { TableName: Tables.ONBOARDING, Item: item, ConditionExpression: 'attribute_not_exists(sk)' } }]);
+            return item;
+        } catch (error) {
+            if ((error as Error).name !== 'TransactionCanceledException' && (error as Error).name !== 'ConditionalCheckFailedException') throw error;
+            const existing = await this.get(orgId, doc.documentId);
+            if (!existing || existing.businessProfileId !== doc.businessProfileId || existing.s3Key !== doc.s3Key) throw new Error('Document ID already exists');
+            return existing;
+        }
     }
 
     async update(orgId: string, documentId: string, updates: Partial<Pick<DocumentStored, 'name' | 'description' | 'category'>>): Promise<void> {
