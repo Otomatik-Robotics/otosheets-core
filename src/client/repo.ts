@@ -21,7 +21,7 @@ export interface IClientRepo {
     getClient(orgId: string, clientId: string): Promise<Client | null>;
     listClients(orgId: string): Promise<Client[]>;
     listClientsPaginated(params: ListClientsPaginatedParams): Promise<PaginatedResult<Client>>;
-    findClientByEmail(orgId: string, email: string): Promise<Client | null>;
+    findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null>;
     countClients(orgId: string): Promise<number>;
     listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string; name: string }>>;
     createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;
@@ -120,17 +120,23 @@ export class ClientDynamoRepo implements IClientRepo {
         };
     }
 
-    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
-        const { Items } = await this.ddb.query({
-            TableName: Tables.CLIENTS,
-            IndexName: 'CreatedAtIndex',
-            KeyConditionExpression: 'orgId = :orgId',
-            FilterExpression: '#email = :email',
-            ExpressionAttributeNames: { '#email': 'email' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':email': email.toLowerCase() },
-            Limit: 1,
-        });
-        return (Items?.[0] as Client) ?? null;
+    async findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null> {
+        let exclusiveStartKey: Record<string, any> | undefined;
+        do {
+            const result = await this.ddb.query({
+                TableName: Tables.CLIENTS,
+                IndexName: 'CreatedAtIndex',
+                KeyConditionExpression: 'orgId = :orgId',
+                FilterExpression: '#email = :email' + (businessProfileId ? ' AND #profile = :profile' : ''),
+                ExpressionAttributeNames: { '#email': 'email', ...(businessProfileId ? { '#profile': 'businessProfileId' } : {}) },
+                ExpressionAttributeValues: { ':orgId': orgId, ':email': email.toLowerCase(), ...(businessProfileId ? { ':profile': businessProfileId } : {}) },
+                Limit: 100,
+                ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+            });
+            if (result.Items?.length) return result.Items[0] as Client;
+            exclusiveStartKey = result.LastEvaluatedKey;
+        } while (exclusiveStartKey);
+        return null;
     }
 
     async countClients(orgId: string): Promise<number> {

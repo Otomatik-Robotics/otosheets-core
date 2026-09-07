@@ -47,10 +47,10 @@ export class RoutingClientRepo implements IClientRepo {
         // read with a Dynamo cursor is not a like-for-like comparison.
         return this.pick(route).listClientsPaginated(params);
     }
-    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
+    async findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).findClientByEmail(orgId, email);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'findClientByEmail' }, result, () => this.pg.findClientByEmail(orgId, email));
+        const result = await this.pick(route).findClientByEmail(orgId, email, businessProfileId);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'findClientByEmail' }, result, () => this.pg.findClientByEmail(orgId, email, businessProfileId));
         return result;
     }
     async countClients(orgId: string): Promise<number> {

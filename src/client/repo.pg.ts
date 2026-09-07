@@ -126,9 +126,9 @@ export class ClientPgRepo implements IClientRepo {
         return { items, lastEvaluatedKey };
     }
 
-    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
+    async findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null> {
         const rows = await this.db.select().from(clients)
-            .where(and(eq(clients.orgId, orgId), eq(clients.email, email.toLowerCase()))).limit(1);
+            .where(and(eq(clients.orgId, orgId), eq(clients.email, email.toLowerCase()), businessProfileId ? eq(clients.businessProfileId, businessProfileId) : undefined)).limit(1);
         if (!rows[0]) return null;
         const contacts = (await this.contactsByClient([rows[0].clientId])).get(rows[0].clientId) ?? [];
         return this.toClient(rows[0], contacts);
