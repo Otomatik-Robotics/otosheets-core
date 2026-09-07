@@ -129,7 +129,7 @@ export class InvoicePgRepo implements IInvoiceRepo {
      * silently stop matching the list.
      */
     private invoiceFilterConds(params: InvoiceTotalsFilter): any[] {
-        const { orgId, businessProfileId, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
+        const { orgId, businessProfileId, overdueBefore, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
         const conds: any[] = [eq(invoices.orgId, orgId)];
         if (businessProfileId) conds.push(eq(invoices.businessProfileId, businessProfileId));
 
@@ -143,6 +143,7 @@ export class InvoicePgRepo implements IInvoiceRepo {
         if (isQuote === true) conds.push(eq(invoices.isQuote, true));
         else if (isQuote === false) conds.push(or(sql`${invoices.isQuote} IS NULL`, eq(invoices.isQuote, false)));
 
+        if (overdueBefore) conds.push(lt(invoices.dueDate, overdueBefore), inArray(invoices.status, ['SENT', 'PARTIAL', 'OVERDUE']));
         if (status) conds.push(eq(invoices.status, status));
         if (clientId) conds.push(eq(invoices.clientId, clientId));
         if (search) {

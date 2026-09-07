@@ -17,6 +17,8 @@ export interface ListInvoicesPaginatedParams {
     isPaymentLink?: boolean;
     clientId?: string;
     search?: string;
+    /** Strict due-date cutoff for SENT, PARTIAL and OVERDUE invoices. */
+    overdueBefore?: string;
     dueDateFrom?: string;
     dueDateTo?: string;
     /** Inclusive YYYY-MM-DD bounds on the invoice issue date (DTO `date`). */
@@ -88,11 +90,23 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         names: Record<string, string>;
         values: Record<string, any>;
     } {
-        const { orgId, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
+        const { orgId, businessProfileId, overdueBefore, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
 
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
+        if (businessProfileId) {
+            filterParts.push('#businessProfileId = :businessProfileId');
+            names['#businessProfileId'] = 'businessProfileId';
+            values[':businessProfileId'] = businessProfileId;
+        }
+        if (overdueBefore) {
+            filterParts.push('#dueDate < :overdueBefore AND #overdueStatus IN (:sentStatus, :partialStatus, :overdueStatus)');
+            names['#dueDate'] = 'dueDate';
+            names['#overdueStatus'] = 'status';
+            Object.assign(values, { ':overdueBefore': overdueBefore, ':sentStatus': 'SENT', ':partialStatus': 'PARTIAL', ':overdueStatus': 'OVERDUE' });
+        }
+
 
         if (isPaymentLink === true) {
             filterParts.push('#isPaymentLink = :isPaymentLinkVal');

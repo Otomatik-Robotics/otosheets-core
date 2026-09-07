@@ -284,3 +284,30 @@ describe('InvoicePgRepo.getInvoiceTotals', () => {
         expect(all.invoiced).toBe(10799); // 500 + 300 + 9999
     });
 });
+
+describe('invoice profile and overdue pagination', () => {
+    it('filters by profile, client, strict cutoff and status before paging', async () => {
+        const repo = new InvoicePgRepo(db, db);
+        const clientRepo = new ClientPgRepo(db);
+        await clientRepo.createClient('org_1', 'scope-client', { createdBy: 'u', name: 'Scope' });
+        await clientRepo.createClient('org_1', 'other-scope-client', { createdBy: 'u', name: 'Other' });
+        const rows = [
+            ['sc-a', 'a', 'scope-client', 'SENT', '2026-01-01'],
+            ['sc-partial', 'a', 'scope-client', 'PARTIAL', '2026-01-01'],
+            ['sc-foreign', 'b', 'scope-client', 'SENT', '2026-01-01'],
+            ['sc-client', 'a', 'other-scope-client', 'SENT', '2026-01-01'],
+            ['sc-today', 'a', 'scope-client', 'SENT', '2026-02-01'],
+            ['sc-paid', 'a', 'scope-client', 'PAID', '2026-01-01'],
+            ['sc-draft', 'a', 'scope-client', 'DRAFT', '2026-01-01'],
+        ];
+        for (const [id, profile, clientId, status, dueDate] of rows) {
+            await repo.createInvoice('org_1', 'u', id, { invoiceNumber: id, businessProfileId: profile, clientId, status, dueDate });
+        }
+        const filter = { orgId: 'org_1', businessProfileId: 'a', clientId: 'scope-client', overdueBefore: '2026-02-01', limit: 1 };
+        const first = await repo.listOrgInvoicesPaginated(filter);
+        expect(first.items).toHaveLength(1);
+        expect(first.lastEvaluatedKey).toBeDefined();
+        const second = await repo.listOrgInvoicesPaginated({ ...filter, exclusiveStartKey: first.lastEvaluatedKey });
+        expect([...first.items, ...second.items].map(row => row.invoiceId).sort()).toEqual(['sc-a', 'sc-partial']);
+    });
+});
