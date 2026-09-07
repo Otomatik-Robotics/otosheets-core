@@ -1,10 +1,12 @@
+import { inputSubmissionFingerprint, mergeWorkflowAnswers, type WorkflowInputRequest, type WorkflowInputSubmission } from './input';
 import { workflowPage, type WorkflowPageOptions } from './page';
 import type { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 
 export interface WorkflowRuntimeRun extends Record<string, unknown> {
     orgId: string; runId: string; workflowId: string;
-    status: 'IN_PROGRESS' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'NEEDS_REVIEW';
+    status: 'IN_PROGRESS' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'NEEDS_REVIEW' | 'WAITING_FOR_INPUT';
+    inputRequest?: WorkflowInputRequest;
     leaseOwner?: string; leaseUntil?: number;
 }
 export interface WorkflowRuntimeStep {
@@ -75,7 +77,7 @@ export class WorkflowRuntimeRepo {
     async finish(orgId: string, runId: string, owner: string, record: WorkflowRuntimeRun): Promise<void> {
         await this.db.transactWrite([{ Put: {
             TableName: Tables.ONBOARDING,
-            Item: { ...record, runId, leaseUntil: 0, ttl: Math.floor(Date.now() / 1000) + (record.status === 'PAUSED' ? 455 : 90) * 86400, ...runKey(orgId, runId) },
+            Item: { ...record, runId, leaseUntil: 0, ttl: Math.floor(Date.now() / 1000) + (['PAUSED', 'WAITING_FOR_INPUT'].includes(record.status) ? 455 : 90) * 86400, ...runKey(orgId, runId) },
             ConditionExpression: 'leaseOwner = :owner', ExpressionAttributeValues: { ':owner': owner },
         } }]);
     }
@@ -126,6 +128,41 @@ export class WorkflowRuntimeRepo {
         }
         try { await this.db.transactWrite(operations); return 'resolved'; }
         catch (error) { if (conflict(error)) return (await replay()) ?? 'conflict'; throw error; }
+    }
+
+    async submitInputs(orgId: string, runId: string, submission: WorkflowInputSubmission, now = Date.now()): Promise<'resolved' | 'replayed' | 'conflict'> {
+        scope(orgId);
+        if (!runId || !Number.isFinite(now)) throw new Error('Invalid workflow input submission');
+        const fingerprint = inputSubmissionFingerprint(submission);
+        const key = { orgId, sk: `WFINPUT#${encodeURIComponent(runId)}#${submission.submissionKey}` };
+        const replay = async () => {
+            const { Item } = await this.db.getItem(Tables.ONBOARDING, key, { ConsistentRead: true });
+            return Item ? (Item.fingerprint === fingerprint ? 'replayed' : 'conflict') as 'replayed' | 'conflict' : null;
+        };
+        const existing = await replay();
+        if (existing) return existing;
+        const run = await this.get(orgId, runId);
+        if (!run || run.status !== 'WAITING_FOR_INPUT' || !run.inputRequest || run.inputRequest.requestId !== submission.requestId || typeof run.workflowVersion !== 'number') return 'conflict';
+        const input = mergeWorkflowAnswers(run.input, run.inputRequest, submission.answers);
+        const submittedAt = new Date(now).toISOString();
+        const record = { requestId: submission.requestId, submissionKey: submission.submissionKey, actorUserId: submission.actorUserId, nodeId: run.inputRequest.nodeId, fields: run.inputRequest.fields.map(field => field.path), submittedAt };
+        const ttl = Math.floor(now / 1000) + 455 * 86400;
+        const wake: WorkflowWake = { orgId, runId, workflowId: run.workflowId, workflowVersion: run.workflowVersion as number,
+            wakeId: `input-${encodeURIComponent(runId)}-${submission.submissionKey}`, dueAt: submittedAt, kind: 'wait' };
+        try {
+            await this.db.transactWrite([
+                { Update: { TableName: Tables.ONBOARDING, Key: runKey(orgId, runId),
+                    UpdateExpression: 'SET #status = :paused, #input = :input, leaseUntil = :zero, lastInputSubmission = :record, #ttl = :ttl REMOVE inputRequest, leaseOwner, #error, completedAt',
+                    ConditionExpression: '#status = :waiting AND inputRequest.requestId = :requestId AND inputRequest.nodeId = :node AND workflowVersion = :version AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :now)',
+                    ExpressionAttributeNames: { '#status': 'status', '#input': 'input', '#ttl': 'ttl', '#error': 'error' },
+                    ExpressionAttributeValues: { ':paused': 'PAUSED', ':waiting': 'WAITING_FOR_INPUT', ':input': input, ':zero': 0, ':record': record, ':ttl': ttl, ':requestId': submission.requestId, ':node': run.inputRequest.nodeId, ':version': run.workflowVersion, ':now': now },
+                } },
+                { ConditionCheck: { TableName: Tables.ONBOARDING, Key: stepKey(orgId, runId, run.inputRequest.nodeId), ConditionExpression: 'attribute_not_exists(sk)' } },
+                { Put: { TableName: Tables.ONBOARDING, Item: { ...key, runId, ...record, fingerprint, ttl }, ConditionExpression: 'attribute_not_exists(sk)' } },
+                { Put: { TableName: Tables.ONBOARDING, Item: { ...wake, ...wakeKey(orgId, wake.wakeId), ...dueKey(wake), ttl }, ConditionExpression: 'attribute_not_exists(sk)' } },
+            ]);
+            return 'resolved';
+        } catch (error) { if (conflict(error)) return (await replay()) ?? 'conflict'; throw error; }
     }
 
     async getStep(orgId: string, runId: string, nodeId: string): Promise<WorkflowRuntimeStep | null> {
