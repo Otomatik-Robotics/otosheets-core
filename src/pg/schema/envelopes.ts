@@ -56,6 +56,7 @@ export const envelopes = pgTable('envelopes', {
 
     // Set when a reviewer is on the envelope: signers are held until the
     // verdict releases them. One Send, staged by role.
+    signatureMethod: text('signature_method'), // null on legacy envelopes means digital
     holdSignersForReview: boolean('hold_signers_for_review').notNull().default(true),
 
     // What the document was drafted FROM, kept on the envelope rather than the
@@ -116,6 +117,8 @@ export const envelopeRecipients = pgTable('envelope_recipients', {
     recipientId: text('recipient_id').primaryKey(),
     envelopeId: text('envelope_id').notNull().references(() => envelopes.envelopeId, { onDelete: 'cascade' }),
 
+    roleLabel: text('role_label'),
+    signingCapacity: text('signing_capacity'), // principal | witness, on signers
     role: text('role').notNull(),                     // signer | reviewer | viewer
     orderNo: integer('order_no').notNull().default(0),
     name: text('name'),
@@ -220,6 +223,8 @@ export const envelopeSignatures = pgTable('envelope_signatures', {
 
     typedName: text('typed_name'),
     signatureImageKey: text('signature_image_key'),
+    signedCopyKey: text('signed_copy_key'),
+    signedCopySha256: text('signed_copy_sha256'),
     signedAt: text('signed_at').notNull(),            // server clock, never a client-supplied timestamp
     ip: text('ip'),
     userAgent: text('user_agent'),
@@ -319,6 +324,7 @@ export const envelopeComments = pgTable('envelope_comments', {
  * uploaded once and sent repeatedly.
  */
 export const envelopeTemplates = pgTable('envelope_templates', {
+    signatureMethod: text('signature_method'),
     templateId: text('template_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
     businessProfileId: text('business_profile_id'),
@@ -353,6 +359,7 @@ export const envelopeTemplates = pgTable('envelope_templates', {
  * renaming the label a person sees does not orphan every field.
  */
 export const envelopeTemplateRoles = pgTable('envelope_template_roles', {
+    signingCapacity: text('signing_capacity'),
     templateRoleId: text('template_role_id').primaryKey(),
     templateId: text('template_id').notNull().references(() => envelopeTemplates.templateId, { onDelete: 'cascade' }),
     roleKey: text('role_key').notNull(),

@@ -1144,3 +1144,61 @@ describe('draft rendering concurrency', () => {
         expect(await repo.beginDraftSend(envelopeId, 'org_1', 1, 'out_for_signing')).toBe(false);
     });
 });
+
+describe('document signing setup', () => {
+    it('versions role edits, preserves role anchors, and replays without duplicate people', async () => {
+        const envelopeId = id('setup'); const versionId = id('ver'); const recipientId = id('party');
+        await repo.create({ envelopeId, versionId, orgId: 'org_1', createdBy: 'user_1', title: 'NDA', kind: 'nda', bodyMarkdown: 'Agreement',
+            recipients: [{ recipientId, name: 'Alex', email: '', role: 'signer', roleKey: 'client' }] });
+        const input = { envelopeId, orgId: 'org_1', createdBy: 'user_1', expectedVersionNo: 1, versionId: id('setup'), signatureMethod: 'wet' as const,
+            recipients: [{ recipientId, name: 'Alexandra', email: '', role: 'signer' as const, signingCapacity: 'principal' as const },
+                { recipientId: id('witness'), name: 'Witness', email: '', role: 'signer' as const, signingCapacity: 'witness' as const }] };
+        expect(await repo.saveSetup(input)).toEqual({ versionNo: 2, changed: true });
+        expect(await repo.saveSetup(input)).toEqual({ versionNo: 2, changed: false });
+        expect((await repo.get(envelopeId))?.signatureMethod).toBe('wet');
+        expect(await repo.listRecipients(envelopeId)).toEqual([expect.objectContaining({ roleKey: 'client', roleLabel: 'Alexandra', name: 'Alex' }), expect.objectContaining({ signingCapacity: 'witness' })]);
+        await expect(repo.saveSetup({ ...input, versionId: id('stale') })).rejects.toThrow(/changed/);
+        await expect(repo.saveSetup({ ...input, orgId: 'org_2' })).rejects.toThrow(/No such/);
+        await repo.beginDraftSend(envelopeId, 'org_1', 2, 'out_for_signing');
+        await expect(repo.saveSetup(input)).rejects.toThrow(/already/);
+    });
+    it('removes obsolete fields and carries retained uploaded placements to the new version', async () => {
+        const { envelopeId, versionId } = await makeEnvelope();
+        const keep = await addRecipient(envelopeId, 'signer'); const remove = await addRecipient(envelopeId, 'signer');
+        await repo.attachRendered(envelopeId, versionId, { s3Key: 'original.pdf', sha256: 'original' });
+        for (const recipientId of [keep, remove]) await repo.addField({ fieldId: id('field'), versionId, recipientId, type: 'signature', page: 1, x: 8, y: 70, w: 30, h: 8 });
+        const next = id('setup');
+        await repo.saveSetup({ envelopeId, orgId: 'org_1', createdBy: 'user_1', expectedVersionNo: 1, versionId: next, signatureMethod: 'digital',
+            recipients: [{ recipientId: keep, name: 'Alex', email: '', role: 'signer', signingCapacity: 'principal' }] });
+        expect(await repo.listFields(next)).toEqual([expect.objectContaining({ recipientId: keep, x: '8' })]);
+        expect((await repo.listVersions(envelopeId))[1].s3Key).toBe('original.pdf');
+        expect(await repo.getRecipient(remove)).toBeNull();
+    });
+    it('records an immutable signed PDF reference once per signer/version', async () => {
+        const { envelopeId, versionId } = await makeEnvelope(); const recipientId = await addRecipient(envelopeId, 'signer');
+        const input = { signatureId: id('sig'), versionId, recipientId, signedCopyKey: 'signed.pdf', signedCopySha256: 'hash' };
+        expect((await repo.recordSignature(input)).created).toBe(true);
+        expect((await repo.recordSignature({ ...input, signatureId: id('sig'), signedCopyKey: 'replacement.pdf' })).created).toBe(false);
+        expect(await repo.listSignatures(versionId)).toEqual([expect.objectContaining({ signedCopyKey: 'signed.pdf', signedCopySha256: 'hash' })]);
+    });
+});
+
+describe('reusable prepared templates', () => {
+    it('copies roles and placements without recipients, preserves signing method and counts retries once', async () => {
+        const templateId = id('template');
+        await repo.createTemplate({ templateId, orgId: 'org_1', createdBy: 'user_1', name: 'Reusable', kind: 'nda', bodyMarkdown: 'Agreement', s3Key: 'prepared.pdf', signatureMethod: 'wet' });
+        await repo.addTemplateRole({ templateRoleId: id('role'), templateId, roleKey: 'client', label: 'Client', signingRole: 'signer', signingCapacity: 'witness' });
+        await repo.addTemplateField({ templateFieldId: id('field'), templateId, roleKey: 'client', type: 'signature', page: 1, x: 12, y: 75, w: 30, h: 8 });
+        const input = { envelopeId: id('use'), versionId: id('ver'), templateId, orgId: 'org_1', createdBy: 'user_1', prepareOnly: true };
+        await repo.createFromTemplate(input); await repo.createFromTemplate(input);
+        expect((await repo.get(input.envelopeId))?.signatureMethod).toBe('wet');
+        const people = await repo.listRecipients(input.envelopeId);
+        expect(people).toEqual([expect.objectContaining({ name: null, email: '', roleLabel: 'Client', signingCapacity: 'witness' })]);
+        expect(await repo.listFields(input.versionId)).toEqual([expect.objectContaining({ recipientId: people[0].recipientId, x: '12' })]);
+        expect((await repo.getTemplate(templateId)).timesUsed).toBe(1);
+        await repo.saveDraft({ envelopeId: input.envelopeId, orgId: 'org_1', createdBy: 'user_1', expectedVersionNo: 1, versionId: id('edit'),
+            recipients: [{ recipientId: people[0].recipientId, name: 'A new person', email: 'new@example.com' }] });
+        expect((await repo.listVersions(input.envelopeId))[0].s3Key).toBe('prepared.pdf');
+        expect((await repo.get(input.envelopeId))?.currentVersionNo).toBe(1);
+    });
+});
