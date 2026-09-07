@@ -62,6 +62,8 @@ describe('delivery review', () => {
         const ops = db.transactWrite.mock.calls[0][0];
         expect(ops).toHaveLength(4);
         expect(ops[0].Update.ConditionExpression).toContain('#status = :needsReview');
+        expect(ops[0].Update.UpdateExpression).toContain('#ttl = :ttl');
+        expect(ops[0].Update.ExpressionAttributeNames['#ttl']).toBe('ttl');
         expect(ops[0].Update.ConditionExpression).toContain('#nodes.#node = :paused');
         expect(ops[1].Delete).toMatchObject({ Key: { orgId: 'org-a' }, ExpressionAttributeValues: { ':started': 'STARTED', ':owner': 'attempt-1', ':startedAt': 123 } });
         expect(ops[2].Put.Item).toMatchObject({ orgId: 'org-a', actorUserId: 'owner-1', decision: 'retry', note: review.note });

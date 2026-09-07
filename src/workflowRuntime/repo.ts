@@ -104,10 +104,10 @@ export class WorkflowRuntimeRepo {
             { Update: {
                 TableName: Tables.ONBOARDING, Key: runKey(orgId, runId),
                 UpdateExpression: review.decision !== 'stop'
-                    ? 'SET #status = :status, leaseUntil = :zero, lastDeliveryReview = :review, ttl = :ttl REMOVE #error, completedAt, reviewNodeId, leaseOwner'
-                    : 'SET #status = :status, leaseUntil = :zero, lastDeliveryReview = :review, ttl = :ttl, completedAt = :at, #error = :error REMOVE reviewNodeId, leaseOwner',
+                    ? 'SET #status = :status, leaseUntil = :zero, lastDeliveryReview = :review, #ttl = :ttl REMOVE #error, completedAt, reviewNodeId, leaseOwner'
+                    : 'SET #status = :status, leaseUntil = :zero, lastDeliveryReview = :review, #ttl = :ttl, completedAt = :at, #error = :error REMOVE reviewNodeId, leaseOwner',
                 ConditionExpression: '#status = :needsReview AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :now) AND workflowVersion = :version AND #nodes.#node = :paused',
-                ExpressionAttributeNames: { '#status': 'status', '#error': 'error', '#nodes': 'nodeStatuses', '#node': review.nodeId },
+                ExpressionAttributeNames: { '#status': 'status', '#error': 'error', '#nodes': 'nodeStatuses', '#node': review.nodeId, '#ttl': 'ttl' },
                 ExpressionAttributeValues: { ':status': review.decision !== 'stop' ? 'PAUSED' : 'FAILED', ':zero': 0, ':review': lastDeliveryReview, ':ttl': ttl,
                     ':needsReview': 'NEEDS_REVIEW', ':now': now, ':version': run.workflowVersion, ':paused': 'paused',
                     ...(review.decision === 'stop' ? { ':at': reviewedAt, ':error': 'Stopped after delivery review' } : {}) },
