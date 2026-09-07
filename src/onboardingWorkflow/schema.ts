@@ -20,7 +20,7 @@ const WorkflowNodeDataSchema = z.object({
         'APPROVAL',
         'AGENT',
         'SEND_EMAIL', 'SEND_SMS', 'GENERATE_DOCUMENT', 'FILL_TEMPLATE',
-        'CREATE_CALENDAR_EVENT', 'SCHEDULE_CALL', 'DELAY', 'SYSTEM',
+        'CREATE_CALENDAR_EVENT', 'SCHEDULE_CALL', 'DELAY', 'SYSTEM', 'READ_RECORD',
     ]),
 
     /** Plain-English instructions describing what this step does and why */
@@ -95,6 +95,9 @@ const WorkflowNodeDataSchema = z.object({
     delayDays: z.number().int().min(0).optional(),
     delayHours: z.number().int().min(0).max(23).optional(),
     delayMinutes: z.number().int().min(0).max(59).optional(),
+    recordType: z.enum(['booking', 'invoice']).optional(),
+    recordId: z.string().optional(),
+    delayOffsetMinutes: z.number().int().min(-525600).max(525600).optional(),
     delayUntil: z.string().optional(),
     delayTimezone: z.string().optional(),
 
