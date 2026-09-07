@@ -1,3 +1,4 @@
+import { workflowPage, type WorkflowPageOptions } from '../workflowRuntime/page';
 import { createHash } from 'crypto';
 import { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
@@ -71,6 +72,14 @@ export class OnboardingWorkflowRepo {
             ]);
             return true;
         } catch (error) { if (versionConflict(error)) return false; throw error; }
+    }
+
+    listPage(orgId: string, options: WorkflowPageOptions & { search?: string; isActive?: boolean } = {}) {
+        return workflowPage<OnboardingWorkflow>(this.ddb, orgId, 'WORKFLOW#', options, { search: options.search, isActive: options.isActive });
+    }
+
+    listVersionsPage(orgId: string, workflowId: string, options: WorkflowPageOptions = {}) {
+        return workflowPage<WorkflowDefinitionVersion>(this.ddb, orgId, `VERSION#${workflowId}#`, options, { workflowId });
     }
 
     async list(orgId: string): Promise<OnboardingWorkflow[]> {

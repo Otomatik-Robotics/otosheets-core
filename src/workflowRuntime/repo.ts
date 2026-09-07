@@ -1,3 +1,4 @@
+import { workflowPage, type WorkflowPageOptions } from './page';
 import type { IDdb } from '../ddbPort';
 import { Tables } from '../tables';
 
@@ -33,6 +34,14 @@ function conflict(error: unknown) {
 /** Tenant data operations. Every write is conditional on creation or the active lease. */
 export class WorkflowRuntimeRepo {
     constructor(private readonly db: IDdb) {}
+
+    listRunsPage(orgId: string, options: WorkflowPageOptions & { workflowId?: string; status?: string } = {}) {
+        return workflowPage<WorkflowRuntimeRun>(this.db, scope(orgId), 'WFRUN#', options, { workflowId: options.workflowId, status: options.status });
+    }
+
+    listExecutionLogsPage(orgId: string, runId: string, options: WorkflowPageOptions = {}) {
+        return workflowPage<Record<string, unknown>>(this.db, scope(orgId), `EXECLOG#${runId}#`, options, { runId });
+    }
 
     async get(orgId: string, runId: string): Promise<WorkflowRuntimeRun | null> {
         const { Item } = await this.db.getItem(Tables.ONBOARDING, runKey(orgId, runId), { ConsistentRead: true });
