@@ -38,6 +38,9 @@ export interface CreateEnvelopeInput {
     s3Key?: string | null;
     sha256?: string | null;
     holdSignersForReview?: boolean;
+    signatureMethod?: 'digital' | 'wet' | null;
+    /** Named draft parties; an email may be supplied before sending. */
+    recipients?: Omit<AddRecipientInput, 'envelopeId'>[];
     /**
      * What the questionnaire was answered with, and the two facts that shape
      * the wording rather than describe it. Kept on the envelope so a regenerate
@@ -51,6 +54,8 @@ export interface CreateEnvelopeInput {
 }
 
 export interface AddRecipientInput {
+    roleLabel?: string | null;
+    signingCapacity?: 'principal' | 'witness' | null;
     recipientId: string;
     envelopeId: string;
     role: RecipientRole;
@@ -139,6 +144,7 @@ export interface AddCommentInput {
 }
 
 export interface CreateTemplateInput {
+    signatureMethod?: 'digital' | 'wet' | null;
     templateId: string;
     orgId: string;
     businessProfileId?: string | null;
@@ -151,6 +157,7 @@ export interface CreateTemplateInput {
 }
 
 export interface TemplateRoleInput {
+    signingCapacity?: 'principal' | 'witness' | null;
     templateRoleId: string;
     templateId: string;
     roleKey: string;
@@ -183,6 +190,7 @@ export interface RoleAssignment {
 }
 
 export interface CreateFromTemplateInput {
+    prepareOnly?: boolean;
     envelopeId: string;
     versionId: string;
     templateId: string;
@@ -220,6 +228,8 @@ export interface RecordSignatureInput {
     recipientId: string;
     typedName?: string | null;
     signatureImageKey?: string | null;
+    signedCopyKey?: string | null;
+    signedCopySha256?: string | null;
     ip?: string | null;
     userAgent?: string | null;
 }
@@ -429,6 +439,7 @@ export class EnvelopePgRepo {
                 tier,
                 status: 'draft',
                 currentVersionNo: 1,
+                signatureMethod: input.signatureMethod ?? null,
                 holdSignersForReview: input.holdSignersForReview ?? true,
                 answers: (input.answers ?? null) as any,
                 jurisdiction: input.jurisdiction ?? null,
@@ -448,20 +459,156 @@ export class EnvelopePgRepo {
                 createdReason: 'original',
                 createdAt: now,
             }).onConflictDoNothing({ target: envelopeVersions.versionId });
-        });
 
-        await this.appendEvent(input.envelopeId, {
-            type: 'created',
-            actorType: 'owner',
-            actorId: input.createdBy,
-            actorLabel: input.createdByLabel ?? null,
-            versionId: input.versionId,
-            detail: { kind: input.kind, tier, title: input.title },
-        }, (seq) => `${input.envelopeId}:${seq}`);
+            for (const recipient of input.recipients ?? []) {
+                await tx.insert(envelopeRecipients).values({ ...recipient, envelopeId: input.envelopeId,
+                    status: 'pending', createdAt: now, updatedAt: now,
+                }).onConflictDoNothing({ target: envelopeRecipients.recipientId });
+            }
+            const entry: ChainEntryInput = {
+                envelopeId: input.envelopeId, seq: 1, type: 'created', actorType: 'owner',
+                actorId: input.createdBy, actorLabel: input.createdByLabel ?? null,
+                versionId: input.versionId, recipientId: null,
+                detail: { kind: input.kind, tier, title: input.title },
+                ip: null, userAgent: null, createdAt: now, prevHash: null,
+            };
+            const { canonical, hash } = hashChainEntry(entry);
+            await tx.insert(envelopeEvents).values({ ...entry, eventId: `${input.envelopeId}:1`, canonical, hash })
+                .onConflictDoNothing({ target: envelopeEvents.eventId });
+        });
 
         const row = await this.get(input.envelopeId);
         if (!row) throw new Error('Envelope vanished immediately after creation');
         return row;
+    }
+
+    /** Edits are scoped and locked against send; old PDF bytes are never overwritten. */
+    async saveDraft(input: {
+        envelopeId: string; orgId: string; expectedVersionNo: number; versionId: string;
+        createdBy: string; bodyMarkdown?: string;
+        recipients?: Array<{ recipientId: string; name: string | null; email: string }>;
+    }): Promise<{ versionNo: number; changed: boolean }> {
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const [env] = await tx.select().from(envelopes).where(and(
+                eq(envelopes.envelopeId, input.envelopeId), eq(envelopes.orgId, input.orgId),
+            )).for('update');
+            if (!env) throw new Error('No such document');
+            if (env.status !== 'draft') throw new Error('This document has already been sent');
+            const [replayed] = await tx.select().from(envelopeVersions)
+                .where(and(eq(envelopeVersions.versionId, input.versionId), eq(envelopeVersions.envelopeId, input.envelopeId)));
+            if (replayed) return { versionNo: replayed.versionNo, changed: false };
+            if (env.currentVersionNo !== input.expectedVersionNo) throw new Error('The document changed. Reload before editing.');
+            const [current] = await tx.select().from(envelopeVersions).where(and(
+                eq(envelopeVersions.envelopeId, input.envelopeId), eq(envelopeVersions.versionNo, env.currentVersionNo),
+            ));
+            if (!current) throw new Error('No current document version');
+            const people = await tx.select().from(envelopeRecipients)
+                .where(eq(envelopeRecipients.envelopeId, input.envelopeId)).for('update');
+            if (people.some((r: any) => r.dispatchedAt)) throw new Error('This document has already been sent');
+            let changedNames = false;
+            for (const patch of input.recipients ?? []) {
+                const person = people.find((r: any) => r.recipientId === patch.recipientId);
+                if (!person) throw new Error('No such recipient on this document');
+                changedNames ||= !person.roleLabel && (person.name ?? '') !== (patch.name ?? '');
+                await tx.update(envelopeRecipients).set({ name: patch.name, email: patch.email, updatedAt: new Date().toISOString() })
+                    .where(and(eq(envelopeRecipients.recipientId, patch.recipientId), eq(envelopeRecipients.envelopeId, input.envelopeId)));
+            }
+            const changedBody = input.bodyMarkdown !== undefined && input.bodyMarkdown !== current.bodyMarkdown;
+            if (changedBody && current.s3Key && !current.bodyMarkdown) throw new Error('Edit an uploaded document in its original file');
+            if (!changedBody && !(changedNames && current.bodyMarkdown)) {
+                return { versionNo: current.versionNo, changed: false };
+            }
+            const now = new Date().toISOString();
+            const versionNo = current.versionNo + 1;
+            await tx.update(envelopeVersions).set({ supersededAt: now }).where(eq(envelopeVersions.versionId, current.versionId));
+            await tx.insert(envelopeVersions).values({ versionId: input.versionId, envelopeId: input.envelopeId,
+                versionNo, bodyMarkdown: input.bodyMarkdown ?? current.bodyMarkdown,
+                createdBy: input.createdBy, createdReason: 'draft_edited', createdAt: now,
+            });
+            await tx.update(envelopes).set({ currentVersionNo: versionNo, updatedAt: now }).where(eq(envelopes.envelopeId, input.envelopeId));
+            return { versionNo, changed: true };
+        });
+    }
+
+    /** Replace draft setup atomically. Every change advances the version, including on uploads.
+     * A replay uses the same version id; a stale editor cannot replace newer roles. */
+    async saveSetup(input: {
+        envelopeId: string; orgId: string; expectedVersionNo: number; versionId: string; createdBy: string;
+        signatureMethod: 'digital' | 'wet';
+        recipients: Array<{ recipientId: string; name: string; email: string; role: RecipientRole;
+            signingCapacity: 'principal' | 'witness' }>;
+    }): Promise<{ versionNo: number; changed: boolean }> {
+        if (!['digital', 'wet'].includes(input.signatureMethod)) throw new Error('Invalid signature method');
+        if (!input.recipients.length || !input.recipients.some(r => r.role === 'signer') ||
+            new Set(input.recipients.map(r => r.recipientId)).size !== input.recipients.length ||
+            input.recipients.some(r => !r.name.trim() || !['signer', 'reviewer', 'viewer'].includes(r.role) ||
+                !['principal', 'witness'].includes(r.signingCapacity) || (r.role !== 'signer' && r.signingCapacity === 'witness'))) {
+            throw new Error('Invalid document roles');
+        }
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const [env] = await tx.select().from(envelopes).where(and(
+                eq(envelopes.envelopeId, input.envelopeId), eq(envelopes.orgId, input.orgId),
+            )).for('update');
+            if (!env) throw new Error('No such document');
+            if (env.status !== 'draft') throw new Error('This document has already been sent');
+            const [replayed] = await tx.select().from(envelopeVersions).where(and(
+                eq(envelopeVersions.versionId, input.versionId), eq(envelopeVersions.envelopeId, input.envelopeId)));
+            if (replayed) return { versionNo: replayed.versionNo, changed: false };
+            if (env.currentVersionNo !== input.expectedVersionNo) throw new Error('The document changed. Reload before editing.');
+            const [current] = await tx.select().from(envelopeVersions).where(and(
+                eq(envelopeVersions.envelopeId, input.envelopeId), eq(envelopeVersions.versionNo, env.currentVersionNo)));
+            if (!current) throw new Error('No current document version');
+            const people = await tx.select().from(envelopeRecipients)
+                .where(eq(envelopeRecipients.envelopeId, input.envelopeId)).for('update');
+            if (people.some((r: any) => r.dispatchedAt)) throw new Error('This document has already been sent');
+            const unchanged = (env.signatureMethod ?? 'digital') === input.signatureMethod && people.length === input.recipients.length &&
+                input.recipients.every((r, index) => people.some((p: any) => p.recipientId === r.recipientId &&
+                    (p.roleLabel ?? p.name) === r.name && p.email === r.email && p.role === r.role && p.orderNo === index &&
+                    (p.signingCapacity ?? 'principal') === r.signingCapacity));
+            if (unchanged) return { versionNo: current.versionNo, changed: false };
+            const now = new Date().toISOString();
+            for (const person of people) {
+                if (!input.recipients.some(r => r.recipientId === person.recipientId)) {
+                    await tx.delete(envelopeFields).where(eq(envelopeFields.recipientId, person.recipientId));
+                    await tx.delete(envelopeRecipients).where(and(eq(envelopeRecipients.envelopeId, input.envelopeId),
+                        eq(envelopeRecipients.recipientId, person.recipientId)));
+                }
+            }
+            for (const [orderNo, person] of input.recipients.entries()) {
+                const previous = people.find((r: any) => r.recipientId === person.recipientId);
+                if (previous) {
+                    if (person.role !== 'signer') await tx.delete(envelopeFields).where(eq(envelopeFields.recipientId, person.recipientId));
+                    await tx.update(envelopeRecipients).set({ roleLabel: person.name, email: person.email, role: person.role, signingCapacity: person.signingCapacity, orderNo, updatedAt: now }).where(and(
+                        eq(envelopeRecipients.recipientId, person.recipientId), eq(envelopeRecipients.envelopeId, input.envelopeId)));
+                } else {
+                    await tx.insert(envelopeRecipients).values({ ...person, name: null, roleLabel: person.name, orderNo, envelopeId: input.envelopeId,
+                        roleKey: person.recipientId, status: 'pending', createdAt: now, updatedAt: now });
+                }
+            }
+            const versionNo = current.versionNo + 1;
+            await tx.update(envelopeVersions).set({ supersededAt: now }).where(eq(envelopeVersions.versionId, current.versionId));
+            await tx.insert(envelopeVersions).values({ versionId: input.versionId, envelopeId: input.envelopeId, versionNo,
+                bodyMarkdown: current.bodyMarkdown, s3Key: current.bodyMarkdown ? null : current.s3Key,
+                sha256: current.bodyMarkdown ? null : current.sha256, createdBy: input.createdBy,
+                createdReason: 'signing_setup_changed', createdAt: now });
+            if (!current.bodyMarkdown) {
+                const fields = await tx.select().from(envelopeFields).where(eq(envelopeFields.versionId, current.versionId));
+                for (const field of fields) await tx.insert(envelopeFields).values({ ...field,
+                    fieldId: `${input.versionId}:${field.fieldId}`, versionId: input.versionId });
+            }
+            await tx.update(envelopes).set({ signatureMethod: input.signatureMethod, currentVersionNo: versionNo, updatedAt: now })
+                .where(eq(envelopes.envelopeId, input.envelopeId));
+            return { versionNo, changed: true };
+        });
+    }
+
+    /** Claim only the reviewed version. Draft edits and a second Send cannot race it. */
+    async beginDraftSend(envelopeId: string, orgId: string, versionNo: number, status: 'in_review' | 'out_for_signing'): Promise<boolean> {
+        const rows = await (this.db as any).update(envelopes).set({ status, updatedAt: new Date().toISOString() })
+            .where(and(eq(envelopes.envelopeId, envelopeId), eq(envelopes.orgId, orgId),
+                eq(envelopes.status, 'draft'), eq(envelopes.currentVersionNo, versionNo)))
+            .returning({ id: envelopes.envelopeId });
+        return rows.length > 0;
     }
 
     async listVersions(envelopeId: string) {
@@ -588,6 +735,8 @@ export class EnvelopePgRepo {
             recipientId: input.recipientId,
             typedName: input.typedName ?? null,
             signatureImageKey: input.signatureImageKey ?? null,
+            signedCopyKey: input.signedCopyKey ?? null,
+            signedCopySha256: input.signedCopySha256 ?? null,
             signedAt: new Date().toISOString(),
             ip: input.ip ?? null,
             userAgent: input.userAgent ?? null,
@@ -639,6 +788,8 @@ export class EnvelopePgRepo {
             name: input.name ?? null,
             email: input.email,
             roleKey: input.roleKey ?? null,
+            roleLabel: input.roleLabel ?? null,
+            signingCapacity: input.signingCapacity ?? null,
             status: 'pending',
             createdAt: now,
             updatedAt: now,
@@ -1033,6 +1184,7 @@ export class EnvelopePgRepo {
             createdBy: input.createdBy,
             name: input.name,
             description: input.description ?? null,
+            signatureMethod: input.signatureMethod ?? null,
             kind: input.kind,
             bodyMarkdown: input.bodyMarkdown ?? null,
             s3Key: input.s3Key ?? null,
@@ -1050,6 +1202,7 @@ export class EnvelopePgRepo {
             roleKey: input.roleKey,
             label: input.label,
             signingRole: input.signingRole,
+            signingCapacity: input.signingCapacity ?? null,
             orderNo: input.orderNo ?? 0,
             required: input.required ?? true,
             createdAt: new Date().toISOString(),
@@ -1253,11 +1406,25 @@ export class EnvelopePgRepo {
      * signed has to stay what it was.
      */
     async createFromTemplate(input: CreateFromTemplateInput): Promise<EnvelopeDTO> {
+        return await (this.tx as any).transaction(async (tx: any) => {
+            await tx.select().from(envelopeTemplates).where(and(eq(envelopeTemplates.templateId, input.templateId),
+                eq(envelopeTemplates.orgId, input.orgId))).for('update');
+            const scoped = new EnvelopePgRepo(tx, tx);
+            const existing = await scoped.get(input.envelopeId);
+            if (existing) {
+                if (existing.orgId !== input.orgId) throw new Error('No such document');
+                return existing;
+            }
+            return scoped.createFromTemplateInside(input);
+        });
+    }
+
+    private async createFromTemplateInside(input: CreateFromTemplateInput): Promise<EnvelopeDTO> {
         const template = await this.getTemplate(input.templateId);
         if (!template || template.orgId !== input.orgId) throw new Error('No such template');
 
         const roles = (await this.listTemplateRoles(input.templateId)) as any[];
-        const assignments = input.roleAssignments ?? [];
+        const assignments: RoleAssignment[] = input.prepareOnly ? roles.map(r => ({ roleKey: r.roleKey, recipientId: `${input.envelopeId}:${r.roleKey}`, name: null, email: '' })) : input.roleAssignments ?? [];
 
         // A name that is not a role at all comes first, because it explains the
         // actual mistake. Reporting the roles left empty when the caller has
@@ -1285,6 +1452,7 @@ export class EnvelopePgRepo {
             createdByLabel: input.createdByLabel ?? null,
             title: input.title || template.name,
             kind: template.kind,
+            signatureMethod: template.signatureMethod ?? 'digital',
             versionId: input.versionId,
             bodyMarkdown: template.bodyMarkdown ?? null,
             s3Key: template.s3Key ?? null,
@@ -1301,6 +1469,8 @@ export class EnvelopePgRepo {
                 recipientId: a.recipientId,
                 envelopeId: input.envelopeId,
                 role: role.signingRole as RecipientRole,
+                roleLabel: role.label,
+                signingCapacity: role.signingCapacity ?? 'principal',
                 email: a.email,
                 name: a.name ?? null,
                 orderNo: role.orderNo ?? 0,

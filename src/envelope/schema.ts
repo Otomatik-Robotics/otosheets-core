@@ -73,6 +73,7 @@ export interface EnvelopeDTO {
     status: EnvelopeStatus;
     currentVersionNo: number;
     holdSignersForReview: boolean;
+    signatureMethod?: 'digital' | 'wet' | null;
 
     // What the document was drafted FROM. Persisted so a regenerate can prefill
     // rather than asking everything again, and so the chain has a record of the
@@ -93,7 +94,9 @@ export interface EnvelopeDTO {
 export interface EnvelopeRecipientDTO {
     recipientId: string;
     envelopeId: string;
+    roleLabel?: string | null;
     role: RecipientRole;
+    signingCapacity?: 'principal' | 'witness' | null;
     orderNo: number;
     name?: string | null;
     email: string;
