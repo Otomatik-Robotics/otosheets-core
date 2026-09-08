@@ -448,8 +448,8 @@ export class EnvelopePgRepo {
         const tier = tierForKind(input.kind);
         const now = new Date().toISOString();
 
-        await (this.tx as any).transaction(async (tx: any) => {
-            await tx.insert(envelopes).values({
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const inserted = await tx.insert(envelopes).values({
                 envelopeId: input.envelopeId,
                 orgId: input.orgId,
                 businessProfileId: input.businessProfileId ?? null,
@@ -466,7 +466,17 @@ export class EnvelopePgRepo {
                 effectiveDate: input.effectiveDate ?? null,
                 createdAt: now,
                 updatedAt: now,
-            }).onConflictDoNothing({ target: envelopes.envelopeId });
+            }).onConflictDoNothing({ target: envelopes.envelopeId }).returning({ id: envelopes.envelopeId });
+
+            // INSERT's conflict wait and this row lock serialize competing creators.
+            // Validate before child writes and return the locked snapshot, never an
+            // unscoped post-transaction read of a potentially foreign winner.
+            const [owned] = await tx.select().from(envelopes)
+                .where(eq(envelopes.envelopeId, input.envelopeId)).for('update');
+            if (!owned || owned.orgId !== input.orgId || (owned.businessProfileId ?? null) !== (input.businessProfileId ?? null)) {
+                throw new Error('No such document');
+            }
+            if (inserted.length === 0) return owned as EnvelopeDTO;
 
             await tx.insert(envelopeVersions).values({
                 versionId: input.versionId,
@@ -478,12 +488,12 @@ export class EnvelopePgRepo {
                 createdBy: input.createdBy,
                 createdReason: 'original',
                 createdAt: now,
-            }).onConflictDoNothing({ target: envelopeVersions.versionId });
+            });
 
             for (const recipient of input.recipients ?? []) {
                 await tx.insert(envelopeRecipients).values({ ...recipient, envelopeId: input.envelopeId,
                     status: 'pending', createdAt: now, updatedAt: now,
-                }).onConflictDoNothing({ target: envelopeRecipients.recipientId });
+                });
             }
             const entry: ChainEntryInput = {
                 envelopeId: input.envelopeId, seq: 1, type: 'created', actorType: 'owner',
@@ -495,11 +505,8 @@ export class EnvelopePgRepo {
             const { canonical, hash } = hashChainEntry(entry);
             await tx.insert(envelopeEvents).values({ ...entry, eventId: `${input.envelopeId}:1`, canonical, hash })
                 .onConflictDoNothing({ target: envelopeEvents.eventId });
+            return owned as EnvelopeDTO;
         });
-
-        const row = await this.get(input.envelopeId);
-        if (!row) throw new Error('Envelope vanished immediately after creation');
-        return row;
     }
 
     /** Edits are scoped and locked against send; old PDF bytes are never overwritten. */
@@ -1065,20 +1072,31 @@ export class EnvelopePgRepo {
      * with the write rather than only in whatever screen happens to call it.
      */
     async addField(input: AddFieldInput): Promise<{ fieldId: string; created: boolean }> {
-        if (input.recipientId) await this.assertFieldAssignable(input.recipientId);
-        const inserted = await (this.db as any).insert(envelopeFields).values({
-            fieldId: input.fieldId,
-            versionId: input.versionId,
-            recipientId: input.recipientId ?? null,
-            type: input.type,
-            label: input.label ?? null,
-            required: input.required ?? true,
-            page: input.page,
-            x: String(input.x), y: String(input.y), w: String(input.w), h: String(input.h),
-            createdAt: new Date().toISOString(),
-        }).onConflictDoNothing({ target: envelopeFields.fieldId })
-            .returning({ id: envelopeFields.fieldId });
-        return { fieldId: input.fieldId, created: inserted.length > 0 };
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const [version] = await tx.select({ envelopeId: envelopeVersions.envelopeId }).from(envelopeVersions)
+                .where(eq(envelopeVersions.versionId, input.versionId)).for('update');
+            if (!version) throw new Error('No such document version');
+            if (input.recipientId) {
+                const [recipient] = await tx.select().from(envelopeRecipients).where(and(
+                    eq(envelopeRecipients.recipientId, input.recipientId), eq(envelopeRecipients.envelopeId, version.envelopeId),
+                )).for('update');
+                if (!recipient) throw new Error('No such recipient on this document');
+                if (!canHoldFields(recipient.role as RecipientRole)) throw new Error(`A ${recipient.role} cannot be assigned a field`);
+            }
+            const inserted = await tx.insert(envelopeFields).values({
+                fieldId: input.fieldId,
+                versionId: input.versionId,
+                recipientId: input.recipientId ?? null,
+                type: input.type,
+                label: input.label ?? null,
+                required: input.required ?? true,
+                page: input.page,
+                x: String(input.x), y: String(input.y), w: String(input.w), h: String(input.h),
+                createdAt: new Date().toISOString(),
+            }).onConflictDoNothing({ target: envelopeFields.fieldId })
+                .returning({ id: envelopeFields.fieldId });
+            return { fieldId: input.fieldId, created: inserted.length > 0 };
+        });
     }
 
     /**

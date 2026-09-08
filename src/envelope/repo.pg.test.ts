@@ -1345,3 +1345,51 @@ describe('document vault profile queries', () => {
         expect(await repo.countByStatus('org_1', '')).toEqual({});
     });
 });
+
+describe('document creation and field ownership races', () => {
+    it('rejects creation collisions before inserting children or returning another profile document', async () => {
+        const envelopeId = id('create-race');
+        const make = (profile: string) => ({ envelopeId, versionId: id('race-ver'), orgId: 'org_1', businessProfileId: profile,
+            createdBy: 'user_1', title: `Private ${profile}`, kind: 'nda',
+            recipients: [{ recipientId: id('race-recipient'), role: 'signer' as const, email: `${profile}@example.com` }] });
+        const inputs = [make('race-a'), make('race-b')];
+        const results = await Promise.allSettled(inputs.map(input => repo.create(input)));
+        expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter(r => r.status === 'rejected')).toHaveLength(1);
+        const winnerIndex = results.findIndex(r => r.status === 'fulfilled');
+        const winner = inputs[winnerIndex];
+        const loser = inputs[1 - winnerIndex];
+        expect((results[1 - winnerIndex] as PromiseRejectedResult).reason.message).toBe('No such document');
+        expect((results[winnerIndex] as PromiseFulfilledResult<any>).value).toMatchObject({ title: winner.title, businessProfileId: winner.businessProfileId });
+        expect((await repo.listVersions(envelopeId)).map(v => v.versionId)).toEqual([winner.versionId]);
+        expect((await repo.listRecipients(envelopeId)).map(r => r.recipientId)).toEqual([winner.recipients[0].recipientId]);
+        expect(await repo.getRecipient(loser.recipients[0].recipientId)).toBeNull();
+        expect((await repo.listEvents(envelopeId)).items).toHaveLength(1);
+        await expect(repo.create({ ...loser, orgId: 'org_2' })).rejects.toThrow('No such document');
+        await expect(repo.create({ ...loser, businessProfileId: null })).rejects.toThrow('No such document');
+        // A same-scope retry returns the stored snapshot, never adds new children.
+        const replay = { ...winner, versionId: id('replay-ver'), title: 'Replacement', recipients: [{ recipientId: id('replay-recipient'), role: 'signer' as const, email: 'new@example.com' }] };
+        expect(await repo.create(replay)).toMatchObject({ title: winner.title });
+        expect((await repo.listVersions(envelopeId))).toHaveLength(1);
+        expect(await repo.getRecipient(replay.recipients[0].recipientId)).toBeNull();
+    });
+
+    it('requires a field recipient on its version document, while allowing multiple fields for that signer', async () => {
+        const source = await repo.create({ envelopeId: id('field-owner'), versionId: id('field-version'), orgId: 'org_1', businessProfileId: 'field-a', createdBy: 'user_1', title: 'Owner', kind: 'nda' });
+        const version = (await repo.listVersions(source.envelopeId))[0];
+        const ownRecipient = await addRecipient(source.envelopeId, 'signer');
+        const foreignIds: string[] = ['missing-recipient'];
+        for (const [orgId, businessProfileId] of [['org_1', 'field-b'], ['org_1', 'field-a'], ['org_2', 'field-a'], ['org_1', null]]) {
+            const other = await repo.create({ envelopeId: id('foreign-field-owner'), versionId: id('foreign-field-version'), orgId: orgId!, businessProfileId, createdBy: 'user_1', title: 'Other', kind: 'nda' });
+            foreignIds.push(await addRecipient(other.envelopeId, 'signer'));
+        }
+        for (const recipientId of foreignIds) {
+            await expect(repo.addField({ fieldId: id('bad-field'), versionId: version.versionId, recipientId,
+                type: 'signature', page: 1, x: 10, y: 60, w: 30, h: 5 })).rejects.toThrow('No such recipient on this document');
+        }
+        expect(await repo.listFields(version.versionId)).toEqual([]);
+        for (const page of [1, 2]) await repo.addField({ fieldId: id('good-field'), versionId: version.versionId, recipientId: ownRecipient,
+            type: 'signature', page, x: 10, y: 60, w: 30, h: 5 });
+        expect(await repo.listFields(version.versionId)).toHaveLength(2);
+    });
+});
