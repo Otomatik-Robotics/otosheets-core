@@ -444,3 +444,36 @@ describe('cross-statement reconciliation layer', () => {
         expect(accounts[0].statementCount).toBe(3);
     });
 });
+
+
+describe('StatementPgRepo business profile scope', () => {
+    it('filters lists, hashes, direct reads and every mutation to the fixed organization/profile', async () => {
+        const root = new StatementPgRepo(db);
+        const a = root.withScope('scope-org', 'a');
+        const b = root.withScope('scope-org', 'b');
+        for (const [id, profile, org] of [['scope-a', 'a', 'scope-org'], ['scope-b', 'b', 'scope-org'], ['scope-foreign', 'a', 'other-org'], ['scope-legacy', null, 'scope-org']] as const) {
+            await root.createStatement({ statementId: id, userId: 'scope-user', organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: id } as any);
+            await root.updateStatement(id, { contentHash: 'same-hash', accountId: 'same-account' });
+        }
+        expect((await a.listStatements('scope-user')).items.map(s => s.statementId)).toEqual(['scope-a']);
+        expect((await b.listStatementsByOrg('scope-org')).items.map(s => s.statementId)).toEqual(['scope-b']);
+        expect(await a.getStatement('scope-user', 'scope-b')).toBeNull();
+        expect(await a.findStatementByIdInOrg('other-org', 'scope-foreign')).toBeNull();
+        expect((await a.findStatementByContentHash('scope-user', 'same-hash'))?.statementId).toBe('scope-a');
+        expect((await a.listStatementsByAccount('scope-user', 'same-account')).map(s => s.statementId)).toEqual(['scope-a']);
+        await a.updateStatement('scope-b', { status: 'FAILED' });
+        await a.setProcessingResult('scope-b', { status: 'FAILED' });
+        expect(await a.updateStatementStatusConditional('scope-b', ['UPLOADED'], { status: 'FAILED' })).toBe(false);
+        expect(await a.resolvePeriod('scope-user', 'scope-b', { periodStart: '2025-07-01', periodEnd: '2025-07-31' })).toBe(false);
+        expect(await a.adjustNeedsReviewCount('scope-b', 1)).toBeNull();
+        expect(await a.deleteStatement('scope-user', 'scope-b')).toBe(false);
+        expect((await b.getStatement('scope-user', 'scope-b'))?.status).toBe('UPLOADED');
+        await a.updateStatement('scope-a', { status: 'FAILED', statementId: 'changed', userId: 'changed', s3Key: 'foreign-file' });
+        expect(await a.getStatement('scope-user', 'scope-a')).toMatchObject({ status: 'FAILED', s3Key: 'scope-a' });
+        await expect(a.updateStatement('scope-a', { businessProfileId: 'b' })).rejects.toThrow('scope mismatch');
+        await expect(a.claimProspectStatements('guest', 'scope-user', 'scope-org')).rejects.toThrow('explicit reviewed assignment');
+        await a.createStatement({ statementId: 'scope-stamped', userId: 'scope-user', fy: '2025-26', s3Key: 'owned' });
+        expect(await a.getStatement('scope-user', 'scope-stamped')).toMatchObject({ organizationId: 'scope-org', businessProfileId: 'a' });
+        expect(() => a.withScope('scope-org', 'b')).toThrow('scope mismatch');
+    });
+});
