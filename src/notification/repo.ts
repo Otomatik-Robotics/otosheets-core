@@ -34,6 +34,19 @@ export class NotificationRepo {
         });
     }
 
+    async createNotificationOnce(userId: string, notificationId: string, data: Record<string, any>): Promise<void> {
+        try {
+            await this.ddb.transactWrite([{ Put: { TableName: Tables.NOTIFICATIONS, Item: {
+                userId, notificationId, read: false, ...data,
+                ttl: Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60,
+                createdAt: new Date().toISOString(),
+            }, ConditionExpression: 'attribute_not_exists(notificationId)' } }]);
+        } catch (error) {
+            const failure = error as { name?: string; CancellationReasons?: Array<{ Code?: string }> };
+            if (failure.name !== 'TransactionCanceledException' || failure.CancellationReasons?.[0]?.Code !== 'ConditionalCheckFailed') throw error;
+        }
+    }
+
     async markRead(userId: string, notificationId: string): Promise<void> {
         await this.ddb.update(Tables.NOTIFICATIONS, { userId, notificationId }, {
             UpdateExpression: 'SET #read = :t',

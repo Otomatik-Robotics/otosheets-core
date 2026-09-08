@@ -87,3 +87,4 @@ export * from './incomeReporting';
 export * from "./workflowRuntime";
 
 export * from "./smsDelivery";
+export * from './inboundEmail';
