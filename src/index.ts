@@ -92,3 +92,5 @@ export * from './inboundEmail';
 export * from './smsResponse';
 
 export * from './websocketAdmission';
+
+export * from './pushDevice';
