@@ -17,3 +17,6 @@ CREATE TABLE IF NOT EXISTS invoice_response_delivery_claims (
   invoice_id text NOT NULL, claimed_at text NOT NULL,
   PRIMARY KEY (org_id, business_profile_id, delivery_id)
 );
+
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS sms_response_origin_uq ON sms_response_links (org_id, business_profile_id, (context->>'source'), (context->>'originId'));

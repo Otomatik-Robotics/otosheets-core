@@ -43,7 +43,12 @@ export class SmsResponseRepo {
             if (!invoice || (context.recipient.kind === 'client' && invoice.clientId !== context.recipient.id)) throw new Error('Invoice outside recipient context');
         }
         const token = randomBytes(24).toString('base64url'), tokenHash = hash(token);
-        await this.db().insert(links).values({ ...scope, tokenHash, context, phoneHash: hash(`${tokenHash}:${normalizedPhone}`), createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 7 * 86400000).toISOString(), deliveryState: 'pending', attempts: 0, processingAttempts: 0 });
+        const inserted = await this.db().insert(links).values({ ...scope, tokenHash, context, phoneHash: hash(`${tokenHash}:${normalizedPhone}`), createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 7 * 86400000).toISOString(), deliveryState: 'pending', attempts: 0, processingAttempts: 0 }).onConflictDoNothing().returning({ tokenHash: links.tokenHash });
+        if (!inserted.length) {
+            const error = new Error('This text action was already prepared. Check its delivery before sending a new message.');
+            error.name = 'SmsResponseDeliveryConflict';
+            throw error;
+        }
         return { token, tokenHash };
     }
     async resolve(token: string, now = new Date()): Promise<SmsResponseLink | null> {

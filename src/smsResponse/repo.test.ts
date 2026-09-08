@@ -31,14 +31,14 @@ describe('SMS public replies', () => {
     });
     it('rejects forged, expired, revoked and failed-delivery links', async () => {
         expect(await repo.resolve('a'.repeat(32))).toBeNull();
-        const old = await repo.create(scope, context, '+61422819869', new Date('2020-01-01'));
+        const old = await repo.create(scope, { ...context, originId: 'expired' }, '+61422819869', new Date('2020-01-01'));
         expect(await repo.resolve(old.token)).toBeNull();
         const link = await repo.create(scope, context, '+61422819869');
         await repo.revoke({ ...scope, businessProfileId: 'wrong' }, link.tokenHash);
         expect(await repo.resolve(link.token)).not.toBeNull();
         await repo.revoke(scope, link.tokenHash);
         expect(await repo.resolve(link.token)).toBeNull();
-        const failed = await repo.create(scope, context, '+61422819869');
+        const failed = await repo.create(scope, { ...context, originId: 'failed' }, '+61422819869');
         await repo.finishDelivery(scope, failed.tokenHash, 'failed');
         expect(await repo.resolve(failed.token)).toBeNull();
     });
@@ -110,4 +110,10 @@ it('generic invoice delivery claims deduplicate without SES conversations', asyn
     const link = await repo.create(scope, context, '+61422819869');
     await repo.submit(link.token, '+61422819869', 'request1234567890', 'Review');
     expect(await email.claimInvoiceDelivery(scope, 'invoice', 'after')).toBe('paused');
+});
+
+it('cannot prepare another carrier send for the same originating action', async () => {
+    await repo.create(scope, context, '+61422819869');
+    await expect(repo.create(scope, context, '+61422819869')).rejects.toMatchObject({ name: 'SmsResponseDeliveryConflict' });
+    expect((await pg.query('SELECT count(*) AS total FROM sms_response_links')).rows).toEqual([{ total: 1 }]);
 });
