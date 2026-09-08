@@ -43,7 +43,7 @@ export interface IInvoiceRepo {
     listDraftInvoices(orgId: string): Promise<Invoice[]>;
     listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]>;
     /** Live KPI-band aggregate (outstanding / overdue / awaiting / draft) for one org. */
-    getInvoiceSummary(orgId: string): Promise<InvoiceSummary>;
+    getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary>;
     getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals>;
     createInvoice(orgId: string, userId: string, invoiceId: string, data: Record<string, any>): Promise<void>;
     updateInvoice(orgId: string, userId: string, invoiceId: string, updates: Record<string, any>): Promise<void>;
@@ -294,7 +294,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return composeInvoiceTotals([...buckets.values()]);
     }
 
-    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
+    async getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary> {
         // Fallback path for orgs still on the Dynamo route. Bounded per-org read
         // (paginated fully), bucketed by (status, past-due), then folded through
         // the shared compose fn. Postgres does this in one GROUP BY instead.
@@ -308,9 +308,10 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
                 KeyConditionExpression: 'orgId = :orgId',
                 FilterExpression:
                     '(attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false) ' +
-                    'AND (attribute_not_exists(#isQuote) OR #isQuote = :false)',
-                ExpressionAttributeNames: { '#isPaymentLink': 'isPaymentLink', '#isQuote': 'isQuote' },
-                ExpressionAttributeValues: { ':orgId': orgId, ':false': false },
+                    'AND (attribute_not_exists(#isQuote) OR #isQuote = :false)' +
+                    (businessProfileId ? ' AND #businessProfileId = :businessProfileId' : ''),
+                ExpressionAttributeNames: { '#isPaymentLink': 'isPaymentLink', '#isQuote': 'isQuote', ...(businessProfileId ? { '#businessProfileId': 'businessProfileId' } : {}) },
+                ExpressionAttributeValues: { ':orgId': orgId, ':false': false, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
                 ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
             });
             for (const item of (res.Items as Invoice[]) ?? []) {

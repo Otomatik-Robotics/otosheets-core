@@ -311,3 +311,18 @@ describe('invoice profile and overdue pagination', () => {
         expect([...first.items, ...second.items].map(row => row.invoiceId).sort()).toEqual(['sc-a', 'sc-partial']);
     });
 });
+
+
+describe('Invoice summary business profile isolation', () => {
+    it('excludes another profile and unassigned invoices from every aggregate', async () => {
+        const orgId = 'org_profile_summary';
+        await db.execute(sql`INSERT INTO orgs (org_id, name) VALUES (${orgId}, 'Profile summary')`);
+        const repo = new InvoicePgRepo(db, db);
+        await repo.createInvoice(orgId, 'user_1', 'summary_profile_a', { invoiceNumber: 'summary_profile_a', businessProfileId: 'profile-a', status: 'SENT', totalAmount: 100, dueDate: '2999-01-01' });
+        await repo.createInvoice(orgId, 'user_1', 'summary_profile_b', { invoiceNumber: 'summary_profile_b', businessProfileId: 'profile-b', status: 'SENT', totalAmount: 900, dueDate: '2999-01-01' });
+        await repo.createInvoice(orgId, 'user_1', 'summary_unassigned', { invoiceNumber: 'summary_unassigned', status: 'SENT', totalAmount: 700, dueDate: '2999-01-01' });
+        expect((await repo.getInvoiceSummary(orgId, 'profile-a')).outstanding).toEqual({ count: 1, amount: 100 });
+        expect((await repo.getInvoiceSummary(orgId, 'profile-b')).outstanding).toEqual({ count: 1, amount: 900 });
+        expect((await repo.getInvoiceSummary(orgId, 'profile-empty')).outstanding).toEqual({ count: 0, amount: 0 });
+    });
+});
