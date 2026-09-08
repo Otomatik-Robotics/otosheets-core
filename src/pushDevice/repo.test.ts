@@ -1,93 +1,96 @@
 import { describe, expect, it } from 'vitest';
 import type { IDdb } from '../ddbPort';
 import { PushDeviceRepo } from './repo';
-
 function fixture() {
     const rows = new Map<string, any>();
     const key = (row: any) => `${row.userId}|${row.token}`;
+    let now = 100;
     const ddb = {
         async getItem(_table: string, value: any) { return { Item: rows.get(key(value)) }; },
         async query(input: any) { return { Items: [...rows.values()].filter(row => row.userId === input.ExpressionAttributeValues[':user']) }; },
         async transactWrite(items: any[]) {
-            for (const { Put, Delete } of items) {
-                const old = rows.get(key(Put?.Item ?? Delete?.Key));
-                if (Put?.ConditionExpression && (Put.ExpressionAttributeValues ? old?.bindingVersion !== Put.ExpressionAttributeValues[':previous'] : !!old)) throw new Error('Concurrent binding');
-                if (Delete?.ConditionExpression) {
-                    const values = Delete.ExpressionAttributeValues;
-                    if (!old || old.bindingVersion !== values[':version'] || old.principalId !== values[':user'] || old.organizationId !== values[':org'] || old.businessProfileId !== values[':profile']) {
-                        throw { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] };
-                    }
+            for (const { Put } of items) {
+                if (!Put?.ConditionExpression) continue;
+                const old = rows.get(key(Put.Item)), values = Put.ExpressionAttributeValues;
+                const condition = Put.ConditionExpression;
+                let allowed: boolean;
+                if (condition.startsWith('attribute_not_exists(generation)')) {
+                    allowed = old?.generation === undefined || (old.generation < values[':generation'] && (values[':user'] === undefined
+                        || (old.principalId === values[':user'] && old.organizationId === values[':org'] && old.businessProfileId === values[':profile'])));
+                } else {
+                    allowed = old?.bindingVersion === values[':version'] && (values[':now'] !== undefined
+                        ? old.generation === values[':generation'] && old.expiresAt > values[':now']
+                        : old.principalId === values[':user'] && old.organizationId === values[':org'] && old.businessProfileId === values[':profile']);
                 }
+                if (!allowed) throw { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] };
             }
-            for (const { Put, Delete } of items) {
-                if (Put) rows.set(key(Put.Item), structuredClone(Put.Item));
-                if (Delete) rows.delete(key(Delete.Key));
-            }
+            for (const { Put } of items) if (Put) rows.set(key(Put.Item), structuredClone(Put.Item));
             return {};
         },
     } as unknown as IDdb;
-    return { repo: new PushDeviceRepo(ddb, 'devices'), rows, ddb };
+    return { repo: new PushDeviceRepo(ddb, 'devices', () => now), rows, ddb, advance: (seconds: number) => { now += seconds; } };
 }
-const a = { orgId: 'org', businessProfileId: 'a' };
-const b = { orgId: 'org', businessProfileId: 'b' };
-
-describe('push device binding', () => {
-    it('only delivers for the current profile and does not store the raw provider token', async () => {
+const a = { orgId: 'org', businessProfileId: 'a' }, b = { orgId: 'org', businessProfileId: 'b' };
+describe('push device binding generation', () => {
+    it('only delivers the current profile and hashes the raw token at rest', async () => {
         const { repo, rows } = fixture();
-        await repo.register('user', 'secret-token', 'ios', 'endpoint', a);
-        expect((await repo.list('user', a))).toHaveLength(1);
-        expect(await repo.list('user', b)).toEqual([]);
+        await repo.register('user', 'secret-token', 'ios', 'endpoint', a, 1);
+        expect(await repo.list('user', a)).toHaveLength(1); expect(await repo.list('user', b)).toEqual([]);
         expect(JSON.stringify([...rows])).not.toContain('secret-token');
-        await repo.register('user', 'secret-token', 'ios', 'endpoint', b);
-        expect(await repo.list('user', a)).toEqual([]);
-        expect(await repo.list('user', b)).toHaveLength(1);
+        await repo.register('user', 'secret-token', 'ios', 'endpoint', b, 2);
+        expect(await repo.list('user', a)).toEqual([]); expect(await repo.list('user', b)).toHaveLength(1);
     });
-    it('a new login owns the device and old user rows and stale cleanup cannot regain or remove it', async () => {
+    it('rejects old-runtime A even when its first server operation occurs after new-runtime B', async () => {
         const { repo } = fixture();
-        await repo.register('old-user', 'token', 'ios', 'endpoint', a);
-        const old = (await repo.list('old-user', a))[0];
-        await repo.register('new-user', 'token', 'ios', 'endpoint', a);
-        expect(await repo.list('old-user', a)).toEqual([]);
-        await repo.removeIfCurrent(old);
-        await repo.unregister('old-user', 'token', a);
-        expect(await repo.list('new-user', a)).toHaveLength(1);
-        await repo.unregister('new-user', 'token', a);
-        expect(await repo.list('new-user', a)).toEqual([]);
+        await repo.register('new-user', 'token', 'ios', 'endpoint', b, 2);
+        await expect(repo.beginRegistration('old-user', 'token', a, 1)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        expect(await repo.list('new-user', b)).toHaveLength(1);
     });
-    it('ignores legacy rows and refuses an unregister from another selected profile', async () => {
-        const { repo, rows } = fixture();
-        rows.set('user|legacy', { userId: 'user', token: 'legacy', endpointArn: 'legacy', organizationId: 'org', businessProfileId: 'a' });
-        expect(await repo.list('user', a)).toEqual([]);
-        await repo.register('user', 'token', 'android', 'endpoint', a);
-        await repo.unregister('user', 'token', b);
-        expect(await repo.list('user', a)).toHaveLength(1);
-    });
-    it('only one competing registration with the same observed binding version commits', async () => {
+    it('rejects a paused provider completion after a newer profile reservation', async () => {
         const { repo } = fixture();
-        await repo.register('user', 'token', 'ios', 'endpoint', a);
-        const results = await Promise.allSettled([
-            repo.register('user', 'token', 'ios', 'endpoint', b),
-            repo.register('other', 'token', 'ios', 'endpoint', a),
-        ]);
+        const old = await repo.beginRegistration('user', 'token', a, 1);
+        await repo.register('user', 'token', 'ios', 'endpoint', b, 2);
+        await expect(repo.completeRegistration(old, 'ios', 'old-endpoint')).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        expect(await repo.list('user', a)).toEqual([]); expect(await repo.list('user', b)).toHaveLength(1);
+    });
+    it('retains logout tombstones before any registration arrives and rejects resurrection', async () => {
+        const { repo } = fixture();
+        await repo.unregister('user', 'token', a, 2);
+        await expect(repo.register('user', 'token', 'ios', 'endpoint', a, 1)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        await repo.register('user', 'token', 'ios', 'endpoint', a, 3);
+        const old = (await repo.list('user', a))[0];
+        await repo.unregister('user', 'token', a, 4);
+        await expect(repo.completeRegistration({ ...old, expiresAt: 160 }, 'ios', 'endpoint')).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        expect(await repo.list('user', a)).toEqual([]);
+    });
+    it('preserves a newer user/profile against stale unregister and cleanup', async () => {
+        const { repo } = fixture();
+        await repo.register('old', 'token', 'ios', 'endpoint', a, 1);
+        const old = (await repo.list('old', a))[0];
+        await repo.register('new', 'token', 'ios', 'endpoint', b, 2);
+        await repo.removeIfCurrent(old); await repo.unregister('old', 'token', a, 3);
+        expect(await repo.list('new', b)).toHaveLength(1); expect(await repo.list('old', a)).toEqual([]);
+    });
+    it('allows only one competing reservation for an identical generation', async () => {
+        const { repo } = fixture();
+        const results = await Promise.allSettled([repo.beginRegistration('one', 'token', a, 1), repo.beginRegistration('two', 'token', b, 1)]);
         expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-        expect((await repo.list('user', b)).length + (await repo.list('other', a)).length).toBe(1);
     });
-    it('a cleanup paused before commit cannot delete a rebind that commits first', async () => {
+    it('rejects expired provider completion and excludes legacy rows', async () => {
+        const { repo, rows, advance } = fixture();
+        rows.set('user|legacy', { userId: 'user', token: 'legacy', organizationId: 'org', businessProfileId: 'a', endpointArn: 'legacy' });
+        const lease = await repo.beginRegistration('user', 'token', a, 1); advance(61);
+        await expect(repo.completeRegistration(lease, 'ios', 'endpoint')).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        expect(await repo.list('user', a)).toEqual([]);
+    });
+    it('cleanup paused before commit cannot erase a newer binding or its generation', async () => {
         const { repo, ddb } = fixture();
-        await repo.register('user', 'token', 'ios', 'endpoint', a);
-        const device = (await repo.list('user', a))[0];
-        const transact = ddb.transactWrite.bind(ddb);
-        let release!: () => void;
-        const paused = new Promise<void>(resolve => { release = resolve; });
-        ddb.transactWrite = async items => {
-            if (items[0].Delete) await paused;
-            return transact(items);
-        };
-        const cleanup = repo.removeIfCurrent(device);
-        await repo.register('user', 'token', 'ios', 'endpoint', b);
-        release();
-        await cleanup;
+        await repo.register('user', 'token', 'ios', 'endpoint', a, 1);
+        const old = (await repo.list('user', a))[0], transact = ddb.transactWrite.bind(ddb);
+        let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
+        ddb.transactWrite = async items => { if (items[0].Put?.Item.state === 'revoked') await wait; return transact(items); };
+        const cleanup = repo.removeIfCurrent(old);
+        await repo.register('user', 'token', 'ios', 'endpoint', b, 2); release(); await cleanup;
         expect(await repo.list('user', b)).toHaveLength(1);
     });
-
 });
