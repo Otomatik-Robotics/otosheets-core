@@ -18,3 +18,9 @@ export const emailDeliveryClaims = pgTable('email_delivery_claims', {
     ...scope(), deliveryId: text('delivery_id').notNull(), conversationId: text('conversation_id').notNull(),
     claimedAt: text('claimed_at').notNull(), providerMessageId: text('provider_message_id'),
 }, t => [primaryKey({ columns: [t.orgId, t.businessProfileId, t.deliveryId] })]);
+export const emailConversationInvoices = pgTable('email_conversation_invoices', {
+    ...scope(), conversationId: text('conversation_id').notNull(), invoiceId: text('invoice_id').notNull(),
+}, t => [primaryKey({ columns: [t.orgId, t.businessProfileId, t.conversationId, t.invoiceId] }), index('email_conversation_invoices_invoice_idx').on(t.orgId, t.businessProfileId, t.invoiceId)]);
+export const invoiceChaseActions = pgTable('invoice_chase_actions', {
+    ...scope(), actionId: text('action_id').notNull(), invoiceId: text('invoice_id').notNull(),
+}, t => [primaryKey({ columns: [t.orgId, t.actionId] })]);

@@ -16,6 +16,7 @@ beforeAll(async () => {
     const migration = readFileSync('drizzle/0056_inbound_email.sql', 'utf8');
     await pg.exec(migration);
     await pg.exec(migration);
+    await pg.exec(readFileSync('drizzle/0057_invoice_reply_links.sql', 'utf8'));
     repo = new InboundEmailRepo(drizzle(pg) as unknown as PgDb);
 });
 afterAll(async () => { await pg.close(); });
@@ -66,6 +67,21 @@ describe('profile-owned email repository', () => {
         await repo.completeDelivery(a, 'automatic-safe', 'ses-provider-id');
         expect(await repo.conversationFromReferences(a, ['<ses-provider-id@email.amazonses.com>'])).toMatchObject({ conversationId: 'auto' });
         expect(await repo.conversationFromReferences(b, ['<ses-provider-id@email.amazonses.com>'])).toBeNull();
+    });
+    it('pauses every invoice covered by a statement, including separate reminder conversations', async () => {
+        await repo.ensureConversation(a, { conversationId: 'statement', customerEmail: content.sender }, domain);
+        await repo.linkInvoices(a, 'statement', ['statement-invoice-1', 'statement-invoice-2']);
+        await repo.ensureConversation(a, { conversationId: 'individual', invoiceId: 'statement-invoice-2', customerEmail: content.sender }, domain);
+        await repo.recordMessage(a, { messageId: 'statement-reply', conversationId: 'statement', receivedAt: '2026-09-08T04:00:00Z', content });
+        expect(await repo.isInvoicePaused(a, 'statement-invoice-1')).toBe(true);
+        expect(await repo.claimDelivery(a, 'individual', 'later-individual')).toBe('paused');
+    });
+    it('stores queued chase scope and rejects conflicting retry ownership', async () => {
+        await repo.registerChaseAction(a, 'call-1', 'inv-1');
+        await repo.registerChaseAction(a, 'call-1', 'inv-1');
+        expect(await repo.getChaseAction(a.orgId, 'call-1')).toMatchObject(a);
+        expect(await repo.getChaseAction('another-org', 'call-1')).toBeNull();
+        await expect(repo.registerChaseAction(b, 'call-1', 'inv-1')).rejects.toThrow('identity conflict');
     });
     it('paginates in Postgres and refuses a cursor from another profile', async () => {
         const first = await repo.listMessages(a, { limit: 2 });

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { and, eq, desc, lt, or, isNotNull, inArray } from 'drizzle-orm';
+import { and, eq, desc, lt, or, isNotNull, inArray, sql } from 'drizzle-orm';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
-import { inboundMailboxes, emailConversations, inboundMessages, emailDeliveryClaims } from '../pg/schema/inboundEmail';
+import { inboundMailboxes, emailConversations, inboundMessages, emailDeliveryClaims, emailConversationInvoices, invoiceChaseActions } from '../pg/schema/inboundEmail';
 import { EmailScopeSchema, InboundMessageContentSchema, type EmailScope, type InboundMessageContent } from './schema';
 
 const scoped = (table: { orgId: any; businessProfileId: any }, scope: EmailScope) => {
@@ -15,6 +15,31 @@ const address = (prefix: string, domain: string) => {
 
 /** New durable email data is Postgres-only, like the current workflow runtime. */
 export class InboundEmailRepo {
+    private async lockInvoices(db: PgDb, scope: EmailScope, ids: string[]) {
+        for (const id of [...new Set(ids)].sort()) await db.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify([scope.orgId, scope.businessProfileId, id])}, 0))`);
+    }
+    private async invoiceIds(db: PgDb, scope: EmailScope, conversationId: string): Promise<string[]> {
+        const rows = await db.select().from(emailConversationInvoices).where(and(scoped(emailConversationInvoices, scope), eq(emailConversationInvoices.conversationId, conversationId)));
+        const conversation = (await db.select().from(emailConversations).where(and(scoped(emailConversations, scope), eq(emailConversations.conversationId, conversationId))).limit(1))[0];
+        return [...new Set([...rows.map(row => row.invoiceId), ...(conversation?.invoiceId ? [conversation.invoiceId] : [])])];
+    }
+    async getConversationInvoiceIds(scope: EmailScope, conversationId: string) { return this.invoiceIds(this.db(), scope, conversationId); }
+    async linkInvoices(scope: EmailScope, conversationId: string, invoiceIds: string[]) {
+        if (!await this.getConversation(scope, conversationId)) throw new Error('Conversation outside profile');
+        if (!invoiceIds.length || invoiceIds.length > 100) throw new Error('Invalid invoice list');
+        await this.db().insert(emailConversationInvoices).values(invoiceIds.map(invoiceId => ({ ...scope, conversationId, invoiceId }))).onConflictDoNothing();
+    }
+    async registerChaseAction(scope: EmailScope, actionId: string, invoiceId: string) {
+        EmailScopeSchema.parse(scope);
+        await this.db().insert(invoiceChaseActions).values({ ...scope, actionId, invoiceId }).onConflictDoNothing();
+        const saved = await this.getChaseAction(scope.orgId, actionId);
+        if (saved?.businessProfileId !== scope.businessProfileId || saved.invoiceId !== invoiceId) throw new Error('Chase action identity conflict');
+    }
+    /** Trusted dial adapter resolves a persisted action, never a client-selected profile. */
+    async getChaseAction(orgId: string, actionId: string) {
+        return (await this.db().select().from(invoiceChaseActions).where(and(eq(invoiceChaseActions.orgId, orgId), eq(invoiceChaseActions.actionId, actionId))).limit(1))[0] ?? null;
+    }
+
     constructor(private readonly injectedDb?: PgDb) {}
     private db() { return this.injectedDb ?? getPg(); }
     private tx() { return this.injectedDb ?? getPgTx(); }
@@ -56,12 +81,14 @@ export class InboundEmailRepo {
     async recordMessage(scope: EmailScope, input: { messageId: string; conversationId: string; receivedAt: string; content: InboundMessageContent }) {
         const content = InboundMessageContentSchema.parse(input.content);
         return this.tx().transaction(async tx => {
-            // The same row lock is used by delivery claims. No stale read can win after a reply.
+            const ids = await this.invoiceIds(tx, scope, input.conversationId);
+            await this.lockInvoices(tx, scope, ids);
+            // All conversations covering the same invoice share the arbitration lock.
             const conversation = (await tx.select().from(emailConversations).where(and(scoped(emailConversations, scope), eq(emailConversations.conversationId, input.conversationId))).for('update'))[0];
             if (!conversation) throw new Error('Conversation outside profile');
             const inserted = await tx.insert(inboundMessages).values({ ...scope, ...input, content }).onConflictDoNothing().returning();
             if (!inserted.length) return { inserted: false, paused: false };
-            const paused = content.kind === 'human' && !!conversation.invoiceId;
+            const paused = content.kind === 'human' && ids.length > 0;
             if (paused) await tx.update(emailConversations).set({ pausedAt: conversation.pausedAt ?? input.receivedAt }).where(and(scoped(emailConversations, scope), eq(emailConversations.conversationId, input.conversationId)));
             return { inserted: true, paused };
         });
@@ -85,12 +112,15 @@ export class InboundEmailRepo {
         return { items, nextToken: rows.length > limit ? Buffer.from(JSON.stringify({ ...scope, receivedAt: last.receivedAt, messageId: last.messageId })).toString('base64') : null };
     }
     async isInvoicePaused(scope: EmailScope, invoiceId: string) {
-        const rows = await this.db().select({ pausedAt: emailConversations.pausedAt }).from(emailConversations).where(and(scoped(emailConversations, scope), eq(emailConversations.invoiceId, invoiceId), isNotNull(emailConversations.pausedAt))).limit(1);
+        const rows = await this.db().select({ pausedAt: emailConversations.pausedAt }).from(emailConversations).leftJoin(emailConversationInvoices, and(eq(emailConversations.orgId, emailConversationInvoices.orgId), eq(emailConversations.businessProfileId, emailConversationInvoices.businessProfileId), eq(emailConversations.conversationId, emailConversationInvoices.conversationId))).where(and(scoped(emailConversations, scope), or(eq(emailConversations.invoiceId, invoiceId), eq(emailConversationInvoices.invoiceId, invoiceId)), isNotNull(emailConversations.pausedAt))).limit(1);
         return rows.length > 0;
     }
     /** Claim before the provider call. Ambiguous claims are never automatically retried. */
     async claimDelivery(scope: EmailScope, conversationId: string, deliveryId: string) {
         return this.tx().transaction(async tx => {
+            const ids = await this.invoiceIds(tx, scope, conversationId);
+            await this.lockInvoices(tx, scope, ids);
+            for (const id of ids) if (await new InboundEmailRepo(tx).isInvoicePaused(scope, id)) return 'paused' as const;
             const conversation = (await tx.select().from(emailConversations).where(and(scoped(emailConversations, scope), eq(emailConversations.conversationId, conversationId))).for('update'))[0];
             if (!conversation) throw new Error('Conversation outside profile');
             if (conversation.pausedAt) return 'paused' as const;
