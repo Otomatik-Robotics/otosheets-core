@@ -453,7 +453,7 @@ describe('StatementPgRepo business profile scope', () => {
         const b = root.withScope('scope-org', 'b');
         for (const [id, profile, org] of [['scope-a', 'a', 'scope-org'], ['scope-b', 'b', 'scope-org'], ['scope-foreign', 'a', 'other-org'], ['scope-legacy', null, 'scope-org']] as const) {
             await root.createStatement({ statementId: id, userId: 'scope-user', organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: id } as any);
-            await root.updateStatement(id, { contentHash: 'same-hash', accountId: 'same-account' });
+            await root.updateStatement(id, { contentHash: id === 'scope-a' ? 'same-hash' : `${id}-hash`, accountId: 'same-account' });
         }
         expect((await a.listStatements('scope-user')).items.map(s => s.statementId)).toEqual(['scope-a']);
         expect((await b.listStatementsByOrg('scope-org')).items.map(s => s.statementId)).toEqual(['scope-b']);
@@ -505,5 +505,79 @@ describe('StatementTransactionPgRepo business profile scope', () => {
         await expect(a.claimProspectTransactions('guest', 'scope-user')).rejects.toThrow('explicit reviewed assignment');
         expect(await a.deleteByStatement('scope-a')).toBe(1);
         expect((await b.getTransaction('scope-user', 'scope-b', 1))?.amountCents).toBe(-200);
+    });
+});
+
+describe('scoped statement references', () => {
+    it('rejects foreign and missing account/duplicate references before any accepting entrypoint writes', async () => {
+        const root = new StatementPgRepo(db);
+        const scoped = root.withScope('refs-org', 'a');
+        for (const [id, profile, user, org] of [['refs-a', 'a', 'refs-user', 'refs-org'], ['refs-b', 'b', 'refs-user', 'refs-org'], ['refs-other-user', 'a', 'someone-else', 'refs-org'], ['refs-other-org', 'a', 'refs-user', 'other-org'], ['refs-legacy', null, 'refs-user', 'refs-org']] as const) {
+            await root.createStatement({ statementId: id, userId: user, organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: id });
+            await pglite.query('INSERT INTO bank_accounts(account_id,user_id,organization_id,business_profile_id) VALUES ($1,$2,$3,$4)', [`account-${id}`, user, org, profile]);
+        }
+        for (const id of ['refs-b', 'refs-other-user', 'refs-other-org', 'refs-legacy', 'missing']) {
+            for (const patch of [{ accountId: `account-${id}` }, { duplicateOfStatementId: id }]) {
+                await expect(scoped.updateStatement('refs-a', { status: 'VERIFIED', ...patch })).rejects.toThrow('reference ownership mismatch');
+                await expect(scoped.updateStatementStatusConditional('refs-a', ['UPLOADED'], { status: 'VERIFIED', ...patch })).rejects.toThrow('reference ownership mismatch');
+                await expect(scoped.setProcessingResult('refs-a', { status: 'VERIFIED', ...patch } as any)).rejects.toThrow('reference ownership mismatch');
+                await expect(scoped.createStatement({ statementId: 'bad-create', userId: 'refs-user', fy: '2025-26', s3Key: 'bad', ...patch } as any)).rejects.toThrow('reference ownership mismatch');
+            }
+        }
+        expect(await scoped.getStatement('refs-user', 'bad-create')).toBeNull();
+        expect(await scoped.getStatement('refs-user', 'refs-a')).toMatchObject({ status: 'UPLOADED', accountId: null, duplicateOfStatementId: null });
+        await scoped.createStatement({ statementId: 'refs-valid', userId: 'refs-user', fy: '2025-26', s3Key: 'valid' });
+        await scoped.updateStatement('refs-a', { accountId: 'account-refs-a', duplicateOfStatementId: 'refs-valid' });
+        expect(await scoped.getStatement('refs-user', 'refs-a')).toMatchObject({ accountId: 'account-refs-a', duplicateOfStatementId: 'refs-valid' });
+        await scoped.updateStatement('refs-a', { accountId: null, duplicateOfStatementId: null });
+        expect(await scoped.getStatement('refs-user', 'refs-a')).toMatchObject({ accountId: null, duplicateOfStatementId: null });
+    });
+
+    it('validates transfer/duplicate targets including fresh rows in the same upsert batch', async () => {
+        const root = new StatementTransactionPgRepo(db);
+        const scoped = root.withScope('refs-org', 'a');
+        const row = (statementId: string, seq: number, userId = 'refs-user') => ({ ...txn(seq), txnId: statementTxnId(statementId, seq), statementId, userId, flowClass: 'TRANSFER' });
+        await root.upsertTransactions([row('refs-a', 1), row('refs-b', 1), row('refs-other-user', 1, 'someone-else'), row('refs-other-org', 1), row('refs-legacy', 1)]);
+        const source = statementTxnId('refs-a', 1);
+        for (const target of ['refs-b', 'refs-other-user', 'refs-other-org', 'refs-legacy', 'missing']) {
+            const targetId = statementTxnId(target, 1);
+            await expect(scoped.setTransferPairIds([{ txnId: source, transferPairId: source }, { txnId: source, transferPairId: targetId }])).rejects.toThrow('reference ownership mismatch');
+            for (const key of ['transferPairId', 'duplicateOfTxnId']) {
+                await expect(scoped.upsertTransactions([{ ...row('refs-a', 2), [key]: targetId }])).rejects.toThrow('reference ownership mismatch');
+            }
+        }
+        for (const key of ['matchedInvoiceId', 'matchedReceiptId']) {
+            await expect(scoped.upsertTransactions([{ ...row('refs-a', 2), [key]: 'missing' }])).rejects.toThrow('reference ownership mismatch');
+        }
+        expect((await scoped.getTransaction('refs-user', 'refs-a', 1))?.transferPairId).toBeNull();
+        expect(await scoped.getTransaction('refs-user', 'refs-a', 2)).toBeNull();
+        expect((await scoped.listTransferRows({ userId: 'refs-user' }, { unpairedOnly: true })).map(r => r.txnId)).toContain(source);
+        const pendingId = statementTxnId('refs-a', 3);
+        await scoped.upsertTransactions([{ ...row('refs-a', 2), transferPairId: pendingId }, { ...row('refs-a', 3), transferPairId: pendingId }]);
+        await scoped.setTransferPairIds([{ txnId: source, transferPairId: pendingId }]);
+        expect((await scoped.getTransaction('refs-user', 'refs-a', 1))?.transferPairId).toBe(pendingId);
+        expect((await scoped.getTransaction('refs-user', 'refs-a', 2))?.transferPairId).toBe(pendingId);
+    });
+});
+
+describe('statement dedupe expansion and controlled contract', () => {
+    it('retains old uniqueness until explicit contract, then keeps each profile and legacy constraint', async () => {
+        const { readFile } = await import('node:fs/promises');
+        const root = new StatementPgRepo(db);
+        for (const [id, profile] of [['contract-a', 'a'], ['contract-b', 'b'], ['contract-a2', 'a'], ['contract-legacy', null], ['contract-legacy2', null]] as const) {
+            await root.createStatement({ statementId: id, userId: 'contract-user', organizationId: 'contract-org', businessProfileId: profile, fy: '2025-26', s3Key: id });
+        }
+        const indexes = await pglite.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='statements'");
+        expect(indexes.rows.map(r => r.indexname)).toEqual(expect.arrayContaining(['statements_dedupe', 'statements_dedupe_profile', 'statements_dedupe_legacy']));
+        await root.updateStatement('contract-a', { contentHash: 'contract-hash' });
+        await expect(root.updateStatement('contract-b', { contentHash: 'contract-hash' })).rejects.toThrow();
+        // Execute only in this test database, outside the automatic migration runner.
+        const contract = await readFile(new URL('../../operations/statement-profile-dedupe-contract.sql', import.meta.url), 'utf8');
+        await pglite.exec(contract);
+        await pglite.exec(contract); // reviewed contract remains idempotent
+        await root.updateStatement('contract-b', { contentHash: 'contract-hash' });
+        await expect(root.updateStatement('contract-a2', { contentHash: 'contract-hash' })).rejects.toThrow();
+        await root.updateStatement('contract-legacy', { contentHash: 'legacy-contract-hash' });
+        await expect(root.updateStatement('contract-legacy2', { contentHash: 'legacy-contract-hash' })).rejects.toThrow();
     });
 });

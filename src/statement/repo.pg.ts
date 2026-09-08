@@ -1,6 +1,7 @@
 import { and, eq, ne, desc, inArray, lt, or, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { statements } from '../pg/schema/statements';
+import { bankAccounts } from '../pg/schema/bankFeeds';
 import { toRow, fromRow } from '../pg/rows';
 import { encodeKeysetToken, toKeyset } from '../pg/cursor';
 import type {
@@ -51,12 +52,36 @@ export class StatementPgRepo {
         return patch;
     }
 
+    private async validateReferences(input: Record<string, any>, userId: string) {
+        if (!this.scope) return;
+        if (input.accountId != null) {
+            const [account] = await this.db.select({ id: bankAccounts.accountId }).from(bankAccounts)
+                .where(and(eq(bankAccounts.accountId, input.accountId), eq(bankAccounts.userId, userId),
+                    eq(bankAccounts.organizationId, this.scope.orgId), eq(bankAccounts.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (!account) throw new Error('Statement account reference ownership mismatch');
+        }
+        if (input.duplicateOfStatementId != null) {
+            if (!await this.getStatement(userId, input.duplicateOfStatementId)) throw new Error('Statement duplicate reference ownership mismatch');
+        }
+    }
+
+    private async checkedPatch(statementId: string, input: Record<string, any>) {
+        const patch = this.patch(input);
+        if (this.scope && (patch.accountId != null || patch.duplicateOfStatementId != null)) {
+            const [source] = await this.db.select({ userId: statements.userId }).from(statements)
+                .where(this.within(eq(statements.statementId, statementId))).limit(1);
+            // A foreign source remains a no-op, without inspecting its references.
+            if (source) await this.validateReferences(patch, source.userId);
+        }
+        return patch;
+    }
+
     private get db(): PgDb {
         return this.injected ?? getPg();
     }
 
     async createStatement(input: StatementCreate): Promise<void> {
-        if (this.scope) this.patch(input);
+        if (this.scope) { this.patch(input); await this.validateReferences(input, input.userId); }
         // Idempotent create — retried presign calls with the same ULID are no-ops.
         await this.db.insert(statements)
             .values(toRow(statements, { ...input, ...(this.scope ? { organizationId: this.scope.orgId, businessProfileId: this.scope.businessProfileId } : {}), status: 'UPLOADED' }, 'statement') as any)
@@ -151,7 +176,7 @@ export class StatementPgRepo {
         patch: { status: StatementStatus } & Record<string, any>,
     ): Promise<boolean> {
         const updated = await this.db.update(statements)
-            .set({ ...toRow(statements, this.patch(patch), 'statement'), updatedAt: new Date() } as any)
+            .set({ ...toRow(statements, await this.checkedPatch(statementId, patch), 'statement'), updatedAt: new Date() } as any)
             .where(this.within(eq(statements.statementId, statementId), inArray(statements.status, expectedStatuses)))
             .returning({ statementId: statements.statementId });
         return updated.length > 0;
@@ -159,7 +184,7 @@ export class StatementPgRepo {
 
     async updateStatement(statementId: string, patch: Record<string, any>): Promise<void> {
         await this.db.update(statements)
-            .set({ ...toRow(statements, this.patch(patch), 'statement'), updatedAt: new Date() } as any)
+            .set({ ...toRow(statements, await this.checkedPatch(statementId, patch), 'statement'), updatedAt: new Date() } as any)
             .where(this.within(eq(statements.statementId, statementId)));
     }
 
@@ -178,7 +203,7 @@ export class StatementPgRepo {
     }): Promise<void> {
         await this.db.update(statements)
             .set({
-                ...toRow(statements, this.patch(result), 'statement'),
+                ...toRow(statements, await this.checkedPatch(statementId, result), 'statement'),
                 processedAt: new Date(),
                 updatedAt: new Date(),
             } as any)

@@ -1,6 +1,8 @@
 import { and, asc, eq, gt, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { statementTransactions, statements } from '../pg/schema/statements';
+import { invoices } from '../pg/schema/billingCore';
+import { receipts } from '../pg/schema/opsEntities';
 import { toRow, fromRow } from '../pg/rows';
 import { foldAccountGroups } from './accountBookends';
 import type { StatementTransaction, StatementTransactionCategoryPatch } from './schema';
@@ -178,6 +180,35 @@ export class StatementTransactionPgRepo {
         return this.injected ?? getPg();
     }
 
+    private async validateTxnReference(targetId: string, userId: string, pending = new Map<string, Record<string, any>>()) {
+        const target = pending.get(targetId);
+        if (target) {
+            // Pending rows have already passed the entire batch's parent validation.
+            if (target.userId !== userId) throw new Error('Statement transaction reference ownership mismatch');
+            return;
+        }
+        const [stored] = await this.db.select({ id: statementTransactions.txnId }).from(statementTransactions)
+            .where(this.within(eq(statementTransactions.txnId, targetId), eq(statementTransactions.userId, userId))).limit(1);
+        if (!stored) throw new Error('Statement transaction reference ownership mismatch');
+    }
+
+    private async validateReferences(item: Record<string, any>, pending: Map<string, Record<string, any>>) {
+        if (!this.scope) return;
+        for (const key of ['transferPairId', 'duplicateOfTxnId']) {
+            if (item[key] != null) await this.validateTxnReference(item[key], item.userId, pending);
+        }
+        if (item.matchedInvoiceId != null) {
+            const [invoice] = await this.db.select({ id: invoices.invoiceId }).from(invoices)
+                .where(and(eq(invoices.invoiceId, item.matchedInvoiceId), eq(invoices.orgId, this.scope.orgId), eq(invoices.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (!invoice) throw new Error('Statement invoice reference ownership mismatch');
+        }
+        if (item.matchedReceiptId != null) {
+            const [receipt] = await this.db.select({ id: receipts.receiptId }).from(receipts)
+                .where(and(eq(receipts.receiptId, item.matchedReceiptId), eq(receipts.orgId, this.scope.orgId), eq(receipts.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (!receipt) throw new Error('Statement receipt reference ownership mismatch');
+        }
+    }
+
     async upsertTransactions(items: Array<Record<string, any>>): Promise<void> {
         if (this.scope) {
             // Validate the entire batch before inserting any chunk. Deterministic IDs
@@ -193,6 +224,8 @@ export class StatementTransactionPgRepo {
                 }
                 if (parents.get(item.statementId) !== item.userId) throw new Error('Statement transaction parent ownership mismatch');
             }
+            const pending = new Map(items.map(item => [statementTxnId(item.statementId, item.seq), item]));
+            for (const item of items) await this.validateReferences(item, pending);
         }
         const CHUNK = 200;
         for (let i = 0; i < items.length; i += CHUNK) {
@@ -672,6 +705,14 @@ export class StatementTransactionPgRepo {
      * through the ingest upsert. Idempotent single UPDATE per chunk.
      */
     async setTransferPairIds(updates: Array<{ txnId: string; transferPairId: string }>): Promise<void> {
+        if (this.scope) {
+            // Refuse the whole batch before any write, including batches over CHUNK.
+            for (const update of updates) {
+                const [source] = await this.db.select({ userId: statementTransactions.userId }).from(statementTransactions)
+                    .where(this.within(eq(statementTransactions.txnId, update.txnId))).limit(1);
+                if (source) await this.validateTxnReference(update.transferPairId, source.userId);
+            }
+        }
         const CHUNK = 200;
         for (let i = 0; i < updates.length; i += CHUNK) {
             const chunk = updates.slice(i, i + CHUNK);
