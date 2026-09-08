@@ -477,3 +477,33 @@ describe('StatementPgRepo business profile scope', () => {
         expect(() => a.withScope('scope-org', 'b')).toThrow('scope mismatch');
     });
 });
+
+
+describe('StatementTransactionPgRepo business profile scope', () => {
+    it('isolates transactions, summaries and writes through the owned parent statement', async () => {
+        const root = new StatementTransactionPgRepo(db);
+        const a = root.withScope('scope-org', 'a');
+        const b = root.withScope('scope-org', 'b');
+        const row = (statementId: string, amountCents: number) => ({ ...txn(1), txnId: statementTxnId(statementId, 1), statementId, userId: 'scope-user', amountCents, category: 'OTHER', categorySource: 'USER', reviewReason: 'CHECK', flowClass: 'EXPENSE' });
+        await a.upsertTransactions([row('scope-a', -100)]);
+        await b.upsertTransactions([row('scope-b', -200)]);
+        await root.upsertTransactions([row('scope-foreign', -400), row('scope-legacy', -800)]);
+        expect((await a.listByFy('scope-user', '2025-26')).items.map(t => t.amountCents)).toEqual([-100]);
+        expect((await a.listReview('scope-user')).items).toHaveLength(1);
+        expect((await a.listByStatement('scope-user', 'scope-b')).items).toEqual([]);
+        expect(await a.getTransaction('scope-user', 'scope-b', 1)).toBeNull();
+        expect((await a.summariseByCategory({ userId: 'scope-user' }))[0].outCents).toBe(100);
+        expect((await a.summariseFlows({ organizationId: 'scope-org' }))[0].outCents).toBe(100);
+        const patch = { category: 'OTHER', categorySource: 'USER' } as any;
+        expect(await a.updateCategory('scope-user', 'scope-b', 1, patch)).toEqual({ found: false, hadReviewReason: false });
+        expect(await a.updateCategory('scope-user', 'scope-a', 1, patch)).toEqual({ found: true, hadReviewReason: true });
+        await a.setTransferPairIds([{ txnId: statementTxnId('scope-b', 1), transferPairId: 'foreign-pair' }]);
+        expect((await b.getTransaction('scope-user', 'scope-b', 1))?.transferPairId).toBeNull();
+        expect(await a.deleteByStatement('scope-b')).toBe(0);
+        await expect(a.upsertTransactions([row('scope-b', -999)])).rejects.toThrow('parent ownership mismatch');
+        await expect(a.upsertTransactions([{ ...row('scope-a', -999), txnId: statementTxnId('scope-b', 1) }])).rejects.toThrow('identity mismatch');
+        await expect(a.claimProspectTransactions('guest', 'scope-user')).rejects.toThrow('explicit reviewed assignment');
+        expect(await a.deleteByStatement('scope-a')).toBe(1);
+        expect((await b.getTransaction('scope-user', 'scope-b', 1))?.amountCents).toBe(-200);
+    });
+});
