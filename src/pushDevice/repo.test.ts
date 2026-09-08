@@ -26,7 +26,7 @@ function fixture() {
             return {};
         },
     } as unknown as IDdb;
-    return { repo: new PushDeviceRepo(ddb, 'devices'), rows };
+    return { repo: new PushDeviceRepo(ddb, 'devices'), rows, ddb };
 }
 const a = { orgId: 'org', businessProfileId: 'a' };
 const b = { orgId: 'org', businessProfileId: 'b' };
@@ -62,4 +62,32 @@ describe('push device binding', () => {
         await repo.unregister('user', 'token', b);
         expect(await repo.list('user', a)).toHaveLength(1);
     });
+    it('only one competing registration with the same observed binding version commits', async () => {
+        const { repo } = fixture();
+        await repo.register('user', 'token', 'ios', 'endpoint', a);
+        const results = await Promise.allSettled([
+            repo.register('user', 'token', 'ios', 'endpoint', b),
+            repo.register('other', 'token', 'ios', 'endpoint', a),
+        ]);
+        expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+        expect((await repo.list('user', b)).length + (await repo.list('other', a)).length).toBe(1);
+    });
+    it('a cleanup paused before commit cannot delete a rebind that commits first', async () => {
+        const { repo, ddb } = fixture();
+        await repo.register('user', 'token', 'ios', 'endpoint', a);
+        const device = (await repo.list('user', a))[0];
+        const transact = ddb.transactWrite.bind(ddb);
+        let release!: () => void;
+        const paused = new Promise<void>(resolve => { release = resolve; });
+        ddb.transactWrite = async items => {
+            if (items[0].Delete) await paused;
+            return transact(items);
+        };
+        const cleanup = repo.removeIfCurrent(device);
+        await repo.register('user', 'token', 'ios', 'endpoint', b);
+        release();
+        await cleanup;
+        expect(await repo.list('user', b)).toHaveLength(1);
+    });
+
 });
