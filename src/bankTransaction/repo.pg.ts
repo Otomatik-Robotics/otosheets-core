@@ -1,6 +1,6 @@
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
-import { bankTransactions } from '../pg/schema/bankFeeds';
+import { bankTransactions, bankAccounts } from '../pg/schema/bankFeeds';
 import { toRow, fromRow } from '../pg/rows';
 import type { BankTransaction, BankTransactionCategoryPatch } from './schema';
 
@@ -62,7 +62,20 @@ export interface BankTxnDedupeRow {
  * reporting, but `upsertTransactions` protects the annotation layer on re-sync.
  */
 export class BankTransactionPgRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private readonly scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    withScope(orgId: string, businessProfileId: string): BankTransactionPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Bank transaction scope is required');
+        if (this.scope && (orgId !== this.scope.orgId || businessProfileId !== this.scope.businessProfileId)) throw new Error('Bank transaction scope mismatch');
+        return new BankTransactionPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+    private ownedAccount(accountId: SQL = sql`${bankTransactions.accountId}`): SQL {
+        return this.scope ? sql`EXISTS (SELECT 1 FROM bank_accounts owned_account
+            WHERE owned_account.account_id = ${accountId} AND owned_account.organization_id = ${this.scope.orgId}
+                AND owned_account.business_profile_id = ${this.scope.businessProfileId})` : sql`true`;
+    }
+    private within(...conditions: (SQL | undefined)[]) { return and(...conditions, this.ownedAccount()); }
+
 
     private get db(): PgDb {
         return this.injected ?? getPg();
@@ -76,6 +89,20 @@ export class BankTransactionPgRepo {
      */
     async upsertTransactions(items: Array<Record<string, any>>): Promise<void> {
         if (items.length === 0) return;
+        if (this.scope) {
+            const accounts = new Map<string, string>();
+            for (const item of items) {
+                if (item.organizationId !== undefined && item.organizationId !== this.scope.orgId) throw new Error('Bank transaction scope mismatch');
+                if (!accounts.has(item.accountId)) {
+                    const parent = await this.db.select({ userId: bankAccounts.userId }).from(bankAccounts)
+                        .where(and(eq(bankAccounts.accountId, item.accountId), eq(bankAccounts.organizationId, this.scope.orgId), eq(bankAccounts.businessProfileId, this.scope.businessProfileId))).limit(1);
+                    if (!parent[0]) throw new Error('Bank transaction account ownership mismatch');
+                    accounts.set(item.accountId, parent[0].userId);
+                }
+                if (accounts.get(item.accountId) !== item.userId) throw new Error('Bank transaction account ownership mismatch');
+            }
+            items = items.map(item => ({ ...item, organizationId: this.scope!.orgId }));
+        }
         const CHUNK = 200;
         for (let i = 0; i < items.length; i += CHUNK) {
             const rows = items.slice(i, i + CHUNK).map((item) => toRow(bankTransactions, item, 'bankTransaction'));
@@ -84,12 +111,14 @@ export class BankTransactionPgRepo {
                 const col = (bankTransactions as any)[key];
                 if (col) setClause[key] = sql.raw(`excluded.${col.name}`);
             }
-            await this.db.insert(bankTransactions)
+            const updated = await this.db.insert(bankTransactions)
                 .values(rows as any)
                 .onConflictDoUpdate({
                     target: bankTransactions.txnId,
                     set: { ...setClause, updatedAt: new Date() } as any,
-                });
+                    setWhere: this.scope ? this.within(eq(bankTransactions.accountId, sql`excluded.account_id`), eq(bankTransactions.userId, sql`excluded.user_id`)) : undefined,
+                }).returning({ txnId: bankTransactions.txnId });
+            if (updated.length !== rows.length) throw new Error('Bank transaction ownership conflict');
         }
     }
 
@@ -108,7 +137,7 @@ export class BankTransactionPgRepo {
             description: bankTransactions.description,
         })
             .from(bankTransactions)
-            .where(and(
+            .where(this.within(
                 eq(bankTransactions.userId, userId),
                 eq(bankTransactions.accountId, accountId),
                 isNull(bankTransactions.duplicateOfTxnId),
@@ -127,7 +156,7 @@ export class BankTransactionPgRepo {
 
     async getTransaction(userId: string, txnId: string): Promise<BankTransaction | null> {
         const rows = await this.db.select().from(bankTransactions)
-            .where(and(eq(bankTransactions.txnId, txnId), eq(bankTransactions.userId, userId)))
+            .where(this.within(eq(bankTransactions.txnId, txnId), eq(bankTransactions.userId, userId)))
             .limit(1);
         return rows[0] ? fromRow<BankTransaction>(rows[0], NUMERIC_KEYS) : null;
     }
@@ -149,7 +178,9 @@ export class BankTransactionPgRepo {
                 UPDATE bank_transactions AS t
                 SET duplicate_of_txn_id = v.dup_id, updated_at = now()
                 FROM (VALUES ${values}) AS v(txn_id, dup_id)
-                WHERE t.txn_id = v.txn_id
+                WHERE t.txn_id = v.txn_id AND ${this.ownedAccount(sql`t.account_id`)}
+                    AND ${this.scope ? sql`EXISTS (SELECT 1 FROM statement_transactions duplicate_txn JOIN statements duplicate_statement ON duplicate_statement.statement_id = duplicate_txn.statement_id
+                        WHERE duplicate_txn.txn_id = v.dup_id AND duplicate_statement.organization_id = ${this.scope.orgId} AND duplicate_statement.business_profile_id = ${this.scope.businessProfileId})` : sql`true`}
             `);
         }
     }
@@ -170,7 +201,7 @@ export class BankTransactionPgRepo {
             }
         }
         const rows = await this.db.select().from(bankTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(sql`${sortDate} DESC`, sql`${bankTransactions.txnId} DESC`)
             .limit(limit + 1);
         const page = rows.slice(0, limit);
@@ -197,7 +228,7 @@ export class BankTransactionPgRepo {
             }
         }
         const rows = await this.db.select().from(bankTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(sql`${sortDate} DESC`, sql`${bankTransactions.txnId} DESC`)
             .limit(limit + 1);
         const page = rows.slice(0, limit);
@@ -224,7 +255,7 @@ export class BankTransactionPgRepo {
         const result: any = await this.db.execute(sql`
             WITH before AS (
                 SELECT txn_id, review_reason FROM bank_transactions
-                WHERE txn_id = ${txnId} AND user_id = ${userId}
+                WHERE txn_id = ${txnId} AND user_id = ${userId} AND ${this.ownedAccount()}
             )
             UPDATE bank_transactions t SET
                 category            = ${patch.category ?? null},
@@ -238,7 +269,7 @@ export class BankTransactionPgRepo {
                 confirmed_at        = CASE WHEN ${confirm} THEN now() ELSE t.confirmed_at END,
                 updated_at          = now()
             FROM before
-            WHERE t.txn_id = before.txn_id
+            WHERE t.txn_id = before.txn_id AND ${this.ownedAccount(sql`t.account_id`)}
             RETURNING before.review_reason AS prev_review_reason
         `);
         const rows = result.rows ?? result;
@@ -279,7 +310,7 @@ export class BankTransactionPgRepo {
             confirmedCount: sql<number>`SUM(CASE WHEN ${bankTransactions.reviewStatus} = 'CONFIRMED' THEN 1 ELSE 0 END)::int`,
         })
             .from(bankTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .groupBy(sql`COALESCE(${bankTransactions.category}, 'UNCATEGORIZED')`)
             .orderBy(sql`GREATEST(
                 COALESCE(SUM(CASE WHEN ${bankTransactions.amountCents} > 0 THEN ${bankTransactions.amountCents} ELSE 0 END), 0),
@@ -298,7 +329,7 @@ export class BankTransactionPgRepo {
     /** Wipe an account's transactions (FK cascade also covers account deletes). */
     async deleteByAccount(accountId: string): Promise<number> {
         const deleted = await this.db.delete(bankTransactions)
-            .where(eq(bankTransactions.accountId, accountId))
+            .where(this.within(eq(bankTransactions.accountId, accountId)))
             .returning({ txnId: bankTransactions.txnId });
         return deleted.length;
     }

@@ -220,3 +220,53 @@ describe('BankTransactionPgRepo', () => {
         expect((await repo().getTransaction(USER, 'dup1'))?.duplicateOfTxnId).toBe('STMT#00001');
     });
 });
+
+
+describe('BankAccountPgRepo business profile scope', () => {
+    it('isolates matching, writes and disconnects including identical bank/last-four identities', async () => {
+        const root = new BankAccountPgRepo(db);
+        const a = root.withScope('org-scope', 'a');
+        const b = root.withScope('org-scope', 'b');
+        await a.upsertAccount(account({ accountId: 'profile-feed-a' }));
+        await b.upsertAccount(account({ accountId: 'profile-feed-b' }));
+        expect((await a.listAccounts(USER)).map(a => a.accountId)).toEqual(['profile-feed-a']);
+        expect(await a.getAccount(USER, 'profile-feed-b')).toBeNull();
+        expect((await a.findOrCreateStatementAccount({ userId: USER, bankName: 'Commonwealth Bank', accountLast4: '1234' }))?.accountId).toBe('profile-feed-a');
+        await expect(a.upsertAccount(account({ accountId: 'profile-feed-b', name: 'foreign update' }))).rejects.toThrow('ownership conflict');
+        expect((await b.getAccount(USER, 'profile-feed-b'))?.name).toBe('Business Everyday');
+        expect(await a.disconnectByConsent(USER, 'consent_1')).toBe(1);
+        expect((await b.getAccount(USER, 'profile-feed-b'))?.status).toBe('ACTIVE');
+        const input = { userId: USER, bankName: 'ANZ', accountLast4: '9898' };
+        const first = await a.findOrCreateStatementAccount(input);
+        const second = await b.findOrCreateStatementAccount(input);
+        expect(first?.accountId).not.toBe(second?.accountId);
+        expect(first?.businessProfileId).toBe('a');
+        expect(second?.businessProfileId).toBe('b');
+        expect((await a.findOrCreateStatementAccount(input))?.accountId).toBe(first?.accountId);
+        await expect(a.upsertAccount(account({ organizationId: 'foreign' }))).rejects.toThrow('scope mismatch');
+        expect(() => a.withScope('org-scope', 'b')).toThrow('scope mismatch');
+    });
+});
+
+
+describe('BankTransactionPgRepo business profile scope', () => {
+    it('scopes feed reads, totals, mutations and duplicate references through the bank account', async () => {
+        const root = new BankTransactionPgRepo(db);
+        const a = root.withScope('org-scope', 'a');
+        const b = root.withScope('org-scope', 'b');
+        await a.upsertTransactions([txn('scope-txn-a', { accountId: 'profile-feed-a', amountCents: -100 })]);
+        await b.upsertTransactions([txn('scope-txn-b', { accountId: 'profile-feed-b', amountCents: -200 })]);
+        expect((await a.listByFy(USER, '2025-26')).items.map(t => t.txnId)).toEqual(['scope-txn-a']);
+        expect((await a.listByAccount(USER, 'profile-feed-b')).items).toEqual([]);
+        expect(await a.getTransaction(USER, 'scope-txn-b')).toBeNull();
+        expect((await a.summariseByCategory({ userId: USER }))[0].outCents).toBe(100);
+        expect(await a.updateCategory(USER, 'scope-txn-b', { category: 'OTHER', categorySource: 'USER' } as any)).toEqual({ found: false, hadReviewReason: false });
+        expect(await a.deleteByAccount('profile-feed-b')).toBe(0);
+        await expect(a.upsertTransactions([txn('new-foreign', { accountId: 'profile-feed-b' })])).rejects.toThrow('account ownership mismatch');
+        await expect(a.upsertTransactions([txn('scope-txn-b', { accountId: 'profile-feed-a' })])).rejects.toThrow('ownership conflict');
+        await a.markDuplicates([{ txnId: 'scope-txn-a', duplicateOfTxnId: 'missing-statement-row' }]);
+        expect((await a.getTransaction(USER, 'scope-txn-a'))?.duplicateOfTxnId).toBeNull();
+        expect((await b.getTransaction(USER, 'scope-txn-b'))?.amountCents).toBe(-200);
+        expect(await a.deleteByAccount('profile-feed-a')).toBe(1);
+    });
+});

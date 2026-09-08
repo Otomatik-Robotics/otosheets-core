@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { bankAccounts } from '../pg/schema/bankFeeds';
 import { toRow, fromRow } from '../pg/rows';
@@ -56,7 +56,21 @@ export function matchStatementAccount(
  * annotation-free account record is safe to overwrite wholesale on each sync.
  */
 export class BankAccountPgRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private readonly scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    withScope(orgId: string, businessProfileId: string): BankAccountPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Bank account scope is required');
+        if (this.scope && (orgId !== this.scope.orgId || businessProfileId !== this.scope.businessProfileId)) throw new Error('Bank account scope mismatch');
+        return new BankAccountPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+    private within(...conditions: (SQL | undefined)[]) {
+        return and(...conditions, ...(this.scope ? [eq(bankAccounts.organizationId, this.scope.orgId), eq(bankAccounts.businessProfileId, this.scope.businessProfileId)] : []));
+    }
+    private owned(item: Record<string, any>) {
+        if (!this.scope) return item;
+        if ((item.organizationId !== undefined && item.organizationId !== this.scope.orgId) || (item.businessProfileId !== undefined && item.businessProfileId !== this.scope.businessProfileId)) throw new Error('Bank account scope mismatch');
+        return { ...item, organizationId: this.scope.orgId, businessProfileId: this.scope.businessProfileId };
+    }
 
     private get db(): PgDb {
         return this.injected ?? getPg();
@@ -64,23 +78,25 @@ export class BankAccountPgRepo {
 
     /** Insert or refresh one account (provider account id is the PK). */
     async upsertAccount(item: Record<string, any>): Promise<void> {
-        const row = toRow(bankAccounts, item, 'bankAccount') as any;
+        const row = toRow(bankAccounts, this.owned(item), 'bankAccount') as any;
         const { accountId, createdAt, ...rest } = row;
         const setClause: Record<string, any> = {};
         for (const key of Object.keys(rest)) {
             setClause[key] = sql.raw(`excluded.${(bankAccounts as any)[key].name}`);
         }
-        await this.db.insert(bankAccounts)
+        const updated = await this.db.insert(bankAccounts)
             .values(row)
             .onConflictDoUpdate({
                 target: bankAccounts.accountId,
                 set: { ...setClause, updatedAt: new Date() } as any,
-            });
+                setWhere: this.within(eq(bankAccounts.userId, item.userId)),
+            }).returning({ accountId: bankAccounts.accountId });
+        if (!updated.length) throw new Error('Bank account ownership conflict');
     }
 
     async getAccount(userId: string, accountId: string): Promise<BankAccount | null> {
         const rows = await this.db.select().from(bankAccounts)
-            .where(and(eq(bankAccounts.accountId, accountId), eq(bankAccounts.userId, userId)))
+            .where(this.within(eq(bankAccounts.accountId, accountId), eq(bankAccounts.userId, userId)))
             .limit(1);
         return rows[0] ? fromRow<BankAccount>(rows[0]) : null;
     }
@@ -88,7 +104,7 @@ export class BankAccountPgRepo {
     /** All accounts for a user, newest first. Small bounded set — no pagination needed. */
     async listAccounts(userId: string): Promise<BankAccount[]> {
         const rows = await this.db.select().from(bankAccounts)
-            .where(eq(bankAccounts.userId, userId))
+            .where(this.within(eq(bankAccounts.userId, userId)))
             .orderBy(desc(bankAccounts.createdAt));
         return rows.map((r) => fromRow<BankAccount>(r));
     }
@@ -96,7 +112,7 @@ export class BankAccountPgRepo {
     /** Accounts tied to one consent — used when a consent is revoked/expired. */
     async listByConsent(userId: string, consentId: string): Promise<BankAccount[]> {
         const rows = await this.db.select().from(bankAccounts)
-            .where(and(eq(bankAccounts.userId, userId), eq(bankAccounts.consentId, consentId)))
+            .where(this.within(eq(bankAccounts.userId, userId), eq(bankAccounts.consentId, consentId)))
             .orderBy(desc(bankAccounts.createdAt));
         return rows.map((r) => fromRow<BankAccount>(r));
     }
@@ -116,6 +132,7 @@ export class BankAccountPgRepo {
         organizationId?: string | null;
         businessProfileId?: string | null;
     }): Promise<BankAccount | null> {
+        input = this.owned(input) as typeof input;
         const identity: StatementAccountIdentity = {
             bankName: input.bankName ?? null,
             accountLast4: last4Digits(input.accountLast4),
@@ -125,7 +142,9 @@ export class BankAccountPgRepo {
         const existing = matchStatementAccount(await this.listAccounts(input.userId), identity);
         if (existing) return existing;
 
-        const accountId = statementAccountId(input.userId, identity);
+        const accountId = this.scope
+            ? `${statementAccountId(input.userId, identity)}#scope#${encodeURIComponent(JSON.stringify([this.scope.orgId, this.scope.businessProfileId]))}`
+            : statementAccountId(input.userId, identity);
         await this.db.insert(bankAccounts)
             .values(toRow(bankAccounts, {
                 accountId,
@@ -148,7 +167,7 @@ export class BankAccountPgRepo {
     async disconnectByConsent(userId: string, consentId: string): Promise<number> {
         const updated = await this.db.update(bankAccounts)
             .set({ status: 'DISCONNECTED', updatedAt: new Date() } as any)
-            .where(and(eq(bankAccounts.userId, userId), eq(bankAccounts.consentId, consentId)))
+            .where(this.within(eq(bankAccounts.userId, userId), eq(bankAccounts.consentId, consentId)))
             .returning({ accountId: bankAccounts.accountId });
         return updated.length;
     }
