@@ -78,6 +78,7 @@ export class IncomeReportingPgRepo {
     private windowConds(scope: IncomeScope) {
         return sql`
             i.org_id = ${scope.orgId}
+            ${scope.businessProfileId ? sql`AND i.business_profile_id = ${scope.businessProfileId}` : sql``}
             AND i.issue_date >= ${scope.dateFrom} AND i.issue_date <= ${scope.dateTo}
             AND i.status IN ('SENT', 'PARTIAL', 'OVERDUE', 'PAID')
             AND (i.is_quote IS NULL OR i.is_quote = false)
@@ -136,11 +137,12 @@ export class IncomeReportingPgRepo {
                    coalesce(i.gst_amount, 0)::text AS gst_amount,
                    coalesce(i.total_amount, 0)::text AS total_amount
             FROM invoices i
-            LEFT JOIN clients c ON c.client_id = i.client_id
+            LEFT JOIN clients c ON c.client_id = i.client_id AND c.org_id = i.org_id
+            ${params.businessProfileId ? sql`AND c.business_profile_id = i.business_profile_id` : sql``}
             LEFT JOIN LATERAL (
                 SELECT max(p.paid_date) AS last_paid
                 FROM invoice_payments p
-                WHERE p.invoice_id = i.invoice_id AND ${PAID_DATE_OK}
+                WHERE p.invoice_id = i.invoice_id AND p.org_id = i.org_id AND ${PAID_DATE_OK}
             ) lp ON true
             WHERE ${where}
             ORDER BY i.issue_date DESC, i.invoice_id DESC
@@ -201,7 +203,7 @@ export class IncomeReportingPgRepo {
             LEFT JOIN LATERAL (
                 SELECT max(p.paid_date) AS last_paid
                 FROM invoice_payments p
-                WHERE p.invoice_id = i.invoice_id AND ${PAID_DATE_OK}
+                WHERE p.invoice_id = i.invoice_id AND p.org_id = i.org_id AND ${PAID_DATE_OK}
             ) lp ON true
             WHERE ${this.windowConds(scope)}`);
 
@@ -277,7 +279,8 @@ export class IncomeReportingPgRepo {
             SELECT r.client_id, c.name AS client_name, r.invoices, r.overdue,
                    r.amount::text AS amount, r.client_total, r.owed_total::text AS owed_total
             FROM ranked r
-            LEFT JOIN clients c ON c.client_id = r.client_id
+            LEFT JOIN clients c ON c.client_id = r.client_id AND c.org_id = ${scope.orgId}
+            ${scope.businessProfileId ? sql`AND c.business_profile_id = ${scope.businessProfileId}` : sql``}
             WHERE r.rn <= ${size}
             ORDER BY r.rn`);
 

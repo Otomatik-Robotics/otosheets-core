@@ -1,6 +1,6 @@
 import { and, eq, desc, lt, or, sql, isNotNull } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
-import { basPeriods } from '../pg/schema/bookkeeping';
+import { basPeriods, profileBasPeriods } from '../pg/schema/bookkeeping';
 import type { BasPeriodDTO, BasLodgementInput, BasReminderKind } from './schema';
 import type { BasPeriodInfo } from './period';
 
@@ -50,12 +50,28 @@ const clampLimit = (n: number | undefined, max: number): number => Math.min(Math
  * button, a replayed webhook, a double-fired cron.
  */
 export class BasPeriodPgRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+    withScope(orgId: string, businessProfileId: string): BasPeriodPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('BAS scope is required');
+        if (this.scope && (this.scope.orgId !== orgId || this.scope.businessProfileId !== businessProfileId)) throw new Error('BAS scope cannot change');
+        return new BasPeriodPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+    // Both tables have the same snapshot columns. The extra profile key is
+    // supplied explicitly to predicates, inserts and conflict arbitration.
+    private get table(): typeof basPeriods { return this.scope ? profileBasPeriods as unknown as typeof basPeriods : basPeriods; }
+    private orgScope(orgId: string) {
+        if (this.scope && this.scope.orgId !== orgId) throw new Error('BAS organisation mismatch');
+        return and(eq(this.table.orgId, orgId), this.scope ? eq(profileBasPeriods.businessProfileId, this.scope.businessProfileId) : undefined)!;
+    }
+    private scopeValues(orgId: string) {
+        this.orgScope(orgId);
+        return this.scope ? { businessProfileId: this.scope.businessProfileId } : {};
+    }
     private get db(): PgDb { return this.injected ?? getPg(); }
 
     async get(orgId: string, period: string): Promise<BasPeriodDTO | null> {
-        const rows = await this.db.select().from(basPeriods)
-            .where(and(eq(basPeriods.orgId, orgId), eq(basPeriods.period, period)))
+        const rows = await this.db.select().from(this.table)
+            .where(and(this.orgScope(orgId), eq(this.table.period, period)))
             .limit(1);
         return rows[0] ? toDto(rows[0]) : null;
     }
@@ -63,16 +79,16 @@ export class BasPeriodPgRepo {
     /** Newest quarter first (by period_end), keyset-paginated. */
     async list(orgId: string, opts?: ListBasPeriodsParams): Promise<BasPeriodsPage> {
         const limit = clampLimit(opts?.limit, 100);
-        const conds: any[] = [eq(basPeriods.orgId, orgId)];
+        const conds: any[] = [this.orgScope(orgId)];
         const k = opts?.exclusiveStartKey;
         if (k?.periodEnd && k?.period) {
             conds.push(or(
-                lt(basPeriods.periodEnd, String(k.periodEnd)),
-                and(eq(basPeriods.periodEnd, String(k.periodEnd)), lt(basPeriods.period, String(k.period))),
+                lt(this.table.periodEnd, String(k.periodEnd)),
+                and(eq(this.table.periodEnd, String(k.periodEnd)), lt(this.table.period, String(k.period))),
             ));
         }
-        const rows = await this.db.select().from(basPeriods).where(and(...conds))
-            .orderBy(desc(basPeriods.periodEnd), desc(basPeriods.period))
+        const rows = await this.db.select().from(this.table).where(and(...conds))
+            .orderBy(desc(this.table.periodEnd), desc(this.table.period))
             .limit(limit);
         const last = rows[rows.length - 1];
         return {
@@ -90,33 +106,33 @@ export class BasPeriodPgRepo {
      */
     async markLodged(orgId: string, input: BasLodgementInput): Promise<BasLodgeResult> {
         const now = new Date();
-        const rows = await this.db.insert(basPeriods)
+        const rows = await this.db.insert(this.table)
             .values({
-                orgId, period: input.period, fy: input.fy, quarter: input.quarter,
+                ...this.scopeValues(orgId), orgId, period: input.period, fy: input.fy, quarter: input.quarter,
                 periodStart: input.periodStart, periodEnd: input.periodEnd, dueDate: input.dueDate,
                 lodgedAt: now, lodgedBy: input.lodgedBy,
                 figures: input.figures, confidence: input.confidence, reasons: input.reasons,
                 createdAt: now, updatedAt: now,
             })
             .onConflictDoUpdate({
-                target: [basPeriods.orgId, basPeriods.period],
+                target: [this.table.orgId, ...(this.scope ? [profileBasPeriods.businessProfileId] : []), this.table.period],
                 set: {
                     lodgedAt: now, lodgedBy: input.lodgedBy,
                     figures: input.figures, confidence: input.confidence, reasons: input.reasons,
                     updatedAt: now,
                 },
-                setWhere: sql`${basPeriods.lodgedAt} IS NULL`,
+                setWhere: sql`${this.table.lodgedAt} IS NULL`,
             })
-            .returning({ period: basPeriods.period });
+            .returning({ period: this.table.period });
         return rows.length > 0 ? 'lodged' : 'already_lodged';
     }
 
     /** Reopen a lodged quarter: clears the lodgement and its snapshot. False when it wasn't lodged. */
     async unlodge(orgId: string, period: string): Promise<boolean> {
-        const rows = await this.db.update(basPeriods)
+        const rows = await this.db.update(this.table)
             .set({ lodgedAt: null, lodgedBy: null, figures: null, confidence: null, reasons: null, updatedAt: new Date() })
-            .where(and(eq(basPeriods.orgId, orgId), eq(basPeriods.period, period), isNotNull(basPeriods.lodgedAt)))
-            .returning({ period: basPeriods.period });
+            .where(and(this.orgScope(orgId), eq(this.table.period, period), isNotNull(this.table.lodgedAt)))
+            .returning({ period: this.table.period });
         return rows.length > 0;
     }
 
@@ -127,23 +143,23 @@ export class BasPeriodPgRepo {
      */
     async stampReminder(orgId: string, info: BasPeriodInfo, kind: BasReminderKind): Promise<boolean> {
         const now = new Date();
-        const col = kind === 'before' ? basPeriods.reminderBeforeAt : basPeriods.reminderDueAt;
-        const rows = await this.db.insert(basPeriods)
+        const col = kind === 'before' ? this.table.reminderBeforeAt : this.table.reminderDueAt;
+        const rows = await this.db.insert(this.table)
             .values({
-                orgId, period: info.period, fy: info.fy, quarter: info.quarter,
+                ...this.scopeValues(orgId), orgId, period: info.period, fy: info.fy, quarter: info.quarter,
                 periodStart: info.periodStart, periodEnd: info.periodEnd, dueDate: info.dueDate,
                 reminderBeforeAt: kind === 'before' ? now : null,
                 reminderDueAt: kind === 'due' ? now : null,
                 createdAt: now, updatedAt: now,
             })
             .onConflictDoUpdate({
-                target: [basPeriods.orgId, basPeriods.period],
+                target: [this.table.orgId, ...(this.scope ? [profileBasPeriods.businessProfileId] : []), this.table.period],
                 set: kind === 'before'
                     ? { reminderBeforeAt: now, updatedAt: now }
                     : { reminderDueAt: now, updatedAt: now },
                 setWhere: sql`${col} IS NULL`,
             })
-            .returning({ period: basPeriods.period });
+            .returning({ period: this.table.period });
         return rows.length > 0;
     }
 
@@ -165,18 +181,18 @@ export class BasPeriodPgRepo {
         opts: { limit?: number; exclusiveStartKey?: Record<string, any> } = {},
     ): Promise<{ items: BasPeriodDTO[]; lastEvaluatedKey?: Record<string, any> }> {
         const limit = clampLimit(opts.limit, 100);
-        const conds: any[] = [eq(basPeriods.orgId, orgId), isNotNull(basPeriods.lodgedAt)];
+        const conds: any[] = [this.orgScope(orgId), isNotNull(this.table.lodgedAt)];
         const cursor = opts.exclusiveStartKey;
         if (cursor?.lodgedAt && cursor?.period) {
             const at = new Date(cursor.lodgedAt);
             conds.push(or(
-                lt(basPeriods.lodgedAt, at),
-                and(eq(basPeriods.lodgedAt, at), lt(basPeriods.period, String(cursor.period))),
+                lt(this.table.lodgedAt, at),
+                and(eq(this.table.lodgedAt, at), lt(this.table.period, String(cursor.period))),
             ));
         }
-        const rows = await this.db.select().from(basPeriods)
+        const rows = await this.db.select().from(this.table)
             .where(and(...conds))
-            .orderBy(desc(basPeriods.lodgedAt), desc(basPeriods.period))
+            .orderBy(desc(this.table.lodgedAt), desc(this.table.period))
             .limit(limit + 1);
         const page = rows.slice(0, limit);
         const items = page.map(toDto);

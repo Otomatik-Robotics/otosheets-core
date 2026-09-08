@@ -18,6 +18,7 @@ export const INCOME_STATUSES: readonly IncomeStatus[] = ['SENT', 'PART_PAID', 'P
 
 export interface IncomeScope {
     orgId: string;
+    businessProfileId?: string;
     /** Inclusive YYYY-MM-DD bounds on the issue date — normally a BAS quarter. */
     dateFrom: string;
     dateTo: string;

@@ -14,6 +14,7 @@ export interface StatementPage {
 }
 
 export interface StatementListOptions {
+    businessProfileId?: string;
     fy?: string;
     limit?: number;
     nextToken?: string | null;
@@ -67,6 +68,7 @@ export class StatementPgRepo {
     private async list(scope: any, opts: StatementListOptions): Promise<StatementPage> {
         const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
         const conditions: any[] = [scope];
+        if (opts.businessProfileId) conditions.push(eq(statements.businessProfileId, opts.businessProfileId));
         if (opts.fy) conditions.push(eq(statements.fy, opts.fy));
         if (opts.nextToken) {
             const cursor = toKeyset(opts.nextToken, 'statementId');

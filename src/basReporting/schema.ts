@@ -8,6 +8,7 @@
 
 export interface BasInputsScope {
     orgId: string;
+    businessProfileId?: string;
     /** Inclusive YYYY-MM-DD bounds — normally a BAS quarter (see basPeriod/period.ts). */
     dateFrom: string;
     dateTo: string;

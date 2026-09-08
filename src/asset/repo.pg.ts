@@ -114,7 +114,16 @@ const isUniqueViolation = (err: unknown): boolean =>
  * figures.
  */
 export class AssetPgRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+    withScope(orgId: string, businessProfileId: string): AssetPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Asset scope is required');
+        if (this.scope && (this.scope.orgId !== orgId || this.scope.businessProfileId !== businessProfileId)) throw new Error('Asset scope cannot change');
+        return new AssetPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+    private orgScope(orgId: string) {
+        if (this.scope && this.scope.orgId !== orgId) throw new Error('Asset organisation mismatch');
+        return and(eq(assets.orgId, orgId), this.scope ? eq(assets.businessProfileId, this.scope.businessProfileId) : undefined)!;
+    }
     private get db(): PgDb { return this.injected ?? getPg(); }
 
     /**
@@ -125,6 +134,9 @@ export class AssetPgRepo {
      * winner.
      */
     async createConditional(asset: AssetDTO): Promise<AssetCreateResult> {
+        this.orgScope(asset.orgId);
+        if (this.scope && asset.businessProfileId != null && asset.businessProfileId !== this.scope.businessProfileId) throw new Error('Asset profile mismatch');
+        if (this.scope) asset = { ...asset, businessProfileId: this.scope.businessProfileId };
         try {
             const rows = await this.db.insert(assets)
                 .values(toRow(asset))
@@ -139,7 +151,7 @@ export class AssetPgRepo {
 
     async get(orgId: string, assetId: string): Promise<AssetDTO | null> {
         const rows = await this.db.select().from(assets)
-            .where(and(eq(assets.orgId, orgId), eq(assets.assetId, assetId)))
+            .where(and(this.orgScope(orgId), eq(assets.assetId, assetId)))
             .limit(1);
         return rows[0] ? toDto(rows[0]) : null;
     }
@@ -147,7 +159,7 @@ export class AssetPgRepo {
     /** The asset a receipt was promoted to, if any. */
     async getByReceipt(orgId: string, receiptId: string): Promise<AssetDTO | null> {
         const rows = await this.db.select().from(assets)
-            .where(and(eq(assets.orgId, orgId), eq(assets.receiptId, receiptId)))
+            .where(and(this.orgScope(orgId), eq(assets.receiptId, receiptId)))
             .limit(1);
         return rows[0] ? toDto(rows[0]) : null;
     }
@@ -155,7 +167,7 @@ export class AssetPgRepo {
     /** Newest-first keyset pagination on (created_at, asset_id) — same opaque cursor contract as the other pg lists. */
     async listPaginated(params: ListAssetsPaginatedParams): Promise<AssetsPage> {
         const limit = params.limit ?? 20;
-        const conds: any[] = [eq(assets.orgId, params.orgId)];
+        const conds: any[] = [this.orgScope(params.orgId)];
         if (params.status) conds.push(eq(assets.status, params.status));
         const cursor = keysetFromStartKey(params.exclusiveStartKey, 'assetId');
         if (cursor) {
@@ -204,7 +216,7 @@ export class AssetPgRepo {
         }
         const rows = await this.db.update(assets)
             .set(patch as any)
-            .where(and(eq(assets.orgId, orgId), eq(assets.assetId, assetId)))
+            .where(and(this.orgScope(orgId), eq(assets.assetId, assetId)))
             .returning({ assetId: assets.assetId });
         return rows.length > 0;
     }
@@ -217,7 +229,7 @@ export class AssetPgRepo {
     async dispose(orgId: string, assetId: string, disposal: AssetDisposal): Promise<AssetDisposeResult> {
         const rows = await this.db.update(assets)
             .set({ status: 'DISPOSED', disposal, updatedAt: new Date() })
-            .where(and(eq(assets.orgId, orgId), eq(assets.assetId, assetId), eq(assets.status, 'ACTIVE')))
+            .where(and(this.orgScope(orgId), eq(assets.assetId, assetId), eq(assets.status, 'ACTIVE')))
             .returning({ assetId: assets.assetId });
         if (rows.length > 0) return 'disposed';
         const existing = await this.get(orgId, assetId);
@@ -227,7 +239,7 @@ export class AssetPgRepo {
     /** Hard delete. */
     async remove(orgId: string, assetId: string): Promise<boolean> {
         const rows = await this.db.delete(assets)
-            .where(and(eq(assets.orgId, orgId), eq(assets.assetId, assetId)))
+            .where(and(this.orgScope(orgId), eq(assets.assetId, assetId)))
             .returning({ assetId: assets.assetId });
         return rows.length > 0;
     }
@@ -235,13 +247,13 @@ export class AssetPgRepo {
     /** ACTIVE assets whose first-used date is still unknown — depreciation cannot start for these. */
     async countWithoutFirstUse(orgId: string): Promise<number> {
         const rows = await this.db.select({ n: sql<number>`count(*)::int` }).from(assets)
-            .where(and(eq(assets.orgId, orgId), eq(assets.status, 'ACTIVE'), sql`${assets.firstUsedDate} IS NULL`));
+            .where(and(this.orgScope(orgId), eq(assets.status, 'ACTIVE'), sql`${assets.firstUsedDate} IS NULL`));
         return Number(rows[0]?.n ?? 0);
     }
 
     async countActive(orgId: string): Promise<number> {
         const rows = await this.db.select({ n: sql<number>`count(*)::int` }).from(assets)
-            .where(and(eq(assets.orgId, orgId), eq(assets.status, 'ACTIVE')));
+            .where(and(this.orgScope(orgId), eq(assets.status, 'ACTIVE')));
         return Number(rows[0]?.n ?? 0);
     }
 }

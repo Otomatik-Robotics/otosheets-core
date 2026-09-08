@@ -68,3 +68,26 @@ export const basPeriods = pgTable('bas_periods', {
 }, (t) => [
     primaryKey({ columns: [t.orgId, t.period] }),
 ]);
+
+/** Profile-bound snapshots; legacy org snapshots remain quarantined. */
+export const profileBasPeriods = pgTable('business_profile_bas_periods', {
+    orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
+    businessProfileId: text('business_profile_id').notNull(),
+    period: text('period').notNull(),               // 'FY26/27-Q1'
+    fy: text('fy').notNull(),                       // 'FY26/27'
+    quarter: smallint('quarter').notNull(),         // 1..4 (Q1 = Jul–Sep)
+    periodStart: text('period_start').notNull(),    // YYYY-MM-DD
+    periodEnd: text('period_end').notNull(),
+    dueDate: text('due_date').notNull(),
+    lodgedAt: timestamp('lodged_at', { withTimezone: true, mode: 'date' }),
+    lodgedBy: text('lodged_by'),
+    figures: jsonb('figures'),                      // snapshot of the figures at lodgement
+    confidence: smallint('confidence'),             // 50|75|90|100 at lodgement
+    reasons: jsonb('reasons'),                      // BasReason[] at lodgement
+    reminderBeforeAt: timestamp('reminder_before_at', { withTimezone: true, mode: 'date' }),
+    reminderDueAt: timestamp('reminder_due_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.orgId, t.businessProfileId, t.period] }),
+]);
