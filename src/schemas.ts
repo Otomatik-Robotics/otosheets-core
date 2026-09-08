@@ -18,3 +18,5 @@ export { ConversationBaseSchema, ConversationStoredSchema, ConversationCreateReq
 export { ComplianceTaskStoredSchema, type ComplianceTask } from './compliance/schema';
 export { NotificationBaseSchema, NotificationStoredSchema, NotificationCreateRequestSchema, type NotificationBase, type Notification, type NotificationCreateRequest } from './notification/schema';
 export { OrgChannelStoredSchema, OrgChannelCreateRequestSchema, type OrgChannel, type OrgChannelCreateRequest } from './orgChannel/schema';
+
+export * from './smsResponse/schema';

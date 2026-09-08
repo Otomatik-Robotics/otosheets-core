@@ -1,3 +1,5 @@
+import { invoiceResponseDeliveryClaims } from '../pg/schema/smsResponse';
+import { SmsResponseRepo } from '../smsResponse/repo';
 import { randomBytes } from 'node:crypto';
 import { and, eq, desc, lt, or, isNotNull, inArray, sql } from 'drizzle-orm';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
@@ -112,6 +114,7 @@ export class InboundEmailRepo {
         return { items, nextToken: rows.length > limit ? Buffer.from(JSON.stringify({ ...scope, receivedAt: last.receivedAt, messageId: last.messageId })).toString('base64') : null };
     }
     async isInvoicePaused(scope: EmailScope, invoiceId: string) {
+        if (await new SmsResponseRepo(this.db()).isInvoicePaused(scope, invoiceId)) return true;
         const rows = await this.db().select({ pausedAt: emailConversations.pausedAt }).from(emailConversations).leftJoin(emailConversationInvoices, and(eq(emailConversations.orgId, emailConversationInvoices.orgId), eq(emailConversations.businessProfileId, emailConversationInvoices.businessProfileId), eq(emailConversations.conversationId, emailConversationInvoices.conversationId))).where(and(scoped(emailConversations, scope), or(eq(emailConversations.invoiceId, invoiceId), eq(emailConversationInvoices.invoiceId, invoiceId)), isNotNull(emailConversations.pausedAt))).limit(1);
         return rows.length > 0;
     }
@@ -125,6 +128,16 @@ export class InboundEmailRepo {
             if (!conversation) throw new Error('Conversation outside profile');
             if (conversation.pausedAt) return 'paused' as const;
             const inserted = await tx.insert(emailDeliveryClaims).values({ ...scope, conversationId, deliveryId, claimedAt: new Date().toISOString() }).onConflictDoNothing().returning();
+            return inserted.length ? 'claimed' as const : 'duplicate' as const;
+        });
+    }
+    /** Channel-independent delivery admission shares the same invoice lock as every reply. */
+    async claimInvoiceDelivery(scope: EmailScope, invoiceId: string, deliveryId: string) {
+        EmailScopeSchema.parse(scope);
+        return this.tx().transaction(async tx => {
+            await this.lockInvoices(tx, scope, [invoiceId]);
+            if (await new InboundEmailRepo(tx).isInvoicePaused(scope, invoiceId)) return 'paused' as const;
+            const inserted = await tx.insert(invoiceResponseDeliveryClaims).values({ ...scope, invoiceId, deliveryId, claimedAt: new Date().toISOString() }).onConflictDoNothing().returning();
             return inserted.length ? 'claimed' as const : 'duplicate' as const;
         });
     }

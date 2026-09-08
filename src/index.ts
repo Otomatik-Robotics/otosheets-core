@@ -88,3 +88,5 @@ export * from "./workflowRuntime";
 
 export * from "./smsDelivery";
 export * from './inboundEmail';
+
+export * from './smsResponse';

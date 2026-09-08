@@ -17,6 +17,7 @@ beforeAll(async () => {
     await pg.exec(migration);
     await pg.exec(migration);
     await pg.exec(readFileSync('drizzle/0057_invoice_reply_links.sql', 'utf8'));
+    await pg.exec(readFileSync('drizzle/0059_sms_response_links.sql', 'utf8'));
     repo = new InboundEmailRepo(drizzle(pg) as unknown as PgDb);
 });
 afterAll(async () => { await pg.close(); });
