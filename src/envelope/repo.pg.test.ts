@@ -1330,3 +1330,18 @@ describe('reusable template profile scope', () => {
         await expect(a.createFromTemplate({ ...input, orgId: 'org_2' })).rejects.toThrow('scope mismatch');
     });
 });
+
+describe('document vault profile queries', () => {
+    it('filters before pagination/search and counts, excluding foreign and unassigned documents', async () => {
+        const created: string[] = [];
+        for (const [profile, org] of [['vault-a', 'org_1'], ['vault-b', 'org_1'], ['vault-a', 'org_2'], [null, 'org_1']] as const) {
+            const envelopeId = id('vault-scope'); created.push(envelopeId);
+            await repo.create({ envelopeId, orgId: org, businessProfileId: profile, createdBy: 'user_1', title: 'Profile vault fixture', kind: 'nda', versionId: id('vault-version') });
+        }
+        const page = await repo.listEnvelopes({ orgId: 'org_1', businessProfileId: 'vault-a', search: 'Profile vault fixture', limit: 1 });
+        expect(page.items.map(e => e.envelopeId)).toEqual([created[0]]);
+        expect(page.nextCursor).toBeNull();
+        expect(await repo.countByStatus('org_1', 'vault-a')).toEqual({ draft: 1 });
+        expect(await repo.countByStatus('org_1', '')).toEqual({});
+    });
+});

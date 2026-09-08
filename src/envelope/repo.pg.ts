@@ -210,6 +210,7 @@ export interface EnvelopeCursor { createdAt: string; envelopeId: string }
 
 export interface ListEnvelopesParams {
     orgId: string;
+    businessProfileId?: string;
     limit?: number;
     cursor?: EnvelopeCursor | null;
     status?: EnvelopeStatus;
@@ -1619,6 +1620,7 @@ export class EnvelopePgRepo {
     async listEnvelopes(params: ListEnvelopesParams): Promise<ListEnvelopesResult> {
         const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
         const clauses = [eq(envelopes.orgId, params.orgId)];
+        if (params.businessProfileId !== undefined) clauses.push(eq(envelopes.businessProfileId, params.businessProfileId));
         if (params.status) clauses.push(eq(envelopes.status, params.status));
 
         // In the database, for the reason listTemplates says: filtering an
@@ -1648,10 +1650,10 @@ export class EnvelopePgRepo {
      * The vault's column counts, as one grouped query. Counting by reducing over
      * a loaded page works at a dozen documents and is silently wrong at sixty.
      */
-    async countByStatus(orgId: string): Promise<Record<string, number>> {
+    async countByStatus(orgId: string, businessProfileId?: string): Promise<Record<string, number>> {
         const rows = await this.db.select({ status: envelopes.status, n: sql<number>`count(*)::int` })
             .from(envelopes)
-            .where(eq(envelopes.orgId, orgId))
+            .where(and(eq(envelopes.orgId, orgId), businessProfileId !== undefined ? eq(envelopes.businessProfileId, businessProfileId) : undefined))
             .groupBy(envelopes.status);
         const out: Record<string, number> = {};
         for (const r of rows as any[]) out[r.status] = Number(r.n);
