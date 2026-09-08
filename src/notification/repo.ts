@@ -1,61 +1,31 @@
-import { IDdb } from '../ddbPort';
-import { Tables } from '../tables';
-import { Notification } from './schema';
+import type { IDdb } from '../ddbPort';
+import type { INotificationRepo, NotificationListOptions, NotificationPage } from './contract';
+import type { Notification } from './schema';
+import { NotificationDynamoRepo } from './repo.dynamo';
+import { NotificationPgRepo } from './repo.pg';
+import { notificationStorageMode } from './storage';
 
-export class NotificationRepo {
-    constructor(private ddb: IDdb) {}
-
+/** Defaults to Dynamo until the independently coordinated notification cutover. */
+export class NotificationRepo implements INotificationRepo {
+    private dynamo: NotificationDynamoRepo;
+    private pg = new NotificationPgRepo();
+    constructor(ddb: IDdb) { this.dynamo = new NotificationDynamoRepo(ddb); }
+    private async repo(): Promise<INotificationRepo> { return await notificationStorageMode() === 'pg' ? this.pg : this.dynamo; }
     async getNotification(userId: string, notificationId: string): Promise<Notification | null> {
-        const { Item } = await this.ddb.getItem(Tables.NOTIFICATIONS, { userId, notificationId });
-        return (Item as Notification) ?? null;
+        return (await this.repo()).getNotification(userId, notificationId);
     }
-
     async listNotifications(userId: string, opts?: { limit?: number }): Promise<Notification[]> {
-        const { Items } = await this.ddb.query({
-            TableName: Tables.NOTIFICATIONS,
-            KeyConditionExpression: 'userId = :userId',
-            ExpressionAttributeValues: { ':userId': userId },
-            ScanIndexForward: false,
-            Limit: opts?.limit ?? 50,
-        });
-        return (Items as Notification[]) ?? [];
+        return (await this.repo()).listNotifications(userId, opts);
     }
-
+    async listNotificationsPage(userId: string, opts?: NotificationListOptions): Promise<NotificationPage> {
+        return (await this.repo()).listNotificationsPage(userId, opts);
+    }
     async createNotification(userId: string, notificationId: string, data: Record<string, any>): Promise<void> {
-        const now = new Date().toISOString();
-        const ttl = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60; // 90 days
-        await this.ddb.put(Tables.NOTIFICATIONS, {
-            userId,
-            notificationId,
-            read: false,
-            ...data,
-            ttl,
-            createdAt: now,
-        });
+        return (await this.repo()).createNotification(userId, notificationId, data);
     }
-
     async createNotificationOnce(userId: string, notificationId: string, data: Record<string, any>): Promise<void> {
-        try {
-            await this.ddb.transactWrite([{ Put: { TableName: Tables.NOTIFICATIONS, Item: {
-                userId, notificationId, read: false, ...data,
-                ttl: Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60,
-                createdAt: new Date().toISOString(),
-            }, ConditionExpression: 'attribute_not_exists(notificationId)' } }]);
-        } catch (error) {
-            const failure = error as { name?: string; CancellationReasons?: Array<{ Code?: string }> };
-            if (failure.name !== 'TransactionCanceledException' || failure.CancellationReasons?.[0]?.Code !== 'ConditionalCheckFailed') throw error;
-        }
+        return (await this.repo()).createNotificationOnce(userId, notificationId, data);
     }
-
-    async markRead(userId: string, notificationId: string): Promise<void> {
-        await this.ddb.update(Tables.NOTIFICATIONS, { userId, notificationId }, {
-            UpdateExpression: 'SET #read = :t',
-            ExpressionAttributeNames: { '#read': 'read' },
-            ExpressionAttributeValues: { ':t': true },
-        });
-    }
-
-    async deleteNotification(userId: string, notificationId: string): Promise<void> {
-        await this.ddb.delete(Tables.NOTIFICATIONS, { userId, notificationId });
-    }
+    async markRead(userId: string, notificationId: string): Promise<void> { return (await this.repo()).markRead(userId, notificationId); }
+    async deleteNotification(userId: string, notificationId: string): Promise<void> { return (await this.repo()).deleteNotification(userId, notificationId); }
 }

@@ -18,3 +18,4 @@ export * from './envelopes';
 export * from './bookkeeping';
 export * from './workflows';
 export * from './inboundEmail';
+export * from './notifications';
