@@ -167,11 +167,11 @@ export class LedgerMatchPgRepo {
             sql`(${invoices.isQuote} IS NULL OR ${invoices.isQuote} = false)`,
             sql`(${invoices.isPaymentLink} IS NULL OR ${invoices.isPaymentLink} = false)`,
         ];
-        if (businessProfileId) conditions.push(eq(invoices.businessProfileId, businessProfileId));
+        if (businessProfileId != null) conditions.push(eq(invoices.businessProfileId, businessProfileId));
         const rows = await this.db.select({
             invoiceId: invoices.invoiceId,
             invoiceNumber: invoices.invoiceNumber,
-            clientId: invoices.clientId,
+            clientId: businessProfileId != null ? clients.clientId : invoices.clientId,
             clientName: clients.name,
             totalAmount: invoices.totalAmount,
             paidAmount: invoices.paidAmount,
@@ -179,7 +179,8 @@ export class LedgerMatchPgRepo {
             status: invoices.status,
         })
             .from(invoices)
-            .leftJoin(clients, eq(clients.clientId, invoices.clientId))
+            .leftJoin(clients, and(eq(clients.clientId, invoices.clientId), eq(clients.orgId, invoices.orgId),
+                businessProfileId != null ? eq(clients.businessProfileId, businessProfileId) : undefined))
             .where(and(...conditions))
             .limit(CANDIDATE_CAP);
         return rows.map((r) => {
@@ -203,7 +204,7 @@ export class LedgerMatchPgRepo {
      * Receipts in a date window that no bank row (either source) links to yet —
      * the DEBIT candidate set. Cents.
      */
-    async listUnlinkedReceipts(orgId: string, opts: { dateFrom: string; dateTo: string }): Promise<UnlinkedReceiptForMatching[]> {
+    async listUnlinkedReceipts(orgId: string, opts: { dateFrom: string; dateTo: string; businessProfileId?: string }): Promise<UnlinkedReceiptForMatching[]> {
         const rows = await this.db.select({
             receiptId: receipts.receiptId,
             vendorName: receipts.vendorName,
@@ -213,12 +214,19 @@ export class LedgerMatchPgRepo {
             .from(receipts)
             .where(and(
                 eq(receipts.orgId, orgId),
+                opts.businessProfileId !== undefined ? eq(receipts.businessProfileId, opts.businessProfileId) : undefined,
                 isNull(receipts.duplicateOf),
                 sql`${receipts.date} >= ${opts.dateFrom}`,
                 sql`${receipts.date} <= ${opts.dateTo}`,
                 sql`${receipts.totalAmount} IS NOT NULL AND ${receipts.totalAmount} > 0`,
-                sql`NOT EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_receipt_id = ${receipts.receiptId})`,
-                sql`NOT EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_receipt_id = ${receipts.receiptId})`,
+                opts.businessProfileId !== undefined
+                    ? sql`NOT EXISTS (SELECT 1 FROM statement_transactions st JOIN statements s ON s.statement_id = st.statement_id
+                        WHERE st.matched_receipt_id = ${receipts.receiptId} AND s.organization_id = ${orgId} AND s.business_profile_id = ${opts.businessProfileId})`
+                    : sql`NOT EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_receipt_id = ${receipts.receiptId})`,
+                opts.businessProfileId !== undefined
+                    ? sql`NOT EXISTS (SELECT 1 FROM bank_transactions bt JOIN bank_accounts a ON a.account_id = bt.account_id
+                        WHERE bt.matched_receipt_id = ${receipts.receiptId} AND a.organization_id = ${orgId} AND a.business_profile_id = ${opts.businessProfileId})`
+                    : sql`NOT EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_receipt_id = ${receipts.receiptId})`,
             ))
             .limit(CANDIDATE_CAP);
         return rows.map((r) => ({

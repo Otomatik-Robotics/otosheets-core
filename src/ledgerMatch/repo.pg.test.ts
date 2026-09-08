@@ -291,3 +291,44 @@ describe('depositCheckForInvoices', () => {
         expect(await repo.depositCheckForInvoices(ORG, [])).toEqual([]);
     });
 });
+
+
+describe('profile-scoped matching candidates', () => {
+    const org = 'matching_scope_org';
+    beforeAll(async () => {
+        await db.execute(`INSERT INTO orgs (org_id, name) VALUES ('${org}', 'Scoped')`);
+        for (const profile of ['A', 'B']) {
+            await db.insert(clients).values({ clientId: `scope_client_${profile}`, orgId: org, businessProfileId: profile, createdBy: USER, name: `Client ${profile}` });
+        }
+        for (const [id, profile, client] of [['own', 'A', 'A'], ['foreign_client', 'A', 'B'], ['other', 'B', 'B'], ['legacy', null, 'A']] as const) {
+            await db.insert(invoices).values({ invoiceId: `scope_invoice_${id}`, invoiceNumber: `SCOPE-${id}`, orgId: org, businessProfileId: profile, ownerId: USER, createdBy: USER,
+                clientId: `scope_client_${client}`, status: 'SENT', totalAmount: '10', paidAmount: '0' });
+        }
+        for (const [id, profile] of [['open', 'A'], ['foreign_statement', 'A'], ['foreign_feed', 'A'], ['own_statement', 'A'], ['own_feed', 'A'], ['other', 'B'], ['legacy', null]] as const) {
+            await db.insert(receipts).values({ receiptId: `scope_receipt_${id}`, orgId: org, businessProfileId: profile, ownerId: USER, createdBy: USER,
+                totalAmount: '10', date: '2026-03-01' });
+        }
+        for (const profile of ['A', 'B']) {
+            await db.insert(statements).values({ statementId: `scope_statement_${profile}`, userId: USER, organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: `scope_${profile}` });
+            await db.insert(statementTransactions).values({ txnId: `scope_statement_${profile}#00001`, statementId: `scope_statement_${profile}`, userId: USER, fy: '2025-26', seq: 1,
+                amountCents: -1000, matchedReceiptId: `scope_receipt_${profile === 'A' ? 'own_statement' : 'foreign_statement'}` });
+            await db.insert(bankAccounts).values({ accountId: `scope_account_${profile}`, userId: USER, organizationId: org, businessProfileId: profile });
+            await db.insert(bankTransactions).values({ txnId: `scope_feed_${profile}`, accountId: `scope_account_${profile}`, userId: USER, organizationId: org, fy: '2025-26',
+                amountCents: -1000, matchedReceiptId: `scope_receipt_${profile === 'A' ? 'own_feed' : 'foreign_feed'}` });
+        }
+    });
+
+    it('excludes other and unassigned invoices, and withholds foreign client details', async () => {
+        const result = await repo.listOpenInvoicesForMatching(org, 'A');
+        expect(result.map(r => r.invoiceId).sort()).toEqual(['scope_invoice_foreign_client', 'scope_invoice_own']);
+        expect(result.find(r => r.invoiceId === 'scope_invoice_own')).toMatchObject({ clientId: 'scope_client_A', clientName: 'Client A' });
+        expect(result.find(r => r.invoiceId === 'scope_invoice_foreign_client')).toMatchObject({ clientId: null, clientName: null });
+        expect(await repo.listOpenInvoicesForMatching(org, '')).toEqual([]);
+    });
+
+    it('uses scoped parents for receipt links so foreign links cannot hide owned candidates', async () => {
+        const result = await repo.listUnlinkedReceipts(org, { businessProfileId: 'A', dateFrom: '2026-01-01', dateTo: '2026-12-31' });
+        expect(result.map(r => r.receiptId).sort()).toEqual(['scope_receipt_foreign_feed', 'scope_receipt_foreign_statement', 'scope_receipt_open']);
+        expect(await repo.listUnlinkedReceipts(org, { businessProfileId: '', dateFrom: '2026-01-01', dateTo: '2026-12-31' })).toEqual([]);
+    });
+});
