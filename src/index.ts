@@ -90,3 +90,5 @@ export * from "./smsDelivery";
 export * from './inboundEmail';
 
 export * from './smsResponse';
+
+export * from './websocketAdmission';
