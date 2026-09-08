@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
-import { getPg, type PgDb } from '../pg/client';
+import { getPg, getPgTx, type PgDb } from '../pg/client';
 import { statementTransactions, statements } from '../pg/schema/statements';
+import { bankAccounts, bankTransactions } from '../pg/schema/bankFeeds';
 import { invoices } from '../pg/schema/billingCore';
 import { receipts } from '../pg/schema/opsEntities';
 import { toRow, fromRow } from '../pg/rows';
@@ -180,7 +181,7 @@ export class StatementTransactionPgRepo {
         return this.injected ?? getPg();
     }
 
-    private async validateTxnReference(targetId: string, userId: string, pending = new Map<string, Record<string, any>>()) {
+    private async validateTxnReference(targetId: string, userId: string, pending = new Map<string, Record<string, any>>(), allowFeed = false) {
         const target = pending.get(targetId);
         if (target) {
             // Pending rows have already passed the entire batch's parent validation.
@@ -188,14 +189,24 @@ export class StatementTransactionPgRepo {
             return;
         }
         const [stored] = await this.db.select({ id: statementTransactions.txnId }).from(statementTransactions)
-            .where(this.within(eq(statementTransactions.txnId, targetId), eq(statementTransactions.userId, userId))).limit(1);
-        if (!stored) throw new Error('Statement transaction reference ownership mismatch');
+            .where(this.within(eq(statementTransactions.txnId, targetId), eq(statementTransactions.userId, userId),
+                sql`EXISTS (SELECT 1 FROM statements parent WHERE parent.statement_id = ${statementTransactions.statementId} AND parent.user_id = ${userId})`)).limit(1);
+        if (stored) return;
+        if (allowFeed && this.scope) {
+            const [feed] = await this.db.select({ id: bankTransactions.txnId }).from(bankTransactions)
+                .innerJoin(bankAccounts, eq(bankAccounts.accountId, bankTransactions.accountId))
+                .where(and(eq(bankTransactions.txnId, targetId), eq(bankTransactions.userId, userId),
+                    eq(bankAccounts.userId, userId), eq(bankTransactions.organizationId, this.scope.orgId),
+                    eq(bankAccounts.organizationId, this.scope.orgId), eq(bankAccounts.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (feed) return;
+        }
+        throw new Error('Statement transaction reference ownership mismatch');
     }
 
     private async validateReferences(item: Record<string, any>, pending: Map<string, Record<string, any>>) {
         if (!this.scope) return;
         for (const key of ['transferPairId', 'duplicateOfTxnId']) {
-            if (item[key] != null) await this.validateTxnReference(item[key], item.userId, pending);
+            if (item[key] != null) await this.validateTxnReference(item[key], item.userId, pending, key === 'duplicateOfTxnId');
         }
         if (item.matchedInvoiceId != null) {
             const [invoice] = await this.db.select({ id: invoices.invoiceId }).from(invoices)
@@ -207,6 +218,32 @@ export class StatementTransactionPgRepo {
                 .where(and(eq(receipts.receiptId, item.matchedReceiptId), eq(receipts.orgId, this.scope.orgId), eq(receipts.businessProfileId, this.scope.businessProfileId))).limit(1);
             if (!receipt) throw new Error('Statement receipt reference ownership mismatch');
         }
+    }
+
+    /** Replace one owned statement atomically: failed validation or any chunk rolls back the deletion. */
+    async replaceTransactions(userId: string, statementId: string, items: Array<Record<string, any>>): Promise<void> {
+        if (!this.scope) throw new Error('Statement replacement requires validated scope');
+        if (items.some(item => item.statementId !== statementId || item.userId !== userId)) throw new Error('Statement replacement ownership mismatch');
+        const scope = this.scope;
+        await (this.injected ?? getPgTx()).transaction(async tx => {
+            const [parent] = await tx.select({ id: statements.statementId }).from(statements)
+                .where(and(eq(statements.statementId, statementId), eq(statements.userId, userId),
+                    eq(statements.organizationId, scope.orgId), eq(statements.businessProfileId, scope.businessProfileId)))
+                .for('update').limit(1);
+            if (!parent) throw new Error('Statement replacement ownership mismatch');
+            // The locked current rows, rather than an earlier pipeline snapshot,
+            // own accepted links (including a link reversed during extraction).
+            const previous = await tx.select().from(statementTransactions)
+                .where(and(eq(statementTransactions.statementId, statementId), eq(statementTransactions.userId, userId))).for('update');
+            const byId = new Map(previous.map(row => [row.txnId, row]));
+            const replacement = items.map(item => {
+                const old = byId.get(statementTxnId(statementId, item.seq));
+                return old ? { ...item, matchedInvoiceId: old.matchedInvoiceId, matchedReceiptId: old.matchedReceiptId, matchSource: old.matchSource } : item;
+            });
+            const repo = new StatementTransactionPgRepo(tx as unknown as PgDb, scope);
+            await repo.deleteByStatement(statementId);
+            await repo.upsertTransactions(replacement);
+        });
     }
 
     async upsertTransactions(items: Array<Record<string, any>>): Promise<void> {

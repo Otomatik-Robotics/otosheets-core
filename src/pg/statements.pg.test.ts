@@ -581,3 +581,57 @@ describe('statement dedupe expansion and controlled contract', () => {
         await expect(root.updateStatement('contract-legacy2', { contentHash: 'legacy-contract-hash' })).rejects.toThrow();
     });
 });
+
+describe('atomic statement replacement with feed duplicates', () => {
+    const user = 'replace-user';
+    const id = 'replace-statement';
+    const scoped = () => new StatementTransactionPgRepo(db).withScope('replace-org', 'a');
+    const row = (seq: number, extra = {}) => ({ ...txn(seq), txnId: statementTxnId(id, seq), statementId: id, userId: user, ...extra });
+    beforeAll(async () => {
+        await new StatementPgRepo(db).createStatement({ statementId: id, userId: user, organizationId: 'replace-org', businessProfileId: 'a', fy: '2025-26', s3Key: id });
+        for (const [name, org, profile, owner] of [['own', 'replace-org', 'a', user], ['profile', 'replace-org', 'b', user], ['org', 'foreign-org', 'a', user], ['user', 'replace-org', 'a', 'other-user'], ['legacy', 'replace-org', null, user]] as const) {
+            await pglite.query('INSERT INTO bank_accounts(account_id,user_id,organization_id,business_profile_id) VALUES ($1,$2,$3,$4)', [`replace-account-${name}`, owner, org, profile]);
+            await pglite.query('INSERT INTO bank_transactions(txn_id,account_id,user_id,organization_id,fy,amount_cents) VALUES ($1,$2,$3,$4,$5,$6)', [`replace-feed-${name}`, `replace-account-${name}`, owner, org, '2025-26', -1000]);
+        }
+        await scoped().upsertTransactions([row(1, { description: 'original' })]);
+    });
+
+    it('accepts an owned feed duplicate and excludes it from totals, idempotently', async () => {
+        const replacement = [row(1, { duplicateOfTxnId: 'replace-feed-own' })];
+        await scoped().replaceTransactions(user, id, replacement);
+        await scoped().replaceTransactions(user, id, replacement);
+        expect((await scoped().getTransaction(user, id, 1))?.duplicateOfTxnId).toBe('replace-feed-own');
+        expect(await scoped().summariseByCategory({ userId: user, statementId: id })).toEqual([]);
+    });
+
+    it('rejects foreign, unassigned, missing feed duplicates and feed transfer targets without losing old rows', async () => {
+        const original = await scoped().getTransaction(user, id, 1);
+        for (const target of ['profile', 'org', 'user', 'legacy', 'missing']) {
+            await expect(scoped().replaceTransactions(user, id, [row(2, { duplicateOfTxnId: `replace-feed-${target}` })])).rejects.toThrow('reference ownership mismatch');
+            expect(await scoped().getTransaction(user, id, 1)).toEqual(original);
+        }
+        await expect(scoped().replaceTransactions(user, id, [row(2, { transferPairId: 'replace-feed-own' })])).rejects.toThrow('reference ownership mismatch');
+        expect(await scoped().getTransaction(user, id, 1)).toEqual(original);
+        expect(await scoped().getTransaction(user, id, 2)).toBeNull();
+    });
+
+    it('rolls back deletion and earlier chunks when a later storage constraint fails', async () => {
+        const original = await scoped().getTransaction(user, id, 1);
+        const replacement = Array.from({ length: 201 }, (_, i) => row(i + 1, i === 200 ? { amountCents: null } : {}));
+        await expect(scoped().replaceTransactions(user, id, replacement)).rejects.toThrow();
+        expect(await scoped().getTransaction(user, id, 1)).toEqual(original);
+        expect((await scoped().listByStatement(user, id)).items).toHaveLength(1);
+    });
+
+    it('preserves the current accepted link and its reversal over an earlier pipeline snapshot', async () => {
+        await pglite.query("INSERT INTO orgs(org_id,name) VALUES ('replace-org','Replacement')");
+        await pglite.query("INSERT INTO receipts(receipt_id,org_id,business_profile_id,owner_id,created_by) VALUES ('replace-receipt','replace-org','a',$1,$1)", [user]);
+        await pglite.query("UPDATE statement_transactions SET matched_receipt_id='replace-receipt',match_source='USER' WHERE statement_id=$1", [id]);
+        await scoped().replaceTransactions(user, id, [row(1)]);
+        expect((await scoped().getTransaction(user, id, 1))?.matchedReceiptId).toBe('replace-receipt');
+        await pglite.query('UPDATE statement_transactions SET matched_receipt_id=NULL,match_source=NULL WHERE statement_id=$1', [id]);
+        await scoped().replaceTransactions(user, id, [row(1, { matchedReceiptId: 'replace-receipt', matchSource: 'USER' })]);
+        expect((await scoped().getTransaction(user, id, 1))?.matchedReceiptId).toBeNull();
+    });
+
+});
