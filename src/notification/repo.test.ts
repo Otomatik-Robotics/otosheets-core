@@ -129,3 +129,75 @@ describe('routing and Dynamo compatibility', () => {
         expect(query.mock.calls[1][0].ExclusiveStartKey).toEqual({ userId: 'u1', notificationId: 'n1' });
     });
 });
+
+describe('immutable notification business scope', () => {
+    it('filters before pagination and binds cursors to recipient, org and profile', async () => {
+        const a = repo.withScope('org', 'a');
+        const b = repo.withScope('org', 'b');
+        await a.createNotification('user', 'a1', content);
+        await a.createNotification('user', 'a2', content);
+        await b.createNotification('user', 'z1', content);
+        await repo.withScope('other-org', 'a').createNotification('user', 'z2', content);
+        await repo.createNotification('user', 'z3', content);
+        const page = await a.listNotificationsPage('user', { limit: 1 });
+        expect(page.items.map(n => n.notificationId)).toEqual(['a2']);
+        expect((await a.listNotificationsPage('user', { limit: 1, nextToken: page.nextToken })).items.map(n => n.notificationId)).toEqual(['a1']);
+        await expect(b.listNotificationsPage('user', { nextToken: page.nextToken })).rejects.toThrow('nextToken');
+        await expect(repo.listNotificationsPage('user', { nextToken: page.nextToken })).rejects.toThrow('nextToken');
+        await expect(a.listNotificationsPage('other-user', { nextToken: page.nextToken })).rejects.toThrow('nextToken');
+        expect(() => a.withScope('org', 'b')).toThrow('scope mismatch');
+        expect(() => repo.withScope('org', '')).toThrow('scope is required');
+    });
+
+    it('stamps ownership, rejects foreign retries and hides or ignores foreign reads/mutations', async () => {
+        const a = repo.withScope('org', 'a');
+        const b = repo.withScope('org', 'b');
+        await a.createNotification('user', 'owned', content);
+        expect(await a.getNotification('user', 'owned')).toMatchObject({ organizationId: 'org', businessProfileId: 'a' });
+        expect(await b.getNotification('user', 'owned')).toBeNull();
+        await b.markRead('user', 'owned');
+        await b.deleteNotification('user', 'owned');
+        await expect(b.createNotification('user', 'owned', content)).rejects.toThrow('ownership mismatch');
+        await expect(a.createNotification('user', 'new', { ...content, businessProfileId: 'b' })).rejects.toThrow('ownership mismatch');
+        await expect(a.importNotification({ ...content, userId: 'user', notificationId: 'legacy', read: false, createdAt: '2026-01-01' })).rejects.toThrow('ownership mismatch');
+        expect(await a.getNotification('user', 'owned')).toMatchObject({ read: false });
+        await a.markRead('user', 'owned');
+        await a.createNotification('user', 'owned', { ...content, title: 'replay' });
+        expect(await a.getNotification('user', 'owned')).toMatchObject({ read: true, title: content.title });
+        await a.deleteNotification('user', 'owned');
+        expect(await a.getNotification('user', 'owned')).toBeNull();
+    });
+
+    it('retains scoped routing, expiry and maintenance behavior', async () => {
+        vi.stubEnv('DATA_BACKEND_NOTIFICATIONS', 'pg');
+        const routed = new NotificationRepo({} as IDdb).withScope('org', 'a');
+        await routed.createNotification('user', 'n1', content);
+        expect(await routed.getNotification('user', 'n1')).toMatchObject({ businessProfileId: 'a' });
+        await pg.exec("UPDATE notifications SET ttl=1 WHERE notification_id='n1'");
+        expect(await routed.listNotifications('user')).toEqual([]);
+        vi.stubEnv('DATA_BACKEND_NOTIFICATIONS', 'maintenance');
+        await expect(routed.markRead('user', 'n1')).rejects.toThrow('migration');
+    });
+
+    it('Dynamo conditions constrain filtering and mutations and foreign collisions fail closed', async () => {
+        const query = vi.fn().mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { notificationId: 'z' } })
+            .mockResolvedValueOnce({ Items: [{ ...content, userId: 'user', notificationId: 'a', organizationId: 'org', businessProfileId: 'a' }] });
+        const update = vi.fn().mockResolvedValue({});
+        const transactWrite = vi.fn().mockResolvedValue({});
+        const getItem = vi.fn().mockResolvedValue({ Item: { ...content, organizationId: 'org', businessProfileId: 'b' } });
+        const dynamo = new NotificationDynamoRepo({ query, update, transactWrite, getItem } as unknown as IDdb).withScope('org', 'a');
+        expect((await dynamo.listNotifications('user', { limit: 1 })).map(n => n.notificationId)).toEqual(['a']);
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(query.mock.calls[0][0]).toMatchObject({ FilterExpression: expect.stringContaining('#org = :org AND #profile = :profile'),
+            ExpressionAttributeNames: { '#org': 'organizationId', '#profile': 'businessProfileId' }, ExpressionAttributeValues: { ':org': 'org', ':profile': 'a' } });
+        expect(query.mock.calls[1][0].ExclusiveStartKey).toEqual({ userId: 'user', notificationId: 'z' });
+        expect(await dynamo.getNotification('user', 'foreign')).toBeNull();
+        await dynamo.markRead('user', 'foreign');
+        expect(update.mock.calls[0][2]).toMatchObject({ ConditionExpression: 'attribute_exists(notificationId) AND #org = :org AND #profile = :profile', ExpressionAttributeValues: { ':org': 'org', ':profile': 'a' } });
+        await dynamo.deleteNotification('user', 'foreign');
+        expect(transactWrite.mock.calls[0][0][0].Delete.ConditionExpression).toContain('#org = :org AND #profile = :profile');
+        transactWrite.mockRejectedValueOnce({ name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
+        await expect(dynamo.createNotification('user', 'foreign', content)).rejects.toThrow('ownership mismatch');
+        expect(getItem.mock.calls.at(-1)?.slice(1)).toEqual([{ userId: 'user', notificationId: 'foreign' }, { ConsistentRead: true }]);
+    });
+});
