@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { makeSweepQueries } from './sweep.pg';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
 import {
@@ -248,7 +248,26 @@ export interface SealArtifactInput {
 const APPEND_ATTEMPTS = 5;
 
 export class EnvelopePgRepo {
-    constructor(private readonly injected?: PgDb, private readonly injectedTx?: PgDb) {}
+    constructor(private readonly injected?: PgDb, private readonly injectedTx?: PgDb,
+        private readonly templateScope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    /** Scope reusable-template operations; document/recipient operations require their own authorization. */
+    withTemplateScope(orgId: string, businessProfileId: string): EnvelopePgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Template scope is required');
+        if (this.templateScope && (this.templateScope.orgId !== orgId || this.templateScope.businessProfileId !== businessProfileId)) throw new Error('Template scope mismatch');
+        return new EnvelopePgRepo(this.injected, this.injectedTx, Object.freeze({ orgId, businessProfileId }));
+    }
+    private withinTemplate(...conditions: (SQL | undefined)[]) {
+        return and(...conditions, ...(this.templateScope ? [eq(envelopeTemplates.orgId, this.templateScope.orgId), eq(envelopeTemplates.businessProfileId, this.templateScope.businessProfileId)] : []));
+    }
+    private ownedTemplate(templateId: SQL): SQL {
+        return this.templateScope ? sql`EXISTS (SELECT 1 FROM envelope_templates owned_template
+            WHERE owned_template.template_id = ${templateId} AND owned_template.org_id = ${this.templateScope.orgId}
+            AND owned_template.business_profile_id = ${this.templateScope.businessProfileId})` : sql`true`;
+    }
+    private async assertTemplate(templateId: string) {
+        if (this.templateScope && !await this.getTemplate(templateId)) throw new Error('No such template');
+    }
     private get db(): PgDb { return this.injected ?? getPg(); }
     private get tx(): PgDb { return this.injectedTx ?? this.injected ?? getPgTx(); }
 
@@ -1187,6 +1206,10 @@ export class EnvelopePgRepo {
     // ── reusable documents ───────────────────────────────────────────────
 
     async createTemplate(input: CreateTemplateInput): Promise<{ templateId: string; created: boolean }> {
+        if (this.templateScope) {
+            if (input.orgId !== this.templateScope.orgId || (input.businessProfileId != null && input.businessProfileId !== this.templateScope.businessProfileId)) throw new Error('Template scope mismatch');
+            input = { ...input, businessProfileId: this.templateScope.businessProfileId };
+        }
         if (isRefusedKind(input.kind)) {
             throw new Error(`Documents of kind "${input.kind}" are not handled here`);
         }
@@ -1206,10 +1229,12 @@ export class EnvelopePgRepo {
             updatedAt: now,
         }).onConflictDoNothing({ target: envelopeTemplates.templateId })
             .returning({ id: envelopeTemplates.templateId });
+        await this.assertTemplate(input.templateId);
         return { templateId: input.templateId, created: inserted.length > 0 };
     }
 
     async addTemplateRole(input: TemplateRoleInput): Promise<{ templateRoleId: string; created: boolean }> {
+        await this.assertTemplate(input.templateId);
         const inserted = await (this.db as any).insert(envelopeTemplateRoles).values({
             templateRoleId: input.templateRoleId,
             templateId: input.templateId,
@@ -1227,7 +1252,7 @@ export class EnvelopePgRepo {
 
     async listTemplateRoles(templateId: string) {
         return this.db.select().from(envelopeTemplateRoles)
-            .where(eq(envelopeTemplateRoles.templateId, templateId))
+            .where(and(eq(envelopeTemplateRoles.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateRoles.templateId}`)))
             .orderBy(asc(envelopeTemplateRoles.orderNo));
     }
 
@@ -1265,7 +1290,7 @@ export class EnvelopePgRepo {
     async moveTemplateField(templateId: string, fieldId: string, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
         const rows = await this.db.update(envelopeTemplateFields)
             .set({ x: String(rect.x), y: String(rect.y), w: String(rect.w), h: String(rect.h) })
-            .where(and(eq(envelopeTemplateFields.templateId, templateId), eq(envelopeTemplateFields.templateFieldId, fieldId)))
+            .where(and(eq(envelopeTemplateFields.templateId, templateId), eq(envelopeTemplateFields.templateFieldId, fieldId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)))
             .returning({ id: envelopeTemplateFields.templateFieldId });
         return rows.length > 0;
     }
@@ -1276,19 +1301,19 @@ export class EnvelopePgRepo {
         fields: TemplateFieldInput[];
     }): Promise<boolean> {
         return (this.tx as any).transaction(async (tx: any) => {
-            const [template] = await tx.select().from(envelopeTemplates).where(and(
+            const [template] = await tx.select().from(envelopeTemplates).where(this.withinTemplate(
                 eq(envelopeTemplates.templateId, input.templateId), eq(envelopeTemplates.orgId, input.orgId),
             )).for('update');
             if (!template) throw new Error('No such template');
             if (template.s3Key) return false;
             if (template.updatedAt !== input.expectedUpdatedAt) throw new Error('Template changed during preparation. Try again.');
-            const scoped = new EnvelopePgRepo(tx, tx);
+            const scoped = new EnvelopePgRepo(tx, tx, this.templateScope);
             await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, input.templateId));
             for (const field of input.fields) {
                 await scoped.addTemplateField({ ...field, templateId: input.templateId });
             }
             await tx.update(envelopeTemplates).set({ s3Key: input.s3Key, updatedAt: new Date().toISOString() })
-                .where(eq(envelopeTemplates.templateId, input.templateId));
+                .where(this.withinTemplate(eq(envelopeTemplates.templateId, input.templateId)));
             return true;
         });
     }
@@ -1296,41 +1321,41 @@ export class EnvelopePgRepo {
     /** Role definitions belong to the template; recipient identities belong to each use. */
     async configureTemplate(templateId: string, orgId: string, roles: TemplateRoleInput[], signatureMethod: 'digital' | 'wet'): Promise<void> {
         return (this.tx as any).transaction(async (tx: any) => {
-            const [template] = await tx.select().from(envelopeTemplates).where(and(
+            const [template] = await tx.select().from(envelopeTemplates).where(this.withinTemplate(
                 eq(envelopeTemplates.templateId, templateId), eq(envelopeTemplates.orgId, orgId),
             )).for('update');
             if (!template) throw new Error('No such template');
-            const scoped = new EnvelopePgRepo(tx, tx);
+            const scoped = new EnvelopePgRepo(tx, tx, this.templateScope);
             const before = await scoped.listTemplateRoles(templateId);
             const shape = (rows: any[]) => JSON.stringify(rows.map(r => [r.roleKey, r.label, r.signingRole, r.signingCapacity || 'principal', r.orderNo || 0, r.required ?? true]));
             if (shape(before) === shape(roles) && (template.signatureMethod || 'digital') === signatureMethod) return;
             const layoutChanged = shape(before) !== shape(roles);
             // Generated pages contain the role labels. Changing roles requires new pages.
             if (layoutChanged && template.bodyMarkdown) {
-                await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, templateId));
+                await tx.delete(envelopeTemplateFields).where(and(eq(envelopeTemplateFields.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)));
             } else {
                 const fieldRoles = roles.filter(r => canHoldFields(r.signingRole)).map(r => r.roleKey);
                 const fields = await scoped.listTemplateFields(templateId);
                 for (const field of fields) if (!fieldRoles.includes(field.roleKey)) await scoped.removeTemplateField(field.templateFieldId);
             }
-            await tx.delete(envelopeTemplateRoles).where(eq(envelopeTemplateRoles.templateId, templateId));
+            await tx.delete(envelopeTemplateRoles).where(and(eq(envelopeTemplateRoles.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateRoles.templateId}`)));
             for (const role of roles) await scoped.addTemplateRole({ ...role, templateId });
             await tx.update(envelopeTemplates).set({
                 signatureMethod, updatedAt: new Date().toISOString(),
                 ...(layoutChanged && template.bodyMarkdown ? { s3Key: null } : {}),
-            }).where(eq(envelopeTemplates.templateId, templateId));
+            }).where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId)));
         });
     }
 
     async listTemplateFields(templateId: string) {
         return this.db.select().from(envelopeTemplateFields)
-            .where(eq(envelopeTemplateFields.templateId, templateId))
+            .where(and(eq(envelopeTemplateFields.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)))
             .orderBy(asc(envelopeTemplateFields.page));
     }
 
     async removeTemplateField(templateFieldId: string): Promise<void> {
         await (this.db as any).delete(envelopeTemplateFields)
-            .where(eq(envelopeTemplateFields.templateFieldId, templateFieldId));
+            .where(and(eq(envelopeTemplateFields.templateFieldId, templateFieldId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)));
     }
 
     /**
@@ -1375,7 +1400,7 @@ export class EnvelopePgRepo {
         }
 
         const rows = await this.db.select().from(envelopeTemplates)
-            .where(and(...clauses))
+            .where(this.withinTemplate(...clauses))
             .orderBy(desc(envelopeTemplates.createdAt), desc(envelopeTemplates.templateId))
             .limit(limit + 1);
 
@@ -1430,11 +1455,11 @@ export class EnvelopePgRepo {
         const [roleRows, fieldRows] = await Promise.all([
             this.db.select({ id: envelopeTemplateRoles.templateId, n: sql<number>`count(*)::int` })
                 .from(envelopeTemplateRoles)
-                .where(inArray(envelopeTemplateRoles.templateId, templateIds))
+                .where(and(inArray(envelopeTemplateRoles.templateId, templateIds), this.ownedTemplate(sql`${envelopeTemplateRoles.templateId}`)))
                 .groupBy(envelopeTemplateRoles.templateId),
             this.db.select({ id: envelopeTemplateFields.templateId, n: sql<number>`count(*)::int` })
                 .from(envelopeTemplateFields)
-                .where(inArray(envelopeTemplateFields.templateId, templateIds))
+                .where(and(inArray(envelopeTemplateFields.templateId, templateIds), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)))
                 .groupBy(envelopeTemplateFields.templateId),
         ]);
 
@@ -1447,7 +1472,7 @@ export class EnvelopePgRepo {
 
     async getTemplate(templateId: string) {
         const r = await this.db.select().from(envelopeTemplates)
-            .where(eq(envelopeTemplates.templateId, templateId)).limit(1);
+            .where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId))).limit(1);
         return (r[0] as any) ?? null;
     }
 
@@ -1457,14 +1482,15 @@ export class EnvelopePgRepo {
      * fields are placed would silently re-tier a prepared template.
      */
     async updateTemplate(templateId: string, patch: { name?: string; bodyMarkdown?: string; description?: string }): Promise<void> {
+        if (this.templateScope) patch = Object.fromEntries(Object.entries(patch).filter(([key]) => ['name', 'bodyMarkdown', 'description'].includes(key)));
         await (this.tx as any).transaction(async (tx: any) => {
-            const [template] = await tx.select().from(envelopeTemplates).where(eq(envelopeTemplates.templateId, templateId)).for('update');
+            const [template] = await tx.select().from(envelopeTemplates).where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId))).for('update');
             if (!template) throw new Error('No such template');
             const changed = (patch.bodyMarkdown !== undefined && patch.bodyMarkdown !== template.bodyMarkdown)
                 || (patch.name !== undefined && patch.name !== template.name && !!template.bodyMarkdown);
             const set = { ...patch, updatedAt: new Date().toISOString(), ...(changed ? { s3Key: null } : {}) };
-            if (changed) await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, templateId));
-            await tx.update(envelopeTemplates).set(set).where(eq(envelopeTemplates.templateId, templateId));
+            if (changed) await tx.delete(envelopeTemplateFields).where(and(eq(envelopeTemplateFields.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)));
+            await tx.update(envelopeTemplates).set(set).where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId)));
         });
     }
 
@@ -1472,7 +1498,7 @@ export class EnvelopePgRepo {
     async archiveTemplate(templateId: string): Promise<void> {
         await (this.db as any).update(envelopeTemplates)
             .set({ archivedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
-            .where(eq(envelopeTemplates.templateId, templateId));
+            .where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId)));
     }
 
     /**
@@ -1484,13 +1510,15 @@ export class EnvelopePgRepo {
      * signed has to stay what it was.
      */
     async createFromTemplate(input: CreateFromTemplateInput): Promise<EnvelopeDTO> {
+        if (this.templateScope && input.orgId !== this.templateScope.orgId) throw new Error('Template scope mismatch');
         return await (this.tx as any).transaction(async (tx: any) => {
-            await tx.select().from(envelopeTemplates).where(and(eq(envelopeTemplates.templateId, input.templateId),
+            await tx.select().from(envelopeTemplates).where(this.withinTemplate(eq(envelopeTemplates.templateId, input.templateId),
                 eq(envelopeTemplates.orgId, input.orgId))).for('update');
-            const scoped = new EnvelopePgRepo(tx, tx);
+            const scoped = new EnvelopePgRepo(tx, tx, this.templateScope);
+            await scoped.assertTemplate(input.templateId);
             const existing = await scoped.get(input.envelopeId);
             if (existing) {
-                if (existing.orgId !== input.orgId) throw new Error('No such document');
+                if (existing.orgId !== input.orgId || (this.templateScope && existing.businessProfileId !== this.templateScope.businessProfileId)) throw new Error('No such document');
                 return existing;
             }
             return scoped.createFromTemplateInside(input);
@@ -1577,7 +1605,7 @@ export class EnvelopePgRepo {
         // template at once should count as two.
         await (this.db as any).update(envelopeTemplates)
             .set({ timesUsed: sql`${envelopeTemplates.timesUsed} + 1`, updatedAt: new Date().toISOString() })
-            .where(eq(envelopeTemplates.templateId, input.templateId));
+            .where(this.withinTemplate(eq(envelopeTemplates.templateId, input.templateId)));
 
         return envelope;
     }
