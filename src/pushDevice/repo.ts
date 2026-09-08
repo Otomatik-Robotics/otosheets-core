@@ -37,8 +37,8 @@ export class PushDeviceRepo {
             businessProfileId: scope.businessProfileId, bindingVersion: randomUUID(), generation, expiresAt: this.now() + 60 };
         await this.ddb.transactWrite([{ Put: { TableName: this.table,
             Item: { ...keys.binding, principalId: userId, organizationId: scope.orgId, businessProfileId: scope.businessProfileId,
-                bindingVersion: lease.bindingVersion, generation, expiresAt: lease.expiresAt, state: 'pending' },
-            ConditionExpression: 'attribute_not_exists(generation) OR generation < :generation',
+                bindingVersion: lease.bindingVersion, generation, highWater: generation, expiresAt: lease.expiresAt, state: 'pending' },
+            ConditionExpression: 'attribute_not_exists(highWater) OR highWater < :generation',
             ExpressionAttributeValues: { ':generation': generation } } }]);
         return lease;
     }
@@ -49,9 +49,9 @@ export class PushDeviceRepo {
         await this.ddb.transactWrite([
             { Put: { TableName: this.table,
                 Item: { ...this.bindingKey(lease.token), principalId: lease.userId, organizationId: lease.organizationId,
-                    businessProfileId: lease.businessProfileId, bindingVersion: lease.bindingVersion, generation: lease.generation,
+                    businessProfileId: lease.businessProfileId, bindingVersion: lease.bindingVersion, generation: lease.generation, highWater: lease.generation,
                     expiresAt: lease.expiresAt, state: 'active', endpointArn },
-                ConditionExpression: 'bindingVersion = :version AND generation = :generation AND expiresAt > :now',
+                ConditionExpression: 'bindingVersion = :version AND highWater = :generation AND generation = :generation AND expiresAt > :now',
                 ExpressionAttributeValues: { ':version': lease.bindingVersion, ':generation': lease.generation, ':now': this.now() } } },
             { Put: { TableName: this.table, Item: device } },
         ]);
@@ -83,21 +83,35 @@ export class PushDeviceRepo {
     async unregister(userId: string, token: string, scope: NotificationScope, generation: number): Promise<void> {
         this.validate(userId, scope, generation);
         const keys = this.keys(token);
-        try {
-            await this.ddb.transactWrite([{ Put: { TableName: this.table,
-                Item: { ...keys.binding, principalId: userId, organizationId: scope.orgId, businessProfileId: scope.businessProfileId,
-                    generation, bindingVersion: randomUUID(), state: 'revoked' },
-                ConditionExpression: 'attribute_not_exists(generation) OR (generation < :generation AND principalId = :user AND organizationId = :org AND businessProfileId = :profile)',
-                ExpressionAttributeValues: { ':generation': generation, ':user': userId, ':org': scope.orgId, ':profile': scope.businessProfileId } } }]);
-        } catch (error) { if (!this.conditionalFailure(error)) throw error; }
+        for (let attempt = 0; attempt < 5; attempt++) {
+            const { Item: current } = await this.ddb.getItem(this.table, keys.binding, { ConsistentRead: true });
+            if ((current?.highWater ?? 0) > generation) return;
+            const owned = current?.principalId === userId && current.organizationId === scope.orgId && current.businessProfileId === scope.businessProfileId;
+            if (current?.highWater === generation && (!owned || current.state === 'revoked')) return;
+            // A foreign active binding stays active, but cannot erase this newer device-intent barrier.
+            const next = current && !owned ? { ...current, highWater: generation } : {
+                ...keys.binding, principalId: userId, organizationId: scope.orgId, businessProfileId: scope.businessProfileId,
+                generation, highWater: generation, bindingVersion: randomUUID(), state: 'revoked',
+            };
+            try {
+                await this.ddb.transactWrite([{ Put: { TableName: this.table, Item: next,
+                    ConditionExpression: current ? 'highWater = :previous AND bindingVersion = :version' : 'attribute_not_exists(token)',
+                    ...(current ? { ExpressionAttributeValues: { ':previous': current.highWater, ':version': current.bindingVersion } } : {}) } }]);
+                return;
+            } catch (error) { if (!this.conditionalFailure(error)) throw error; }
+        }
+        throw new Error('Push revocation conflicted; retry with the same generation');
     }
     async removeIfCurrent(device: ScopedPushDevice): Promise<void> {
+        const key = this.bindingKey(device.token);
+        const { Item: current } = await this.ddb.getItem(this.table, key, { ConsistentRead: true });
+        if (current?.bindingVersion !== device.bindingVersion || current.principalId !== device.userId
+            || current.organizationId !== device.organizationId || current.businessProfileId !== device.businessProfileId) return;
         try {
             await this.ddb.transactWrite([{ Put: { TableName: this.table,
-                Item: { ...this.bindingKey(device.token), principalId: device.userId, organizationId: device.organizationId,
-                    businessProfileId: device.businessProfileId, generation: device.generation, bindingVersion: randomUUID(), state: 'revoked' },
-                ConditionExpression: 'bindingVersion = :version AND principalId = :user AND organizationId = :org AND businessProfileId = :profile',
-                ExpressionAttributeValues: { ':version': device.bindingVersion, ':user': device.userId, ':org': device.organizationId, ':profile': device.businessProfileId } } }]);
+                Item: { ...current, bindingVersion: randomUUID(), state: 'revoked' },
+                ConditionExpression: 'bindingVersion = :version AND highWater = :previous',
+                ExpressionAttributeValues: { ':version': device.bindingVersion, ':previous': current.highWater } } }]);
         } catch (error) { if (!this.conditionalFailure(error)) throw error; }
     }
     private conditionalFailure(error: unknown): boolean {

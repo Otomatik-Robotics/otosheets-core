@@ -14,13 +14,15 @@ function fixture() {
                 const old = rows.get(key(Put.Item)), values = Put.ExpressionAttributeValues;
                 const condition = Put.ConditionExpression;
                 let allowed: boolean;
-                if (condition.startsWith('attribute_not_exists(generation)')) {
-                    allowed = old?.generation === undefined || (old.generation < values[':generation'] && (values[':user'] === undefined
-                        || (old.principalId === values[':user'] && old.organizationId === values[':org'] && old.businessProfileId === values[':profile'])));
+                if (condition.startsWith('attribute_not_exists(highWater)')) {
+                    allowed = old?.highWater === undefined || old.highWater < values[':generation'];
+                } else if (condition === 'attribute_not_exists(token)') {
+                    allowed = !old;
+                } else if (values[':previous'] !== undefined) {
+                    allowed = old?.bindingVersion === values[':version'] && old.highWater === values[':previous'];
                 } else {
-                    allowed = old?.bindingVersion === values[':version'] && (values[':now'] !== undefined
-                        ? old.generation === values[':generation'] && old.expiresAt > values[':now']
-                        : old.principalId === values[':user'] && old.organizationId === values[':org'] && old.businessProfileId === values[':profile']);
+                    allowed = old?.bindingVersion === values[':version'] && old.highWater === values[':generation']
+                        && old.generation === values[':generation'] && old.expiresAt > values[':now'];
                 }
                 if (!allowed) throw { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] };
             }
@@ -93,4 +95,27 @@ describe('push device binding generation', () => {
         await repo.register('user', 'token', 'ios', 'endpoint', b, 2); release(); await cleanup;
         expect(await repo.list('user', b)).toHaveLength(1);
     });
+    it('records logout A3 over an older B1 binding without erasing B, then rejects delayed A2', async () => {
+        const { repo } = fixture();
+        await repo.register('user', 'token', 'ios', 'endpoint', b, 1);
+        await repo.unregister('user', 'token', a, 3);
+        expect(await repo.list('user', b)).toHaveLength(1);
+        await expect(repo.register('user', 'token', 'ios', 'endpoint', a, 2)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        expect(await repo.list('user', a)).toEqual([]);
+    });
+    it('retains a foreign-user barrier through disabled-device cleanup', async () => {
+        const { repo } = fixture();
+        await repo.register('old', 'token', 'ios', 'endpoint', b, 1);
+        const device = (await repo.list('old', b))[0];
+        await repo.unregister('new', 'token', a, 3);
+        await repo.removeIfCurrent(device);
+        await expect(repo.beginRegistration('new', 'token', a, 2)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+    });
+    it('does not change a newer B4 binding when delayed logout A3 arrives', async () => {
+        const { repo } = fixture();
+        await repo.register('new', 'token', 'ios', 'endpoint', b, 4);
+        await repo.unregister('old', 'token', a, 3);
+        expect(await repo.list('new', b)).toHaveLength(1);
+    });
+
 });
