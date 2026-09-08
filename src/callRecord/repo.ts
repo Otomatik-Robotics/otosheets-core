@@ -234,6 +234,22 @@ export class CallRecordRepo {
         }
     }
 
+    /** Remove a prevented queued call from admission/retry indexes without touching a concurrent dial. */
+    async tryBlockQueued(orgId: string, leadId: string, callId: string, reason: string): Promise<boolean> {
+        try {
+            await this.ddb.update(Tables.CALL_RECORDS, { orgId, sk: skOf(leadId, callId) }, {
+                UpdateExpression: 'SET #status = :blocked, #blockReason = :reason, #updatedAt = :now REMOVE #activeNumberShard, #retryShard, #nextAttemptAt',
+                ConditionExpression: '#status = :queued',
+                ExpressionAttributeNames: { '#status': 'status', '#blockReason': 'blockReason', '#updatedAt': 'updatedAt', '#activeNumberShard': 'activeNumberShard', '#retryShard': 'retryShard', '#nextAttemptAt': 'nextAttemptAt' },
+                ExpressionAttributeValues: { ':blocked': 'BLOCKED', ':queued': 'QUEUED', ':reason': reason, ':now': new Date().toISOString() },
+            });
+            return true;
+        } catch (err: any) {
+            if (err?.name === 'ConditionalCheckFailedException' || err?.code === 'ConditionalCheckFailedException') return false;
+            throw err;
+        }
+    }
+
     // ─── Concurrency: org-wide inbound-active markers ────────────────────────
 
     /** Any live inbound call for this org (single-partition query, no GSI), or null. */
