@@ -97,3 +97,25 @@ export class ProfileDocumentRequestPgRepo {
     }
 
 }
+
+/** Client-side discovery within one explicit business profile. The API must freshly
+ * authorize an active client member; no account-wide or cross-profile fallback.
+ * Returned adviser identity is persisted metadata for selecting the request port,
+ * never an adviser identity supplied by the HTTP body.
+ */
+export class ProfileDocumentRequestClientPgRepo {
+    private readonly scope: Readonly<{orgId:string;businessProfileId:string}>;
+    constructor(orgId:string,businessProfileId:string,private readonly injected?:PgDb) {
+        if (![orgId,businessProfileId].every(safe)) throw new Error('Document request client scope required');
+        this.scope=Object.freeze({orgId,businessProfileId});
+    }
+    private get db() { return this.injected ?? getPg(); }
+    private owned(requestId?:string) { return and(eq(requests.orgId,this.scope.orgId),eq(requests.businessProfileId,this.scope.businessProfileId),requestId===undefined?undefined:eq(requests.requestId,requestId)); }
+    async get(requestId:string) {
+        return (await this.db.select().from(requests).where(this.owned(requestId)).limit(1))[0] ?? null;
+    }
+    async list(limit=25,afterRequestId?:string) {
+        if (!Number.isInteger(limit)||limit<1||limit>100||(afterRequestId!==undefined&&!/^dr_[a-f0-9]{64}$/.test(afterRequestId))) throw new Error('Invalid request page');
+        return this.db.select().from(requests).where(and(this.owned(),afterRequestId?gt(requests.requestId,afterRequestId):undefined)).orderBy(requests.requestId).limit(limit);
+    }
+}

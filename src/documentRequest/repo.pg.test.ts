@@ -129,3 +129,17 @@ it('attachment and cancel compete on one revision; stored attachments cannot cha
     expect((await repo().get(parent.requestId))?.revision).toBe(3);
     for(const statement of splitStatements(readFileSync('drizzle/0067_profile_document_request_attachments.sql','utf8')))await pg.query(statement);
 });
+it('client discovery resolves persisted adviser only within exact profile and paginates across its advisers',async()=>{
+    const {ProfileDocumentRequestClientPgRepo}=await import('./repo.pg');
+    const client=new ProfileDocumentRequestClientPgRepo('org-a','profile-a',db);
+    const request=await repo('org-a','profile-a','advisor-other').create(input('client-discovery-0001'));
+    expect((await client.get(request.requestId))?.advisorUserId).toBe('advisor-other');
+    for(const [org,profile] of [['org-a','profile-b'],['org-b','profile-foreign']]){
+        const foreign=new ProfileDocumentRequestClientPgRepo(org,profile,db);
+        expect(await foreign.get(request.requestId)).toBeNull();expect(await foreign.list()).toEqual([]);
+    }
+    const page=await client.list(1);expect(page).toHaveLength(1);
+    const next=await client.list(1,page[0].requestId);expect(next[0].requestId).not.toBe(page[0].requestId);
+    await expect(client.list(101)).rejects.toThrow();
+    expect(()=>new ProfileDocumentRequestClientPgRepo('', 'profile-a',db)).toThrow();
+});

@@ -117,3 +117,14 @@ must supply fresh grants and trusted actual-version evidence. No fulfillment,
 ingestion or API restoration occurs.0064/0065/0066 gates remain; APP DOCREQ/cron
 quarantine stays closed while production adapter and ingestion/download contracts
 are reviewed.
+
+## DOCREQ client discovery checkpoint — 2026-09-09
+
+ProfileDocumentRequestClientPgRepo adds read-only exact org/profile get and bounded
+keyset list for freshly authorized client members. It can discover requests from
+multiple advisers within that profile and returns the immutable persisted adviser
+identity for selecting the request-specific mutation port. HTTP bodies cannot supply
+that authority. No org-wide fallback, file signing or mutation is added. No new
+migration;0067 and earlier reader gates remain.12 focused PGlite tests, noEmit/build
+pass; new case covers exact client discovery across advisers, foreign-profile/org
+refusal and paging. Live grants/HTTP cursor binding remain adopter responsibilities.
