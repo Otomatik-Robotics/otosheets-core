@@ -270,3 +270,25 @@ describe('BankTransactionPgRepo business profile scope', () => {
         expect(await a.deleteByAccount('profile-feed-a')).toBe(1);
     });
 });
+
+
+describe('profile-bound account pagination', () => {
+    it('scopes before limit with a stable tie breaker and rejects foreign continuations', async () => {
+        await pglite.exec(`INSERT INTO bank_accounts(account_id,user_id,organization_id,business_profile_id,created_at,status) VALUES
+            ('page-a1','page-user','page-org','A','2026-01-01T00:00:00.123456Z','ACTIVE'),('page-a2','page-user','page-org','A','2026-01-01T00:00:00.123456Z','ACTIVE'),
+            ('page-b','page-user','page-org','B','2026-02-01','ACTIVE'),('page-null','page-user','page-org',NULL,'2026-02-01','ACTIVE'),
+            ('page-foreign','page-user','foreign','A','2026-02-01','ACTIVE'),('page-otheruser','other','page-org','A','2026-02-01','ACTIVE');`);
+        const root = new BankAccountPgRepo(db); const repo = root.withScope('page-org', 'A');
+        const first = await repo.listAccountsPage('page-user', { limit: 1 });
+        expect(first.items.map(a => a.accountId)).toEqual(['page-a2']);
+        const second = await repo.listAccountsPage('page-user', { limit: 1, nextToken: first.nextToken });
+        expect(second.items.map(a => a.accountId)).toEqual(['page-a1']); expect(second.nextToken).toBeNull();
+        expect(await repo.activeAccountCount('page-user')).toBe(2);
+        await expect(root.withScope('page-org', 'B').listAccountsPage('page-user', { nextToken: first.nextToken })).rejects.toThrow('cursor');
+        await expect(repo.listAccountsPage('other', { nextToken: first.nextToken })).rejects.toThrow('cursor');
+        await expect(root.withScope('foreign', 'A').listAccountsPage('page-user', { nextToken: first.nextToken })).rejects.toThrow('cursor');
+        await expect(repo.listAccountsPage('page-user', { nextToken: 'invalid' })).rejects.toThrow('cursor');
+        await expect(repo.listAccountsPage('page-user', { limit: 0 })).rejects.toThrow('limit');
+        await expect(root.listAccountsPage('page-user')).rejects.toThrow('scope');
+    });
+});

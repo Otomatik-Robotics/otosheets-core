@@ -65,10 +65,10 @@ export class RoutingClientRepo implements IClientRepo {
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listClientEmails' }, result, () => this.pg.listClientEmails(orgId));
         return result;
     }
-    async batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]> {
+    async batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).batchGetClients(orgId, clientIds);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'batchGetClients' }, result, () => this.pg.batchGetClients(orgId, clientIds));
+        const result = await this.pick(route).batchGetClients(orgId, clientIds, businessProfileId);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'batchGetClients' }, result, () => this.pg.batchGetClients(orgId, clientIds, businessProfileId));
         return result;
     }
     async getTopByUsage(orgId: string, limit?: number): Promise<Client[]> {

@@ -26,7 +26,7 @@ export interface IClientRepo {
     listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string; name: string }>>;
     createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;
     updateClient(orgId: string, clientId: string, updates: Record<string, any>): Promise<void>;
-    batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]>;
+    batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]>;
     deleteClient(orgId: string, clientId: string): Promise<void>;
     incrementPaymentLinkUsage(orgId: string, clientId: string): Promise<void>;
     getTopByUsage(orgId: string, limit?: number): Promise<Client[]>;
@@ -191,7 +191,7 @@ export class ClientDynamoRepo implements IClientRepo {
         });
     }
 
-    async batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]> {
+    async batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]> {
         if (clientIds.length === 0) return [];
         const chunks: string[][] = [];
         for (let i = 0; i < clientIds.length; i += 100) {
@@ -203,7 +203,7 @@ export class ClientDynamoRepo implements IClientRepo {
                 [Tables.CLIENTS]: { Keys: chunk.map(id => ({ orgId, clientId: id })) },
             });
             if (Responses?.[Tables.CLIENTS]) {
-                results.push(...(Responses[Tables.CLIENTS] as Client[]));
+                results.push(...(Responses[Tables.CLIENTS] as Client[]).filter(client => businessProfileId === undefined || client.businessProfileId === businessProfileId));
             }
         }
         return results;

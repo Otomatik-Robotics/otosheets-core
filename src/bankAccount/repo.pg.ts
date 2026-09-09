@@ -1,4 +1,4 @@
-import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, lt, or, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { bankAccounts } from '../pg/schema/bankFeeds';
 import { toRow, fromRow } from '../pg/rows';
@@ -107,6 +107,44 @@ export class BankAccountPgRepo {
             .where(this.within(eq(bankAccounts.userId, userId)))
             .orderBy(desc(bankAccounts.createdAt));
         return rows.map((r) => fromRow<BankAccount>(r));
+    }
+
+    /** Profile/user-bound keyset pagination for HTTP account lists. */
+    async listAccountsPage(userId: string, opts: { limit?: number; nextToken?: string | null } = {}): Promise<{ items: BankAccount[]; nextToken: string | null }> {
+        if (!this.scope) throw new Error('Bank account scope is required');
+        const limit = opts.limit ?? 20;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Bank account limit must be between 1 and 100');
+        let after: { createdAt: string; accountId: string } | undefined;
+        if (opts.nextToken) {
+            try {
+                if (opts.nextToken.length > 8192) throw new Error();
+                const bytes = Buffer.from(opts.nextToken, 'base64url');
+                if (bytes.toString('base64url') !== opts.nextToken) throw new Error();
+                const parts = JSON.parse(bytes.toString('utf8'));
+                if (!Array.isArray(parts) || parts.length !== 5 || parts[0] !== this.scope.orgId || parts[1] !== this.scope.businessProfileId
+                    || parts[2] !== userId || typeof parts[3] !== 'string' || typeof parts[4] !== 'string' || !parts[4]) throw new Error();
+                const createdAt = new Date(parts[3]);
+                if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(parts[3]) || !Number.isFinite(createdAt.getTime())
+                    || createdAt.toISOString().slice(0, 19) !== parts[3].slice(0, 19)) throw new Error();
+                after = { createdAt: parts[3], accountId: parts[4] };
+            } catch { throw new Error('Invalid bank account cursor'); }
+        }
+        const rows = await this.db.select({ ...getTableColumns(bankAccounts), cursorTime: sql<string>`to_char(${bankAccounts.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` })
+            .from(bankAccounts).where(this.within(eq(bankAccounts.userId, userId),
+            after ? or(lt(bankAccounts.createdAt, sql`${after.createdAt}::timestamptz`), and(eq(bankAccounts.createdAt, sql`${after.createdAt}::timestamptz`), lt(bankAccounts.accountId, after.accountId))) : undefined))
+            .orderBy(desc(bankAccounts.createdAt), desc(bankAccounts.accountId)).limit(limit + 1);
+        const page = rows.slice(0, limit);
+        const last = page[page.length - 1];
+        return { items: page.map(({ cursorTime: _cursorTime, ...r }) => fromRow<BankAccount>(r)), nextToken: rows.length > limit ? Buffer.from(JSON.stringify([
+            this.scope.orgId, this.scope.businessProfileId, userId, last.cursorTime, last.accountId,
+        ])).toString('base64url') : null };
+    }
+
+    async activeAccountCount(userId: string): Promise<number> {
+        if (!this.scope) throw new Error('Bank account scope is required');
+        const rows = await this.db.select({ count: sql<number>`count(*)::int` }).from(bankAccounts)
+            .where(this.within(eq(bankAccounts.userId, userId), eq(bankAccounts.status, 'ACTIVE')));
+        return Number(rows[0]?.count ?? 0);
     }
 
     /** Accounts tied to one consent — used when a consent is revoked/expired. */

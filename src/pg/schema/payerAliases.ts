@@ -24,3 +24,15 @@ export const payerAliases = pgTable('payer_aliases', {
     primaryKey({ columns: [t.orgId, t.payerKey] }),
     index('payer_aliases_client_idx').on(t.clientId),
 ]);
+
+/** Separate namespace: old org-only readers/writers cannot see profile aliases. */
+export const profilePayerAliases = pgTable('profile_payer_aliases', {
+    orgId: text('org_id').notNull(),
+    businessProfileId: text('business_profile_id').notNull(),
+    payerKey: text('payer_key').notNull(),
+    clientId: text('client_id').notNull(),
+    createdBy: text('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.orgId, t.businessProfileId, t.payerKey] }),
+    index('profile_payer_aliases_client_idx').on(t.clientId)]);
