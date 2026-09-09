@@ -17,3 +17,30 @@ Independent review of cfdcc430 found two blockers: the atomic path omitted the r
 Matching API review found missing canonical payment dates and an invalid null-client event payload. The core correction returns `paymentDate` from the payment record and persists an original paid-transition intent in nullable `invoice_payments.match_event`, atomically with payment/invoice/link. Source-only additive migration0062 must be applied by the release owner before adoption is deployed. No legacy intent is guessed or backfilled. Payment DTOs hide this internal column, and generic payment row writers cannot supply it.
 
 An earlier partial credit never gains an intent when another credit later settles the invoice. Concurrent acceptance/replay returns the same stored event identity/time/amount/date/status. Reversal removes the canceled payment/intent; a later fresh paid transition has a new event identity. Paid-transition storage and deletion roll back with failed stamps. Corrective validation:59 real-repository tests, core build/noEmit pass. API strict publication/retry and real registry validation are separate adoption work; a stable event ID alone does not establish downstream exactly-once processing. No background outbox dispatcher is included, and recovery will rely on explicit failed-request retry using the persisted intent unless a separately authorized dispatcher is added.
+
+## Scoped signature-request model — 0064 source checkpoint
+
+`ProfileSignatureRequestPgRepo` is a new PostgreSQL-only namespace. Migration 0064
+must run before any new reader. No legacy SIGREQ row is imported or assigned.
+The database binds org/profile with a composite foreign key and prevents changes
+to request ownership, actor, creation identity, payload and reserved file.
+The server supplies a freshly authenticated adviser/client context; the repo does
+not authenticate Cognito or replace the authoritative MembershipRepo check.
+
+A client request key, immutable scope and actor determine the request ID; a
+normalized payload fingerprint rejects conflicting replays. Upload reservation
+accepts only a request-specific canonical profile original. This establishes key
+authority, not byte immutability or proof of upload. The adopter must address file
+validation/conversion and expired or reusable upload URLs before functional acceptance.
+Only one DRAFT -> SENDING claim wins. Any replay, including the same attempt ID,
+returns claimed=false. Uncertain SENDING stays pending and has no reset/resend API.
+Completion requires the matching persisted attempt and deterministic envelope ID.
+Cancellation is similarly claimed; DRAFT cancellation needs no provider effect.
+SENT describes delivery completion, not the recipient's eventual signature state.
+
+Nine real PGlite tests cover additive migration replay, profile/org FK, actor and
+scope isolation across every method, concurrent creation and send claims, changed
+payload conflicts, canonical file reservation, uncertain retry, cancellation,
+immutable SQL identity/lifecycle and scoped pagination. Core typecheck/build pass.
+This checkpoint has no authenticated API/provider adoption, no live DDL or sends,
+and does not close the signature-request functional gap or overall SEC014.

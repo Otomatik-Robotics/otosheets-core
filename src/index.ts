@@ -96,3 +96,5 @@ export * from './websocketAdmission';
 export * from './pushDevice';
 
 export * from './advisorAudit';
+
+export * from './signatureRequest';
