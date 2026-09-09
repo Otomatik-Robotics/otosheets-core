@@ -1,3 +1,4 @@
+import { ownedMatchingParent, ownedMatchingTarget, ownedMatchingRow } from './scopeSql';
 import { mutateScopedInvoiceMatch, type InvoiceMatchMutationInput, type InvoiceMatchMutationResult } from './invoiceMutation.pg';
 import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
@@ -47,43 +48,13 @@ export class LedgerMatchPgRepo {
     }
 
     private parent(source: 'statement' | 'feed', alias?: string): SQL {
-        if (!this.scope) return sql`true`;
-        const child = alias ?? (source === 'statement' ? 'statement_transactions' : 'bank_transactions');
-        const table = sql.raw(source === 'statement' ? 'statements' : 'bank_accounts');
-        const key = source === 'statement' ? 'statement_id' : 'account_id';
-        return sql`EXISTS (SELECT 1 FROM ${table} owned_parent
-            WHERE owned_parent.${sql.raw(key)} = ${sql.raw(child + '.' + key)}
-              AND owned_parent.user_id = ${sql.raw(child + '.user_id')}
-              AND owned_parent.organization_id = ${this.scope.orgId}
-              AND owned_parent.business_profile_id = ${this.scope.businessProfileId})`;
+        return ownedMatchingParent(this.scope, source, alias);
     }
-
     private target(type: MatchTargetType, id: SQL): SQL {
-        if (!this.scope) return sql`true`;
-        const table = sql.raw(type === 'INVOICE' ? 'invoices' : 'receipts');
-        const key = sql.raw(type === 'INVOICE' ? 'invoice_id' : 'receipt_id');
-        return sql`EXISTS (SELECT 1 FROM ${table} owned_target
-            WHERE owned_target.${key} = ${id} AND owned_target.org_id = ${this.scope.orgId}
-              AND owned_target.business_profile_id = ${this.scope.businessProfileId})`;
+        return ownedMatchingTarget(this.scope, type, id);
     }
-
-    /** Legacy cross-profile links are quarantined rather than returned as foreign IDs. */
     private row(source: 'statement' | 'feed'): SQL {
-        if (!this.scope) return sql`true`;
-        const table = source === 'statement' ? 'statement_transactions' : 'bank_transactions';
-        const column = (name: string) => sql.raw(table + '.' + name);
-        const duplicate = column('duplicate_of_txn_id');
-        const duplicateOwned = sql`(EXISTS (SELECT 1 FROM statement_transactions dst WHERE dst.txn_id = ${duplicate}
-            AND dst.user_id = ${column('user_id')} AND ${this.parent('statement', 'dst')})
-            OR EXISTS (SELECT 1 FROM bank_transactions dbt WHERE dbt.txn_id = ${duplicate}
-            AND dbt.user_id = ${column('user_id')} AND ${this.parent('feed', 'dbt')}))`;
-        const transfer = source === 'statement' ? sql`(${column('transfer_pair_id')} IS NULL OR EXISTS (
-            SELECT 1 FROM statement_transactions tst WHERE tst.txn_id = ${column('transfer_pair_id')}
-            AND tst.user_id = ${column('user_id')} AND ${this.parent('statement', 'tst')}))` : sql`true`;
-        return sql`${this.parent(source)}
-            AND (${column('matched_invoice_id')} IS NULL OR ${this.target('INVOICE', column('matched_invoice_id'))})
-            AND (${column('matched_receipt_id')} IS NULL OR ${this.target('RECEIPT', column('matched_receipt_id'))})
-            AND (${duplicate} IS NULL OR ${duplicateOwned}) AND ${transfer}`;
+        return ownedMatchingRow(this.scope, source);
     }
 
     private rejectionRow(user: SQL, id: SQL): SQL {
@@ -608,7 +579,8 @@ export class LedgerMatchPgRepo {
                      OR EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_invoice_id = i.invoice_id AND ${this.parent('feed', 'bt')}))
                         AS bank_matched,
                     (SELECT MAX(p.paid_date) FROM invoice_payments p
-                     WHERE p.invoice_id = i.invoice_id AND p.org_id = i.org_id AND p.method = 'BANK_TRANSFER')
+                     WHERE p.invoice_id = i.invoice_id AND p.org_id = i.org_id AND p.method = 'BANK_TRANSFER'
+                       AND ${this.scope ? sql`p.business_profile_id = ${this.scope.businessProfileId}` : sql`true`})
                         AS last_bank_transfer_payment_date
                 FROM invoices i
                 WHERE i.org_id = ${orgId} AND i.invoice_id IN (${idList}) AND ${this.target('INVOICE', sql`i.invoice_id`)}

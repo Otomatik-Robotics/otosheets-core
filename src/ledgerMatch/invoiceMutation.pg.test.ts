@@ -61,6 +61,25 @@ describe('scoped atomic invoice matching', () => {
         }
         expect(await state()).toEqual(before);
     });
+    it.each(['b', 'legacy', 'foreign', 'missing'])('transactional accept/reverse quarantine %s transfer references without effects', async label => {
+        await pg.query("UPDATE statement_transactions SET transfer_pair_id=$1 WHERE txn_id='row-a'", [`row-${label}`]);
+        expect(await repo.getRowForMatching('user', 'statement', 'row-a')).toBeNull();
+        const before = await state();
+        expect(await repo.mutateInvoiceMatch(input())).toEqual({ kind: 'not_found' });
+        expect(await state()).toEqual(before);
+        await pg.exec("UPDATE statement_transactions SET transfer_pair_id=NULL WHERE txn_id='row-a'");
+        expect(await repo.mutateInvoiceMatch(input())).toMatchObject({ kind: 'applied' });
+        await pg.query("UPDATE statement_transactions SET transfer_pair_id=$1 WHERE txn_id='row-a'", [`row-${label}`]);
+        const accepted = await state();
+        expect(await repo.mutateInvoiceMatch(input({ action: 'reverse' }))).toEqual({ kind: 'not_found' });
+        expect(await state()).toEqual(accepted);
+    });
+    it('retains eligible same-profile references in the atomic path', async () => {
+        await pg.exec("UPDATE statement_transactions SET transfer_pair_id='row-a2' WHERE txn_id='row-a'");
+        expect(await repo.getRowForMatching('user', 'statement', 'row-a')).not.toBeNull();
+        expect(await repo.mutateInvoiceMatch(input())).toMatchObject({ kind: 'applied' });
+        expect(await repo.mutateInvoiceMatch(input({ action: 'reverse' }))).toMatchObject({ kind: 'applied' });
+    });
     it('refuses a foreign feed parent and wrong user', async () => {
         const before = await state();
         expect(await repo.mutateInvoiceMatch(input({ source: 'feed', txnId: 'feed-b' }))).toEqual({ kind: 'not_found' });

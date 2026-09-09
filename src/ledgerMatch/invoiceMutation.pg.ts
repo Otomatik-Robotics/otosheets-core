@@ -1,3 +1,4 @@
+import { ownedMatchingRow } from './scopeSql';
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { dataBackend } from '../dataBackend';
@@ -50,6 +51,7 @@ export async function mutateScopedInvoiceMatch(
             JOIN ${parent} p ON p.${parentKey} = t.${parentKey} AND p.user_id = t.user_id
             WHERE t.txn_id = ${input.txnId} AND t.user_id = ${input.userId}
               AND p.organization_id = ${scope.orgId} AND p.business_profile_id = ${scope.businessProfileId}
+              AND ${ownedMatchingRow(scope, input.source, 't')}
             FOR UPDATE OF p, t`));
         if (!row) return { kind: 'not_found' };
         const [invoice] = rows(await tx.execute(sql`SELECT * FROM invoices

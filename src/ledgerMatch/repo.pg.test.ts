@@ -402,6 +402,21 @@ describe('immutable matching repository scope', () => {
         expect(await a.depositCheckForInvoices(org, ids)).toEqual([{ invoiceId: 'contract_A', bankMatched: false, lastBankTransferPaymentDate: null }]);
     });
 
+    it('deposit dates quarantine foreign and unassigned payment profiles', async () => {
+        for (const [id, profile, date] of [['foreign', 'B', '2026-06-01'], ['legacy', null, '2026-07-01']] as const) {
+            await db.insert(invoicePayments).values({ paymentId: `contract_payment_${id}`, invoiceId: 'contract_A', orgId: org,
+                businessProfileId: profile, userId: USER, amount: '10', method: 'BANK_TRANSFER', date });
+        }
+        expect(await a.depositCheckForInvoices(org, ['contract_A'])).toEqual([
+            { invoiceId: 'contract_A', bankMatched: false, lastBankTransferPaymentDate: null },
+        ]);
+        await db.insert(invoicePayments).values({ paymentId: 'contract_payment_own', invoiceId: 'contract_A', orgId: org,
+            businessProfileId: 'A', userId: USER, amount: '10', method: 'BANK_TRANSFER', date: '2026-01-01' });
+        expect(await a.depositCheckForInvoices(org, ['contract_A'])).toEqual([
+            { invoiceId: 'contract_A', bankMatched: false, lastBankTransferPaymentDate: '2026-01-01' },
+        ]);
+    });
+
     it('quarantines legacy foreign links instead of returning their identifiers', async () => {
         // This invalid old link was inserted through the legacy unscoped adapter above.
         expect(await b.getRowForMatching(USER, 'statement', 'contract_st_B')).toBeNull();
