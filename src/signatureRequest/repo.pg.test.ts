@@ -151,3 +151,52 @@ describe('request cancellation and public signing share the parent lock', () => 
         expect(await x.envelopes.listSignatures(x.signature.versionId)).toEqual([]);
     });
 });
+
+describe('owned request send admission and competing senders', () => {
+    async function ready(key: string) {
+        const request = await repo().create(input(key));
+        await repo().reserveUpload(request.requestId,'pdf');
+        const attemptId='attempt_admission_123';
+        await repo().claimSend(request.requestId,attemptId);
+        const envelopes=new EnvelopePgRepo(db,db);
+        const envelopeId=`env_${request.requestId}`,versionId=`ver_${request.requestId}`,recipientId=`rcp_${request.requestId}`;
+        const file={sha256:'b'.repeat(64),s3Key:`documents/org_a/rendered/${envelopeId}/${versionId}-${'b'.repeat(64)}.pdf`};
+        await envelopes.create({envelopeId,versionId,orgId:'org_a',businessProfileId:'profile_a',createdBy:'advisor_a',title:request.title,kind:request.kind,...file,
+            recipients:[{recipientId,role:'signer',email:request.signerEmail}]});
+        return {request,attemptId,envelopes,envelopeId,recipientId,file,
+            authority:{requestId:request.requestId,attemptId,orgId:'org_a',businessProfileId:'profile_a'}};
+    }
+    it('requires exact scope/version/file CAS and excludes native or repeated credential claims',async()=>{
+        const x=await ready('owned_send_admission');
+        expect(await x.envelopes.beginDraftSend(x.envelopeId,'org_a',1,'out_for_signing')).toBe(false);
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:'native'})).claimed).toBe(false);
+        expect(await repo('org_a','profile_b').beginOwnedSend(x.request.requestId,x.attemptId,x.file)).toBe(false);
+        expect(await repo().beginOwnedSend(x.request.requestId,x.attemptId,{...x.file,sha256:'wrong'})).toBe(false);
+        expect(await repo().beginOwnedSend(x.request.requestId,x.attemptId,x.file)).toBe(true);
+        expect(await repo().beginOwnedSend(x.request.requestId,x.attemptId,x.file)).toBe(false);
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:'wrong',signatureRequest:{...x.authority,attemptId:'wrong'}})).claimed).toBe(false);
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:`owned_${x.request.requestId}`,signatureRequest:x.authority})).claimed).toBe(true);
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:'repeat',signatureRequest:x.authority})).claimed).toBe(false);
+        await x.envelopes.markDispatched({recipientId:x.recipientId,sesMessageId:'message',signatureRequest:x.authority});
+        expect((await repo().completeOwnedSend(x.request.requestId,x.attemptId,x.file)).status).toBe('SENT');
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:'native_after_send'})).claimed).toBe(false);
+    });
+    it('preserves a decline during delivery, including the later SES marker, without false completion',async()=>{
+        const x=await ready('decline_during_delivery');
+        await repo().beginOwnedSend(x.request.requestId,x.attemptId,x.file);
+        await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:`owned_${x.request.requestId}`,signatureRequest:x.authority});
+        await pg.query("UPDATE envelope_recipients SET status='declined' WHERE recipient_id=$1",[x.recipientId]);
+        await x.envelopes.setEnvelopeStatus(x.envelopeId,'declined');
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,sesMessageId:'late_marker',signatureRequest:x.authority})).claimed).toBe(true);
+        expect((await x.envelopes.getRecipient(x.recipientId))?.status).toBe('declined');
+        await expect(repo().completeOwnedSend(x.request.requestId,x.attemptId,x.file)).rejects.toThrow();
+        expect((await x.envelopes.get(x.envelopeId))?.status).toBe('declined');
+        expect((await repo().get(x.request.requestId))?.status).toBe('SENDING');
+    });
+    it('a changed parent version cannot be admitted for dispatch',async()=>{
+        const x=await ready('changed_before_admission');
+        await pg.query('UPDATE envelopes SET current_version_no=2 WHERE envelope_id=$1',[x.envelopeId]);
+        expect(await repo().beginOwnedSend(x.request.requestId,x.attemptId,x.file)).toBe(false);
+        expect((await x.envelopes.markDispatched({recipientId:x.recipientId,tokenHash:`owned_${x.request.requestId}`,signatureRequest:x.authority})).claimed).toBe(false);
+    });
+});

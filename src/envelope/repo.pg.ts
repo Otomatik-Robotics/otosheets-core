@@ -67,6 +67,8 @@ export interface AddRecipientInput {
 }
 
 export interface DispatchInput {
+    /** Server-only persisted request attempt. Required for request-owned recipients. */
+    signatureRequest?: { requestId: string; attemptId: string; orgId: string; businessProfileId: string };
     recipientId: string;
     /**
      * Supply this ONLY when a new link is genuinely being issued. The stored
@@ -633,7 +635,8 @@ export class EnvelopePgRepo {
     async beginDraftSend(envelopeId: string, orgId: string, versionNo: number, status: 'in_review' | 'out_for_signing'): Promise<boolean> {
         const rows = await (this.db as any).update(envelopes).set({ status, updatedAt: new Date().toISOString() })
             .where(and(eq(envelopes.envelopeId, envelopeId), eq(envelopes.orgId, orgId),
-                eq(envelopes.status, 'draft'), eq(envelopes.currentVersionNo, versionNo)))
+                eq(envelopes.status, 'draft'), eq(envelopes.currentVersionNo, versionNo),
+                sql`NOT EXISTS (SELECT 1 FROM profile_signature_requests sr WHERE 'env_' || sr.request_id = ${envelopes.envelopeId})`))
             .returning({ id: envelopes.envelopeId });
         return rows.length > 0;
     }
@@ -875,7 +878,9 @@ export class EnvelopePgRepo {
      * that dies, which is the same outcome as sending twice in any order.
      */
     async markDispatched(input: DispatchInput): Promise<{ claimed: boolean; previous: DispatchSnapshot | null }> {
+        input = { ...input, signatureRequest: input.signatureRequest ? { ...input.signatureRequest } : undefined };
         const now = new Date().toISOString();
+        const authority = input.signatureRequest;
         return await (this.tx as any).transaction(async (tx: any) => {
             const before = await tx.select({
                 tokenHash: envelopeRecipients.tokenHash,
@@ -893,12 +898,11 @@ export class EnvelopePgRepo {
             const previous = (before[0] as DispatchSnapshot | undefined) ?? null;
 
             const set: Record<string, unknown> = {
-                status: 'dispatched',
-                dispatchedAt: now,
                 updatedAt: now,
             };
             if (input.sesMessageId !== undefined) set.sesMessageId = input.sesMessageId ?? null;
             if (input.tokenHash) {
+                set.status = 'dispatched'; set.dispatchedAt = now;
                 set.tokenHash = input.tokenHash;
                 set.expiresAt = input.expiresAt ?? null;
                 set.accessCodeHash = input.accessCodeHash ?? null;
@@ -911,6 +915,14 @@ export class EnvelopePgRepo {
                 .where(and(
                     eq(envelopeRecipients.recipientId, input.recipientId),
                     sql`${envelopeRecipients.revokedAt} IS NULL`,
+                    sql`(NOT EXISTS (SELECT 1 FROM profile_signature_requests sr WHERE 'env_' || sr.request_id = ${envelopeRecipients.envelopeId})
+                        OR EXISTS (SELECT 1 FROM profile_signature_requests sr JOIN envelopes e ON e.envelope_id = 'env_' || sr.request_id
+                            WHERE e.envelope_id = ${envelopeRecipients.envelopeId} AND e.org_id = sr.org_id AND e.business_profile_id = sr.business_profile_id
+                            AND sr.request_id = ${authority?.requestId ?? ''} AND sr.attempt_id = ${authority?.attemptId ?? ''}
+                            AND sr.org_id = ${authority?.orgId ?? ''} AND sr.business_profile_id = ${authority?.businessProfileId ?? ''}
+                            AND sr.status = 'SENDING' AND ${envelopeRecipients.recipientId} = 'rcp_' || sr.request_id
+                            AND (${!input.tokenHash} OR (e.status = 'out_for_signing' AND e.current_version_no = 1
+                                AND ${envelopeRecipients.status} = 'pending' AND ${envelopeRecipients.tokenHash} IS NULL))))`,
                 ))
                 .returning({ id: envelopeRecipients.recipientId });
 

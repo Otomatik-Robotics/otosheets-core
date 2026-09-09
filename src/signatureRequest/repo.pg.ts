@@ -59,6 +59,42 @@ export class ProfileSignatureRequestPgRepo {
         if (!request || !['SENDING', 'SENT'].includes(request.status)) throw new SignatureRequestConflict('Send is unavailable');
         return { claimed: false, request };
     }
+    private async sendParent(tx: PgDb, request: ProfileSignatureRequest, file: { s3Key: string; sha256: string }) {
+        const [parent] = await tx.select().from(envelopes).where(and(eq(envelopes.envelopeId, `env_${request.requestId}`),
+            eq(envelopes.orgId, this.scope.orgId), eq(envelopes.businessProfileId, this.scope.businessProfileId))).for('update');
+        if (!parent || parent.createdBy !== this.scope.advisorUserId || parent.currentVersionNo !== 1 || parent.title !== request.title || parent.kind !== request.kind) return null;
+        const versions = await tx.select().from(envelopeVersions).where(eq(envelopeVersions.envelopeId, parent.envelopeId)).for('update');
+        const recipients = await tx.select().from(envelopeRecipients).where(eq(envelopeRecipients.envelopeId, parent.envelopeId)).for('update');
+        if (versions.length !== 1 || versions[0].versionId !== `ver_${request.requestId}` || versions[0].versionNo !== 1 ||
+            versions[0].s3Key !== file.s3Key || versions[0].sha256 !== file.sha256 ||
+            recipients.length !== 1 || recipients[0].recipientId !== `rcp_${request.requestId}` || recipients[0].email !== request.signerEmail ||
+            recipients[0].role !== 'signer' || recipients[0].revokedAt) return null;
+        return { parent, recipient: recipients[0] };
+    }
+    async beginOwnedSend(requestId: string, attemptId: string, file: { s3Key: string; sha256: string }): Promise<boolean> {
+        file = { ...file };
+        return (this.injected ?? getPgTx()).transaction(async tx => {
+            const [request] = await tx.select().from(requests).where(this.owned(requestId)).for('update');
+            if (!request || request.status !== 'SENDING' || request.attemptId !== attemptId) return false;
+            const owned = await this.sendParent(tx, request, file);
+            if (!owned || owned.parent.status !== 'draft' || owned.recipient.status !== 'pending' || owned.recipient.tokenHash) return false;
+            await tx.update(envelopes).set({ status: 'out_for_signing', updatedAt: new Date().toISOString() })
+                .where(and(eq(envelopes.envelopeId, owned.parent.envelopeId), eq(envelopes.orgId, this.scope.orgId), eq(envelopes.businessProfileId, this.scope.businessProfileId), eq(envelopes.status, 'draft'), eq(envelopes.currentVersionNo, 1)));
+            return true;
+        });
+    }
+    async completeOwnedSend(requestId: string, attemptId: string, file: { s3Key: string; sha256: string }): Promise<ProfileSignatureRequest> {
+        file = { ...file };
+        return (this.injected ?? getPgTx()).transaction(async tx => {
+            const [request] = await tx.select().from(requests).where(this.owned(requestId)).for('update');
+            if (!request || request.status !== 'SENDING' || request.attemptId !== attemptId) throw new SignatureRequestConflict('Send attempt is unavailable');
+            const owned = await this.sendParent(tx, request, file);
+            if (!owned || owned.parent.status !== 'out_for_signing' || !['dispatched','opened'].includes(owned.recipient.status) || !owned.recipient.tokenHash) throw new SignatureRequestConflict('Signature document changed during delivery');
+            const [done] = await tx.update(requests).set({ status: 'SENT', providerRef: owned.parent.envelopeId, updatedAt: new Date() }).where(this.owned(requestId)).returning();
+            return done;
+        });
+    }
+
     async completeSend(requestId: string, attemptId: string, providerRef: string): Promise<ProfileSignatureRequest> {
         if (providerRef !== `env_${requestId}`) throw new Error('Invalid signature provider reference');
         const rows = await this.db.update(requests).set({ status: 'SENT', providerRef, updatedAt: new Date() })
