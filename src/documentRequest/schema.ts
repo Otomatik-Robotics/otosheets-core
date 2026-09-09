@@ -23,3 +23,11 @@ export const DocumentRequestFileInput = z.object({
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 export type DocumentRequestFileInput = z.input<typeof DocumentRequestFileInput>;
+/** Trusted verifier evidence, never accepted directly from an HTTP request body. */
+export const DocumentRequestVerifiedObject = z.object({
+    bucketName: z.string().min(3).max(63).regex(/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/),
+    versionId: z.string().min(1).max(1024).refine(v => v !== 'null' && !/[\x00-\x1f\x7f]/.test(v)),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    sizeBytes: z.number().int().min(1).max(25 * 1024 * 1024),
+}).strict();
+export type DocumentRequestVerifiedObject = z.input<typeof DocumentRequestVerifiedObject>;

@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto';
 import { and, eq, gt } from 'drizzle-orm';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
-import { profileDocumentRequests as requests, profileDocumentRequestFiles as files } from '../pg/schema/documentRequests';
-import { DocumentRequestInput, DocumentRequestFileInput, DOCUMENT_REQUEST_FILE_TYPES } from './schema';
+import { profileDocumentRequests as requests, profileDocumentRequestFiles as files, profileDocumentRequestAttachments as attachments } from '../pg/schema/documentRequests';
+import { DocumentRequestInput, DocumentRequestFileInput, DocumentRequestVerifiedObject, DOCUMENT_REQUEST_FILE_TYPES } from './schema';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const safe = (value: string) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const revision = (value: number) => { if (!Number.isInteger(value) || value < 1 || value >= 2147483647) throw new Error('Current revision required'); };
 export class DocumentRequestConflict extends Error {}
 /** Source-only metadata/reservations. Caller supplies fresh authorized context.
- * No upload signing, attachment completion, ingestion, reminders or legacy import.
+ * No upload signing, ingestion, reminders or legacy import.
  */
 export class ProfileDocumentRequestPgRepo {
     private readonly scope: Readonly<{orgId:string;businessProfileId:string;advisorUserId:string}>;
@@ -65,4 +65,35 @@ export class ProfileDocumentRequestPgRepo {
             .where(and(this.owned(requestId),eq(files.fileId,fileId))).limit(1);
         return row?.file ?? null;
     }
+    /** Persist actual verifier evidence under the same parent revision. Caller must
+     * freshly authorize the uploader; SQL cannot prove S3 bytes or bucket policy.
+     * Reservations remain immutable. This does not fulfill or ingest the request.
+     */
+    async attachVerified(requestId:string,fileId:string,uploaderUserId:string,expectedRevision:number,input:DocumentRequestVerifiedObject) {
+        revision(expectedRevision);
+        if (!safe(uploaderUserId)) throw new Error('Uploader required');
+        const proof=DocumentRequestVerifiedObject.parse(input);
+        return (this.injected ?? getPgTx()).transaction(async tx=>{
+            const [parent]=await tx.select().from(requests).where(this.owned(requestId)).for('update');
+            if (!parent || parent.status!=='OPEN') throw new DocumentRequestConflict('Request unavailable');
+            const [file]=await tx.select().from(files).where(and(eq(files.requestId,requestId),eq(files.fileId,fileId))).limit(1);
+            if (!file || file.uploadedBy!==uploaderUserId || file.sha256!==proof.sha256 || file.sizeBytes!==proof.sizeBytes) throw new DocumentRequestConflict('Verified file differs from reservation');
+            const [existing]=await tx.select().from(attachments).where(eq(attachments.fileId,fileId)).limit(1);
+            if (existing) {
+                if (existing.bucketName!==proof.bucketName || existing.versionId!==proof.versionId || existing.sha256!==proof.sha256 || existing.sizeBytes!==proof.sizeBytes || existing.attachedBy!==uploaderUserId) throw new DocumentRequestConflict('Attachment conflicts');
+                return existing;
+            }
+            if (parent.revision!==expectedRevision) throw new DocumentRequestConflict('Request changed; verify again');
+            const [attachment]=await tx.insert(attachments).values({...this.scope,...proof,requestId,fileId,fileKey:file.fileKey,attachedBy:uploaderUserId}).returning();
+            await tx.update(requests).set({revision:expectedRevision+1,updatedBy:uploaderUserId,updatedAt:new Date()}).where(this.owned(requestId));
+            return attachment;
+        });
+    }
+    /** Metadata only; caller must freshly authorize download and use stored VersionId. */
+    async getAttachment(requestId:string,fileId:string) {
+        const [row]=await this.db.select({attachment:attachments}).from(attachments).innerJoin(requests,eq(requests.requestId,attachments.requestId))
+            .where(and(this.owned(requestId),eq(attachments.fileId,fileId))).limit(1);
+        return row?.attachment ?? null;
+    }
+
 }

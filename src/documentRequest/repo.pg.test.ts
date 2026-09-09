@@ -95,3 +95,37 @@ it('SQL blocks ownership, payload, revision and reservation mutation and migrati
     for(const statement of splitStatements(readFileSync('drizzle/0066_profile_document_requests.sql','utf8')))await pg.query(statement);
     expect((await repo().getFile(parent.requestId,file.fileId))?.sha256).toBe('a'.repeat(64));
 });
+const proof=()=>({bucketName:'configured-receipts',versionId:'object-version-1',sha256:'a'.repeat(64),sizeBytes:123});
+it('attachment admission pins verifier version under current revision and replays without a second write',async()=>{
+    const parent=await repo().create(input('attach-0001'));
+    const file=await repo().reserveFile(parent.requestId,'owner-a',1,upload());
+    const attachment=await repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,proof());
+    expect(attachment).toMatchObject({...proof(),fileKey:file.fileKey,attachedBy:'owner-a'});
+    await expect(pg.query("UPDATE profile_document_request_attachments SET version_id='changed' WHERE file_id=$1",[file.fileId])).rejects.toThrow();
+    expect((await repo().get(parent.requestId))?.revision).toBe(3);
+    expect((await repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,proof())).fileId).toBe(file.fileId);
+    expect((await repo().get(parent.requestId))?.revision).toBe(3);
+    await expect(repo().attachVerified(parent.requestId,file.fileId,'owner-a',3,{...proof(),versionId:'replacement'})).rejects.toThrow();
+    for(const other of [repo('org-a','profile-b'),repo('org-b','profile-foreign'),repo('org-a','profile-a','advisor-b')])expect(await other.getAttachment(parent.requestId,file.fileId)).toBeNull();
+});
+it('stale verification, changed bytes, wrong uploader and versionless proof cannot attach',async()=>{
+    const parent=await repo().create(input('attach-deny-0001'));
+    const file=await repo().reserveFile(parent.requestId,'owner-a',1,upload());
+    await expect(repo().attachVerified(parent.requestId,file.fileId,'owner-a',1,proof())).rejects.toThrow();
+    await expect(repo().attachVerified(parent.requestId,file.fileId,'other',2,proof())).rejects.toThrow();
+    await expect(repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,{...proof(),sha256:'b'.repeat(64)})).rejects.toThrow();
+    await expect(repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,{...proof(),versionId:'null'})).rejects.toThrow();
+    expect(await repo().getAttachment(parent.requestId,file.fileId)).toBeNull();
+    await repo().cancel(parent.requestId,2);
+    await expect(repo().attachVerified(parent.requestId,file.fileId,'owner-a',3,proof())).rejects.toThrow();
+});
+it('attachment and cancel compete on one revision; stored attachments cannot change via SQL',async()=>{
+    const parent=await repo().create(input('attach-race-0001'));
+    const file=await repo().reserveFile(parent.requestId,'owner-a',1,upload());
+    const outcomes=await Promise.allSettled([repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,proof()),repo().cancel(parent.requestId,2)]);
+    expect(outcomes.filter(v=>v.status==='fulfilled')).toHaveLength(1);
+    const attached=await repo().getAttachment(parent.requestId,file.fileId);
+    if (attached) await expect(pg.query("UPDATE profile_document_request_attachments SET version_id='replacement' WHERE file_id=$1",[file.fileId])).rejects.toThrow();
+    expect((await repo().get(parent.requestId))?.revision).toBe(3);
+    for(const statement of splitStatements(readFileSync('drizzle/0067_profile_document_request_attachments.sql','utf8')))await pg.query(statement);
+});

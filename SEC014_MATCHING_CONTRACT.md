@@ -98,3 +98,22 @@ No API restoration in this checkpoint. Owned attachment verification, ingestion
 identity/status, owner-side request discovery, paginated file retrieval and fresh
 recipient/reminder admission remain future contracts. All previous0064/0065 gates,
 clientSummary503, non-atomic checklist audit and whole SEC014 exclusions remain.
+
+## DOCREQ same-revision attachment admission — 2026-09-09
+
+Migration0067 follows0066 before attachment readers. Separate immutable attachment
+rows pin configured bucket, exact reserved key, actual object VersionId, hash/size,
+uploader and timestamp; reservation rows never change. attachVerified accepts only
+trusted verifier output (not an HTTP body), locks exact owned OPEN parent, requires
+reservation uploader/hash/size, and atomically inserts attachment plus advances the
+same revision observed during verification. Matching replay returns the original
+attachment without another revision; closed parents refuse even replays. Changed
+object versions conflict. getAttachment remains metadata, not download authority.
+
+Validation:11 real PGlite tests and noEmit/build pass, adding attachment replay,
+stale proof/uploader/hash/version refusal, cancellation ordering, migration replay
+and immutable SQL evidence. This is not live Neon contention or S3 proof: the caller
+must supply fresh grants and trusted actual-version evidence. No fulfillment,
+ingestion or API restoration occurs.0064/0065/0066 gates remain; APP DOCREQ/cron
+quarantine stays closed while production adapter and ingestion/download contracts
+are reviewed.

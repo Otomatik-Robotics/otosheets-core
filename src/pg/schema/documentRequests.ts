@@ -19,4 +19,11 @@ export const profileDocumentRequestFiles = pgTable('profile_document_request_fil
     status: text('status').notNull().default('RESERVED'),
     createdAt: timestamp('created_at', {withTimezone:true,mode:'date'}).notNull().defaultNow(),
 }, t => [foreignKey({columns:[t.requestId,t.orgId,t.businessProfileId,t.advisorUserId],foreignColumns:[profileDocumentRequests.requestId,profileDocumentRequests.orgId,profileDocumentRequests.businessProfileId,profileDocumentRequests.advisorUserId]}),
-    unique().on(t.requestId,t.uploadedBy,t.clientFileKey),unique().on(t.fileKey)]);
+    unique().on(t.requestId,t.uploadedBy,t.clientFileKey),unique().on(t.fileKey),unique().on(t.fileId,t.requestId,t.orgId,t.businessProfileId,t.advisorUserId)]);
+export const profileDocumentRequestAttachments = pgTable('profile_document_request_attachments', {
+    fileId: text('file_id').primaryKey(), requestId: text('request_id').notNull(), orgId: text('org_id').notNull(),
+    businessProfileId: text('business_profile_id').notNull(), advisorUserId: text('advisor_user_id').notNull(),
+    bucketName: text('bucket_name').notNull(), fileKey: text('file_key').notNull(), versionId: text('version_id').notNull(),
+    sha256: text('sha256').notNull(), sizeBytes: integer('size_bytes').notNull(), attachedBy: text('attached_by').notNull(),
+    attachedAt: timestamp('attached_at', {withTimezone:true,mode:'date'}).notNull().defaultNow(),
+}, t => [foreignKey({columns:[t.fileId,t.requestId,t.orgId,t.businessProfileId,t.advisorUserId],foreignColumns:[profileDocumentRequestFiles.fileId,profileDocumentRequestFiles.requestId,profileDocumentRequestFiles.orgId,profileDocumentRequestFiles.businessProfileId,profileDocumentRequestFiles.advisorUserId]})]);
