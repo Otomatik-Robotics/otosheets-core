@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';
-import { getPg, type PgDb } from '../pg/client';
+import { getPg, getPgTx, type PgDb } from '../pg/client';
 import { profileSignatureRequests as requests } from '../pg/schema/signatureRequests';
 import { SignatureRequestInput } from './schema';
+import { envelopes, envelopeVersions, envelopeRecipients, envelopeSignatures } from '../pg/schema/envelopes';
 
 export class SignatureRequestConflict extends Error {}
 export type ProfileSignatureRequest = typeof requests.$inferSelect;
@@ -79,6 +80,32 @@ export class ProfileSignatureRequestPgRepo {
         if (!request || !['CANCELLING', 'CANCELLED'].includes(request.status)) throw new SignatureRequestConflict('Cancellation is unavailable');
         return { claimed: false, request };
     }
+    /** First-party cancellation and request completion share the public signing parent lock. */
+    async completeOwnedCancellation(requestId: string, attemptId: string): Promise<ProfileSignatureRequest> {
+        return (this.injected ?? getPgTx()).transaction(async tx => {
+            const [request] = await tx.select().from(requests).where(this.owned(requestId)).for('update');
+            if (!request || request.attemptId !== attemptId) throw new SignatureRequestConflict('Cancellation attempt is unavailable');
+            if (request.status === 'CANCELLED') return request;
+            if (request.status !== 'CANCELLING' || request.providerRef !== `env_${requestId}`) throw new SignatureRequestConflict('Cancellation is unavailable');
+            const [parent] = await tx.select().from(envelopes).where(and(eq(envelopes.envelopeId, request.providerRef),
+                eq(envelopes.orgId, this.scope.orgId), eq(envelopes.businessProfileId, this.scope.businessProfileId))).for('update');
+            if (!parent || parent.createdBy !== this.scope.advisorUserId || !['draft','in_review','out_for_signing'].includes(parent.status)) throw new SignatureRequestConflict('Document cannot be cancelled');
+            const versions = await tx.select().from(envelopeVersions).where(eq(envelopeVersions.envelopeId, parent.envelopeId)).for('update');
+            const recipients = await tx.select().from(envelopeRecipients).where(eq(envelopeRecipients.envelopeId, parent.envelopeId)).for('update');
+            if (versions.length !== 1 || versions[0].versionId !== `ver_${requestId}` || parent.currentVersionNo !== 1 ||
+                recipients.length !== 1 || recipients[0].recipientId !== `rcp_${requestId}` || recipients[0].email !== request.signerEmail ||
+                ['signed','declined'].includes(recipients[0].status)) throw new SignatureRequestConflict('Document cannot be cancelled');
+            const signatures = await tx.select().from(envelopeSignatures).where(and(eq(envelopeSignatures.versionId, versions[0].versionId), sql`${envelopeSignatures.voidedAt} IS NULL`)).limit(1);
+            if (signatures.length) throw new SignatureRequestConflict('Signed documents cannot be cancelled');
+            const now = new Date();
+            await tx.update(envelopeRecipients).set({ status: 'revoked', revokedAt: now.toISOString(), revokedReason: 'the sender cancelled this document', updatedAt: now.toISOString() })
+                .where(and(eq(envelopeRecipients.envelopeId, parent.envelopeId), eq(envelopeRecipients.recipientId, recipients[0].recipientId)));
+            await tx.update(envelopes).set({ status: 'voided', updatedAt: now.toISOString() }).where(eq(envelopes.envelopeId, parent.envelopeId));
+            const [done] = await tx.update(requests).set({ status: 'CANCELLED', updatedAt: now }).where(this.owned(requestId)).returning();
+            return done;
+        });
+    }
+
     async completeCancel(requestId: string, attemptId: string): Promise<ProfileSignatureRequest> {
         const rows = await this.db.update(requests).set({ status: 'CANCELLED', updatedAt: new Date() })
             .where(and(this.owned(requestId), eq(requests.status, 'CANCELLING'), eq(requests.attemptId, attemptId))).returning();

@@ -749,6 +749,24 @@ export class EnvelopePgRepo {
      * back instead of appending a second chain entry and re-sending the email.
      * Returns whether this call was the one that actually signed.
      */
+    /** Public signing revalidates the exact owned parent under the cancellation lock. */
+    async recordScopedSignature(scope: { orgId: string; businessProfileId: string; envelopeId: string; s3Key: string | null; sha256: string | null }, input: RecordSignatureInput) {
+        scope = { ...scope }; input = { ...input };
+        if (!scope.orgId || !scope.businessProfileId || !scope.envelopeId) throw new Error('Signature scope is required');
+        return (this.tx as any).transaction(async (tx: any) => {
+            const [parent] = await tx.select().from(envelopes).where(and(eq(envelopes.envelopeId, scope.envelopeId),
+                eq(envelopes.orgId, scope.orgId), eq(envelopes.businessProfileId, scope.businessProfileId))).for('update');
+            if (!parent || !['out_for_signing','in_review','completed'].includes(parent.status)) throw new Error('Signature document is unavailable');
+            const [version] = await tx.select().from(envelopeVersions).where(and(eq(envelopeVersions.versionId, input.versionId),
+                eq(envelopeVersions.envelopeId, parent.envelopeId), eq(envelopeVersions.versionNo, parent.currentVersionNo))).for('update');
+            const [recipient] = await tx.select().from(envelopeRecipients).where(and(eq(envelopeRecipients.recipientId, input.recipientId),
+                eq(envelopeRecipients.envelopeId, parent.envelopeId))).for('update');
+            if (!version || version.s3Key !== scope.s3Key || version.sha256 !== scope.sha256 || !recipient || recipient.revokedAt ||
+                ['revoked','declined','bounced'].includes(recipient.status)) throw new Error('Signature document is unavailable');
+            return new EnvelopePgRepo(tx, tx).recordSignature(input);
+        });
+    }
+
     async recordSignature(input: RecordSignatureInput): Promise<{ created: boolean; signatureId: string }> {
         const recipient = await this.getRecipient(input.recipientId);
         if (!recipient) throw new Error('Unknown recipient');

@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { readFileSync } from 'node:fs';
 import { runMigrations, splitStatements } from '../pg/migrate';
 import type { PgDb } from '../pg/client';
+import { EnvelopePgRepo } from '../envelope/repo.pg';
 import { ProfileSignatureRequestPgRepo, SignatureRequestConflict } from './repo.pg';
 
 let pg: PGlite;
@@ -105,5 +106,48 @@ describe('scoped signature requests, real PostgreSQL boundary', () => {
         expect(next.every(r => r.requestId > page[0].requestId && r.businessProfileId === 'profile_a' && r.advisorUserId === 'advisor_a')).toBe(true);
         await expect(repo().list(101)).rejects.toThrow();
         await expect(repo().list(10,'forged')).rejects.toThrow();
+    });
+});
+
+
+describe('request cancellation and public signing share the parent lock', () => {
+    async function sentRequest(key: string) {
+        const request = await repo().create(input(key));
+        await repo().reserveUpload(request.requestId, 'pdf');
+        await repo().claimSend(request.requestId, 'attempt_original_send');
+        const envelopeId = `env_${request.requestId}`, versionId = `ver_${request.requestId}`, recipientId = `rcp_${request.requestId}`;
+        const envelopes = new EnvelopePgRepo(db, db);
+        const sha256 = 'a'.repeat(64), s3Key = `documents/org_a/rendered/${envelopeId}/${versionId}-${sha256}.pdf`;
+        await envelopes.create({ envelopeId, versionId, orgId: 'org_a', businessProfileId: 'profile_a', createdBy: 'advisor_a', title: request.title,
+            kind: request.kind, s3Key, sha256, recipients: [{ recipientId, role:'signer', email: request.signerEmail }] });
+        await envelopes.setEnvelopeStatus(envelopeId, 'out_for_signing');
+        await repo().completeSend(request.requestId, 'attempt_original_send', envelopeId);
+        return { request, envelopes, scope: { orgId:'org_a', businessProfileId:'profile_a', envelopeId, s3Key, sha256 },
+            signature: { signatureId:`sig_${request.requestId}`, versionId, recipientId, typedName:'Signer' } };
+    }
+    it('completed cancellation revokes the exact recipient and prevents later public signing', async () => {
+        const x = await sentRequest('cancel_before_sign');
+        await repo().claimCancel(x.request.requestId,'attempt_atomic_cancel');
+        expect((await repo().completeOwnedCancellation(x.request.requestId,'attempt_atomic_cancel')).status).toBe('CANCELLED');
+        expect((await x.envelopes.get(x.scope.envelopeId))?.status).toBe('voided');
+        expect((await x.envelopes.getRecipient(x.signature.recipientId))?.status).toBe('revoked');
+        await expect(x.envelopes.recordScopedSignature(x.scope,x.signature)).rejects.toThrow();
+        expect(await x.envelopes.listSignatures(x.signature.versionId)).toEqual([]);
+    });
+    it('a signature committed after cancellation claim prevents cancellation atomically', async () => {
+        const x = await sentRequest('sign_before_cancel');
+        await repo().claimCancel(x.request.requestId,'attempt_atomic_cancel');
+        expect(await x.envelopes.recordScopedSignature(x.scope,x.signature)).toMatchObject({created:true});
+        await expect(repo().completeOwnedCancellation(x.request.requestId,'attempt_atomic_cancel')).rejects.toThrow();
+        expect((await x.envelopes.get(x.scope.envelopeId))?.status).toBe('out_for_signing');
+        expect((await x.envelopes.getRecipient(x.signature.recipientId))?.revokedAt).toBeNull();
+        expect((await repo().get(x.request.requestId))?.status).toBe('CANCELLING');
+    });
+    it('rejects foreign public parent/version/reference before inserting a signature', async () => {
+        const x = await sentRequest('sign_reference_guard');
+        await expect(x.envelopes.recordScopedSignature({...x.scope,businessProfileId:'profile_b'},x.signature)).rejects.toThrow();
+        await expect(x.envelopes.recordScopedSignature({...x.scope,s3Key:'foreign'},x.signature)).rejects.toThrow();
+        await expect(x.envelopes.recordScopedSignature(x.scope,{...x.signature,versionId:'missing'})).rejects.toThrow();
+        expect(await x.envelopes.listSignatures(x.signature.versionId)).toEqual([]);
     });
 });
