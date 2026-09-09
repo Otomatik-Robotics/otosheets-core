@@ -94,3 +94,5 @@ export * from './smsResponse';
 export * from './websocketAdmission';
 
 export * from './pushDevice';
+
+export * from './advisorAudit';
