@@ -31,3 +31,8 @@ export const DocumentRequestVerifiedObject = z.object({
     sizeBytes: z.number().int().min(1).max(25 * 1024 * 1024),
 }).strict();
 export type DocumentRequestVerifiedObject = z.input<typeof DocumentRequestVerifiedObject>;
+export const DocumentRequestListFilter = z.object({
+    docType: z.enum(['GENERAL','BANK_STATEMENT','EXPENSE_DOC']).optional(),
+    status: z.enum(['OPEN','FULFILLED','CANCELLED']).optional(),
+}).strict();
+export type DocumentRequestListFilter = z.input<typeof DocumentRequestListFilter>;

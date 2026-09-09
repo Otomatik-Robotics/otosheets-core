@@ -128,3 +128,20 @@ that authority. No org-wide fallback, file signing or mutation is added. No new
 migration;0067 and earlier reader gates remain.12 focused PGlite tests, noEmit/build
 pass; new case covers exact client discovery across advisers, foreign-profile/org
 refusal and paging. Live grants/HTTP cursor binding remain adopter responsibilities.
+
+## GENERAL completion and file pages checkpoint — 2026-09-09
+
+Migration0068 follows0067 before GENERAL completion callers. GENERAL fulfillment
+locks the exact owned parent, requires its current revision and an attachment,
+then advances status and revision atomically. Completed replays do not write.
+Financial kinds cannot use this transition. The update trigger also refuses
+completion without an attachment; privileged raw inserts are not attested by it.
+Request lists filter type/status in SQL; file pages join the owned parent and can
+select attached files only. Nullable getters now accurately declare their return.
+
+Validation:15 focused PGlite tests, noEmit and build passed, including stale
+completion, terminal replay, financial denial, raw SQL attachment-required denial,
+scoped file pages and ordered migration replay. The old0066 replay test reapplies
+later migrations before testing the current trigger definition. API fresh grants,
+version-pinned S3 verification/download and web adoption remain required. No live
+migration, ingestion or route restoration occurred in this core checkpoint.

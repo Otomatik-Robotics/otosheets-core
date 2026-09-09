@@ -94,6 +94,11 @@ it('SQL blocks ownership, payload, revision and reservation mutation and migrati
     await expect(pg.query("UPDATE profile_document_request_files SET sha256=$1 WHERE file_id=$2",['b'.repeat(64),file.fileId])).rejects.toThrow();
     for(const statement of splitStatements(readFileSync('drizzle/0066_profile_document_requests.sql','utf8')))await pg.query(statement);
     expect((await repo().getFile(parent.requestId,file.fileId))?.sha256).toBe('a'.repeat(64));
+    // Replaying an older function definition must be followed by its later
+    // migrations, as in an ordered rebuild, before testing the current schema.
+    for(const name of ['0067_profile_document_request_attachments.sql','0068_profile_document_request_general_fulfillment.sql']){
+        for(const statement of splitStatements(readFileSync(`drizzle/${name}`,'utf8')))await pg.query(statement);
+    }
 });
 const proof=()=>({bucketName:'configured-receipts',versionId:'object-version-1',sha256:'a'.repeat(64),sizeBytes:123});
 it('attachment admission pins verifier version under current revision and replays without a second write',async()=>{
@@ -142,4 +147,38 @@ it('client discovery resolves persisted adviser only within exact profile and pa
     const next=await client.list(1,page[0].requestId);expect(next[0].requestId).not.toBe(page[0].requestId);
     await expect(client.list(101)).rejects.toThrow();
     expect(()=>new ProfileDocumentRequestClientPgRepo('', 'profile-a',db)).toThrow();
+});
+it('GENERAL completion requires verified attachment and current revision, and safely replays',async()=>{
+    const parent=await repo().create({...input('general-complete-0001'),docType:'GENERAL'});
+    await expect(repo().fulfillGeneral(parent.requestId,'owner-a',1)).rejects.toThrow('attachment');
+    await expect(pg.query("UPDATE profile_document_requests SET status='FULFILLED',revision=revision+1 WHERE request_id=$1",[parent.requestId])).rejects.toThrow();
+    const file=await repo().reserveFile(parent.requestId,'owner-a',1,upload());
+    await repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,proof());
+    await expect(repo().fulfillGeneral(parent.requestId,'owner-a',2)).rejects.toThrow();
+    const done=await repo().fulfillGeneral(parent.requestId,'owner-a',3);expect(done.status).toBe('FULFILLED');expect(done.revision).toBe(4);
+    expect((await repo().fulfillGeneral(parent.requestId,'owner-a',3)).revision).toBe(4);
+    await expect(repo().reserveFile(parent.requestId,'owner-a',4,upload('late-file-0001'))).rejects.toThrow();
+    await expect(repo().cancel(parent.requestId,4)).rejects.toThrow();
+});
+it('financial requests cannot be falsely fulfilled by the GENERAL port or raw SQL',async()=>{
+    const parent=await repo().create(input('financial-fulfill-deny-0001'));
+    const file=await repo().reserveFile(parent.requestId,'owner-a',1,upload());await repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,proof());
+    await expect(repo().fulfillGeneral(parent.requestId,'owner-a',3)).rejects.toThrow();
+    await expect(pg.query("UPDATE profile_document_requests SET status='FULFILLED',revision=revision+1 WHERE request_id=$1",[parent.requestId])).rejects.toThrow();
+    expect((await repo().get(parent.requestId))?.status).toBe('OPEN');
+});
+it('file pages join exact parent and filter requests in SQL without ownership fallbacks',async()=>{
+    const parent=await repo().create({...input('file-list-0001'),docType:'GENERAL'});
+    const file=await repo().reserveFile(parent.requestId,'owner-a',1,upload());
+    const page=await repo().listFiles(parent.requestId,1);expect(page[0].file.fileId).toBe(file.fileId);expect(page[0].attachment).toBeNull();
+    expect(await repo().listFiles(parent.requestId,1,file.fileId)).toEqual([]);
+    expect(await repo('org-a','profile-b').listFiles(parent.requestId)).toEqual([]);
+    expect(await repo().listFiles(parent.requestId,1,undefined,true)).toEqual([]);
+    await repo().attachVerified(parent.requestId,file.fileId,'owner-a',2,proof());
+    expect((await repo().listFiles(parent.requestId,1,undefined,true))[0].attachment?.fileId).toBe(file.fileId);
+    const rows=await repo().list(100,undefined,{docType:'GENERAL',status:'OPEN'});expect(rows.every(r=>r.docType==='GENERAL'&&r.status==='OPEN')).toBe(true);
+    const {ProfileDocumentRequestClientPgRepo}=await import('./repo.pg');
+    const client=new ProfileDocumentRequestClientPgRepo('org-a','profile-a',db);
+    expect((await client.list(100,undefined,{docType:'GENERAL'})).every(r=>r.docType==='GENERAL')).toBe(true);
+    for(const statement of splitStatements(readFileSync('drizzle/0068_profile_document_request_general_fulfillment.sql','utf8')))await pg.query(statement);
 });
