@@ -1,3 +1,5 @@
+import { createScopedPayerClient, type CreatePayerClientInput } from './createClient.pg';
+export type { CreatePayerClientInput, CreatePayerClientResult } from './createClient.pg';
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { profilePayerAliases as aliases } from '../pg/schema/payerAliases';
@@ -12,6 +14,7 @@ export class ProfilePayerAliasPgRepo {
         if (!scope.orgId?.trim() || !scope.businessProfileId?.trim()) throw new Error('Payer alias scope is required');
         this.scope = Object.freeze({ orgId: scope.orgId, businessProfileId: scope.businessProfileId });
     }
+    createClient(input: CreatePayerClientInput) { return createScopedPayerClient(this.scope, input, this.injected); }
     private get db() { return this.injected ?? getPg(); }
     private ownedClient(clientId: unknown) {
         return sql`EXISTS (SELECT 1 FROM clients c JOIN business_profiles p ON p.business_profile_id = c.business_profile_id
