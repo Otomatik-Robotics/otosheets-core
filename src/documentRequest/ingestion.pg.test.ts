@@ -124,3 +124,12 @@ it('migration is replayable and SQL FK cannot attach a financial admission to GE
     const before=await count();for(const sql of splitStatements(readFileSync('drizzle/0069_profile_document_request_ingestions.sql','utf8')))await pg.query(sql);
     expect(await count()).toBe(before);expect(await runMigrations({exec:async sql=>({rows:(await pg.query(sql)).rows})})).toEqual([]);
 });
+it('an existing noncanonical target marker cannot become a successful replay or metadata result',async()=>{
+    const {request,file}=await fixture('noncanonical-target');
+    await pg.query(`INSERT INTO profile_document_request_ingestions(file_id,request_id,org_id,business_profile_id,advisor_user_id,doc_type,target_id,target_user_id,financial_year,admitted_by,admitted_revision)
+        VALUES($1,$2,'org-a','profile-a','advisor-a','BANK_STATEMENT',$3,'owner-a','2026-27','owner-a',3)`,[file.fileId,request.requestId,'dsi_'+'d'.repeat(64)]);
+    const before=await count();
+    await expect(admissions().reserve(request.requestId,file.fileId,'owner-a',3,input)).rejects.toThrow('target conflicts');
+    await expect(admissions().get(request.requestId,file.fileId)).rejects.toThrow('target conflicts');
+    expect(await count()).toBe(before);expect((await requests().get(request.requestId))?.revision).toBe(3);
+});

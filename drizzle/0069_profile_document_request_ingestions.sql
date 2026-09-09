@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS profile_document_request_ingestions (
     file_id text PRIMARY KEY,
     request_id text NOT NULL, org_id text NOT NULL, business_profile_id text NOT NULL, advisor_user_id text NOT NULL,
     doc_type text NOT NULL CHECK (doc_type IN ('BANK_STATEMENT','EXPENSE_DOC')),
-    target_id text NOT NULL UNIQUE, target_user_id text NOT NULL, financial_year text,
-    admitted_by text NOT NULL, admitted_revision integer NOT NULL CHECK (admitted_revision > 0),
+    target_id text NOT NULL UNIQUE, target_user_id text NOT NULL CHECK (target_user_id ~ '^[A-Za-z0-9_-]{1,128}$'), financial_year text,
+    admitted_by text NOT NULL CHECK (admitted_by ~ '^[A-Za-z0-9_-]{1,128}$'), admitted_revision integer NOT NULL CHECK (admitted_revision > 0),
     status text NOT NULL DEFAULT 'RESERVED' CHECK (status = 'RESERVED'),
     created_at timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (file_id,request_id,org_id,business_profile_id,advisor_user_id)

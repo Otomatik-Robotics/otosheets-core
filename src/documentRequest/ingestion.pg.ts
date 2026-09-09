@@ -43,6 +43,13 @@ export class ProfileDocumentRequestIngestionPgRepo {
             eq(requests.advisorUserId, this.scope.advisorUserId), eq(requests.requestId, requestId));
     }
 
+    private targetId(requestId: string, fileId: string, docType: string) {
+        const digest = createHash('sha256').update(JSON.stringify([
+            this.scope.orgId, this.scope.businessProfileId, this.scope.advisorUserId, requestId, fileId, docType,
+        ])).digest('hex');
+        return (docType === 'BANK_STATEMENT' ? 'dsi_' : 'dri_') + digest;
+    }
+
     private source(rows: SourceRows, docType: string) {
         const { file, attachment } = rows;
         const type = file.contentType as keyof typeof DOCUMENT_REQUEST_FILE_TYPES;
@@ -80,17 +87,14 @@ export class ProfileDocumentRequestIngestionPgRepo {
                 .where(and(eq(attachments.fileId, fileId), eq(attachments.requestId, requestId))).limit(1);
             if (!rows) throw new DocumentRequestConflict('Verified source attachment required');
             const source = this.source(rows, parent.docType);
+            const targetId = this.targetId(requestId, fileId, parent.docType);
             const [existing] = await tx.select().from(ingestions).where(eq(ingestions.fileId, fileId)).limit(1);
             if (existing) {
-                if (existing.targetUserId !== payload.targetUserId || existing.financialYear !== (payload.financialYear ?? null))
+                if (existing.targetId !== targetId || existing.targetUserId !== payload.targetUserId || existing.financialYear !== (payload.financialYear ?? null))
                     throw new DocumentRequestConflict('Financial ingestion target conflicts');
                 return { admission: existing, source };
             }
             if (parent.revision !== expectedRevision) throw new DocumentRequestConflict('Request changed; verify again');
-            const digest = createHash('sha256').update(JSON.stringify([
-                this.scope.orgId, this.scope.businessProfileId, this.scope.advisorUserId, requestId, fileId, parent.docType,
-            ])).digest('hex');
-            const targetId = (parent.docType === 'BANK_STATEMENT' ? 'dsi_' : 'dri_') + digest;
             const [admission] = await tx.insert(ingestions).values({ ...this.scope, requestId, fileId, docType: parent.docType,
                 targetId, targetUserId: payload.targetUserId, financialYear: payload.financialYear ?? null,
                 admittedBy: actorUserId, admittedRevision: expectedRevision }).returning();
@@ -112,6 +116,8 @@ export class ProfileDocumentRequestIngestionPgRepo {
             .innerJoin(files, eq(files.fileId, attachments.fileId))
             .where(and(this.owned(requestId), eq(ingestions.fileId, fileId))).limit(1);
         if (!row) return null;
+        if (row.admission.targetId !== this.targetId(requestId, fileId, row.admission.docType))
+            throw new DocumentRequestConflict('Financial ingestion target conflicts');
         return { admission: row.admission, source: this.source(row, row.admission.docType),
             parentStatus: row.parentStatus, parentRevision: row.parentRevision };
     }

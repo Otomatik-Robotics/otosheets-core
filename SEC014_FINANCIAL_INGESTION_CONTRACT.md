@@ -13,7 +13,8 @@ owned verified attachment. The statement or receipt target ID is deterministic
 from the organisation/profile/adviser/request/file/type identity. The explicit
 target user and statement financial year are fixed at first admission. A retry
 returns the same record without increasing the parent revision; a changed target
-user or year conflicts. The request remains OPEN and admission remains RESERVED.
+user or year conflicts. A noncanonical pre-existing target ID also conflicts on replay or metadata lookup.
+The request remains OPEN and admission remains RESERVED.
 Neither value implies a queued job, financial record, extraction or fulfillment.
 
 Admission locks the exact owned parent and requires its current revision, OPEN
@@ -69,7 +70,7 @@ same-file and distinct-file concurrency, cancellation, immutable marker/attachme
 constraints, transaction rollback on parent write failure and migration replay.
 The first rollback test expected the nested PostgreSQL error at the Drizzle wrapper
 message; the assertion was corrected to inspect the actual cause. Product code did
-not change for that fixture correction. Final core build and full Vitest suite pass: 92 files / 967 tests, including all10
+not change for that fixture correction. Final core build and full Vitest suite pass: 92 files / 968 tests, including all11
 new ingestion and15 existing request tests. Evidence: financial-admission-core-full-tests.log
 in the persistent evidence directory. No live acceptance is claimed.
 
