@@ -4,6 +4,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { runMigrations } from '../pg/migrate';
 import type { PgDb } from '../pg/client';
+import { InvoicePaymentPgRepo } from '../invoicePayment/repo.pg';
 import { LedgerMatchPgRepo } from './repo.pg';
 import { scopedMatchPaymentId, type InvoiceMatchMutationInput } from './invoiceMutation.pg';
 
@@ -113,6 +114,7 @@ describe('scoped atomic invoice matching', () => {
         expect((await pg.query("SELECT paid_amount,status FROM invoices WHERE invoice_id='inv-a'")).rows).toEqual([{ paid_amount: '100.00', status: 'PARTIAL' }]);
     });
     it('rolls back payment and invoice when the final stamp fails', async () => {
+        await pg.exec("UPDATE invoices SET total_amount=100 WHERE invoice_id='inv-a'");
         await pg.exec(`CREATE OR REPLACE FUNCTION fail_match() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected match storage failure'; END $$;
             CREATE TRIGGER fail_match_stamp BEFORE UPDATE ON statement_transactions FOR EACH ROW EXECUTE FUNCTION fail_match();`);
         const before = await state();
@@ -120,6 +122,7 @@ describe('scoped atomic invoice matching', () => {
         expect(await state()).toEqual(before);
     });
     it('rolls back deletion and invoice changes when reversal stamp fails', async () => {
+        await pg.exec("UPDATE invoices SET total_amount=100 WHERE invoice_id='inv-a'");
         await repo.mutateInvoiceMatch(input());
         await pg.exec(`CREATE OR REPLACE FUNCTION fail_match() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected match storage failure'; END $$;
             CREATE TRIGGER fail_match_stamp BEFORE UPDATE ON statement_transactions FOR EACH ROW EXECUTE FUNCTION fail_match();`);
@@ -154,6 +157,37 @@ describe('scoped atomic invoice matching', () => {
         expect(await repo.mutateInvoiceMatch(input())).toEqual({ kind: 'conflict' });
         expect(await repo.mutateInvoiceMatch(input({ action: 'reverse' }))).toEqual({ kind: 'conflict' });
         expect(await state()).toEqual(foreign);
+    });
+    it('persists only the original paid transition, including its historical date, for replay', async () => {
+        const partial = await repo.mutateInvoiceMatch(input());
+        expect(partial).toMatchObject({ kind: 'applied', paymentDate: '2026-07-01', paidEvent: null });
+        const paid = await repo.mutateInvoiceMatch(input({ txnId: 'row-a2' }));
+        expect(paid).toMatchObject({ kind: 'applied', paymentDate: '2026-07-01', paidEvent: {
+            orgId: 'org', businessProfileId: 'A', txnId: 'row-a2', paymentDate: '2026-07-01', invoiceStatus: 'PAID', invoicePaidAmount: 200, amount: 100,
+        } });
+        // A partial payment does not gain an event when a later credit settles the invoice.
+        expect(await repo.mutateInvoiceMatch(input())).toMatchObject({ kind: 'replayed', invoiceStatus: 'PAID', paidEvent: null });
+        const replay = await repo.mutateInvoiceMatch(input({ txnId: 'row-a2' }));
+        expect('paidEvent' in replay && replay.paidEvent).toEqual('paidEvent' in paid && paid.paidEvent);
+        const raw = await pg.query('SELECT paid_date, match_event FROM invoice_payments WHERE payment_id=$1', [scopedMatchPaymentId('statement','row-a2')]);
+        expect(raw.rows[0]).toMatchObject({ paid_date: '2026-07-01', match_event: 'paidEvent' in paid && paid.paidEvent });
+        const publicPayments = await new InvoicePaymentPgRepo(drizzle(pg) as unknown as PgDb).listPayments('org','inv-a');
+        expect(publicPayments.every(p => !('matchEvent' in p))).toBe(true);
+    });
+    it('concurrent acceptance/replay returns the same persisted paid event identity', async () => {
+        await pg.exec("UPDATE invoices SET total_amount=100 WHERE invoice_id='inv-a'");
+        const results = await Promise.all([repo.mutateInvoiceMatch(input()), repo.mutateInvoiceMatch(input())]);
+        expect(results.map(r => r.kind).sort()).toEqual(['applied','replayed']);
+        expect('paidEvent' in results[0] && results[0].paidEvent).toEqual('paidEvent' in results[1] && results[1].paidEvent);
+        expect((await state()).payments).toHaveLength(1);
+    });
+    it('reversal removes the canceled intent and a fresh paid transition gets a new identity', async () => {
+        await pg.exec("UPDATE invoices SET total_amount=100 WHERE invoice_id='inv-a'");
+        const first = await repo.mutateInvoiceMatch(input());
+        expect(await repo.mutateInvoiceMatch(input({ action: 'reverse' }))).toMatchObject({ paidEvent: null });
+        expect((await state()).payments).toHaveLength(0);
+        const again = await repo.mutateInvoiceMatch(input());
+        expect('paidEvent' in first && first.paidEvent?.eventId).not.toEqual('paidEvent' in again && again.paidEvent?.eventId);
     });
     it('binds payment identity to source and exact unsanitized transaction ID', () => {
         expect(scopedMatchPaymentId('statement','a#b')).not.toBe(scopedMatchPaymentId('statement','a_b'));

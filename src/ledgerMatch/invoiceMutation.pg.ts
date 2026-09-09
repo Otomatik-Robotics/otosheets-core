@@ -1,5 +1,5 @@
 import { ownedMatchingRow } from './scopeSql';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { dataBackend } from '../dataBackend';
 import { getPgTx, type PgDb } from '../pg/client';
@@ -14,10 +14,27 @@ export interface InvoiceMatchMutationInput {
     matchSource?: MatchSource;
     writeOffRemainder?: boolean;
 }
+export interface InvoiceMatchPaidEvent {
+    eventId: string;
+    occurredAt: string;
+    orgId: string;
+    businessProfileId: string;
+    userId: string;
+    source: 'statement' | 'feed';
+    txnId: string;
+    invoiceId: string;
+    paymentId: string;
+    paymentDate: string;
+    amount: number;
+    totalAmount: number;
+    invoiceStatus: 'PAID';
+    invoicePaidAmount: number;
+    writeOffAmount: number;
+}
 export type InvoiceMatchMutationResult =
     | { kind: 'not_found' | 'conflict' | 'invalid' }
     | { kind: 'applied' | 'replayed'; paymentId: string; invoiceStatus: string; invoicePaidAmount: number;
-        amount: number; totalAmount: number; writeOffAmount: number };
+        amount: number; totalAmount: number; writeOffAmount: number; paymentDate: string; paidEvent: InvoiceMatchPaidEvent | null };
 
 /** Collision-resistant, source-bound identity; legacy sanitized IDs are never guessed. */
 export function scopedMatchPaymentId(source: 'statement' | 'feed', txnId: string): string {
@@ -66,12 +83,28 @@ export async function mutateScopedInvoiceMatch(
         const originalPaidCents = Math.round(Number(invoice.paid_amount ?? 0) * 100);
         if (!Number.isFinite(totalAmount) || totalAmount <= 0 || !Number.isSafeInteger(Math.round(totalAmount * 100))
             || !Number.isSafeInteger(originalPaidCents) || originalPaidCents < 0) return { kind: 'invalid' };
+        let paymentDate = row.txn_date instanceof Date ? row.txn_date.toISOString().slice(0, 10) : row.txn_date ? String(row.txn_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+        let paidEvent: InvoiceMatchPaidEvent | null = null;
         const result = (kind: 'applied' | 'replayed', status = invoice.status, paid = Number(invoice.paid_amount) || 0, writeOffAmount = 0): InvoiceMatchMutationResult =>
-            ({ kind, paymentId, invoiceStatus: status, invoicePaidAmount: paid, amount, totalAmount, writeOffAmount });
+            ({ kind, paymentId, invoiceStatus: status, invoicePaidAmount: paid, amount, totalAmount, writeOffAmount, paymentDate, paidEvent });
         const [payment] = rows(await tx.execute(sql`SELECT * FROM invoice_payments WHERE payment_id = ${paymentId} FOR UPDATE`));
         if (payment && (payment.org_id !== scope.orgId || payment.business_profile_id !== scope.businessProfileId
             || payment.invoice_id !== input.invoiceId || payment.user_id !== input.userId
             || payment.method !== 'BANK_TRANSFER' || Math.round(Number(payment.amount) * 100) !== amountCents)) return { kind: 'conflict' };
+        if (payment) {
+            if (typeof payment.paid_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(payment.paid_date)) return { kind: 'conflict' };
+            paymentDate = payment.paid_date;
+            const event = payment.match_event as InvoiceMatchPaidEvent | null;
+            if (event) {
+                if (event.orgId !== scope.orgId || event.businessProfileId !== scope.businessProfileId || event.userId !== input.userId
+                    || event.source !== input.source || event.txnId !== input.txnId || event.invoiceId !== input.invoiceId || event.paymentId !== paymentId
+                    || event.paymentDate !== paymentDate || event.amount !== amount || event.invoiceStatus !== 'PAID'
+                    || typeof event.eventId !== 'string' || !event.eventId || typeof event.occurredAt !== 'string' || !Number.isFinite(Date.parse(event.occurredAt))
+                    || !Number.isFinite(event.totalAmount) || event.totalAmount <= 0 || !Number.isFinite(event.invoicePaidAmount)
+                    || event.invoicePaidAmount < 0 || !Number.isFinite(event.writeOffAmount) || event.writeOffAmount < 0) return { kind: 'conflict' };
+                paidEvent = event;
+            }
+        }
         const linked = row.matched_invoice_id === input.invoiceId;
         // A link without the exact scoped payment, or an orphan payment, is
         // ambiguous legacy/inconsistent state. Neither gets counted or deleted.
@@ -84,11 +117,17 @@ export async function mutateScopedInvoiceMatch(
             const remainder = totalCents - paidCents;
             const writeOff = input.writeOffRemainder === true && remainder > 0 && remainder <= totalCents * 0.02;
             const status = paidCents >= totalCents || writeOff ? 'PAID' : 'PARTIAL';
+            if (status === 'PAID' && invoice.status !== 'PAID') {
+                paidEvent = { eventId: randomUUID(), occurredAt: new Date().toISOString(), ...scope,
+                    userId: input.userId, source: input.source, txnId: input.txnId, invoiceId: input.invoiceId, paymentId,
+                    paymentDate, amount, totalAmount, invoiceStatus: 'PAID', invoicePaidAmount: paidCents / 100,
+                    writeOffAmount: writeOff ? remainder / 100 : 0 };
+            }
             const inserted = rows(await tx.execute(sql`INSERT INTO invoice_payments
-                (payment_id, invoice_id, org_id, business_profile_id, user_id, amount, method, paid_date, note)
+                (payment_id, invoice_id, org_id, business_profile_id, user_id, amount, method, paid_date, note, match_event)
                 VALUES (${paymentId}, ${input.invoiceId}, ${scope.orgId}, ${scope.businessProfileId}, ${input.userId},
-                    ${String(amount)}, 'BANK_TRANSFER', ${row.txn_date instanceof Date ? row.txn_date.toISOString().slice(0, 10) : row.txn_date ? String(row.txn_date).slice(0, 10) : new Date().toISOString().slice(0, 10)},
-                    ${`Matched to ${input.source} transaction ${input.txnId}`})
+                    ${String(amount)}, 'BANK_TRANSFER', ${paymentDate},
+                    ${`Matched to ${input.source} transaction ${input.txnId}`}, ${paidEvent ? JSON.stringify(paidEvent) : null}::jsonb)
                 ON CONFLICT DO NOTHING RETURNING payment_id`));
             // An unexpected conflicting writer must roll back the whole unit.
             if (inserted.length !== 1) throw new Error('Invoice match payment conflict');
@@ -122,6 +161,7 @@ export async function mutateScopedInvoiceMatch(
         if (cleared.length !== 1) throw new Error('Invoice match reversal conflict');
         await tx.execute(sql`INSERT INTO match_rejections (txn_id, target_type, target_id, user_id, rejected_by)
             VALUES (${input.txnId}, 'INVOICE', ${input.invoiceId}, ${input.userId}, ${input.userId}) ON CONFLICT DO NOTHING`);
+        paidEvent = null;
         return result('applied', status, paidCents / 100);
     });
 }
