@@ -65,3 +65,36 @@ referenced profiles.0065 must precede checklist readers. Six real PGlite cases a
 core noEmit/build pass, including read-without-write, scope/FK/override refusal,
 concurrent insert/stale revision, actor stamps and migration replay/immutability.
 No legacy import, live DDL, API adoption or checklist functional acceptance yet.
+
+## DOCREQ metadata and reserved-file checkpoint — 2026-09-09
+
+New source-only migration0066 follows0065 and must precede any new DOCREQ reader.
+It adds profile_document_requests and profile_document_request_files with composite
+profile/org ownership and child request/org/profile/adviser foreign keys. No legacy
+DOCREQ/PROSPECTREQ import, ownership assignment, or default-profile fallback exists.
+
+ProfileDocumentRequestPgRepo copies immutable trusted org/profile/adviser context.
+Fresh caller grants are the eventual API adopter's responsibility. Stable creation
+identity uses scope/adviser/client key and normalized payload fingerprint; altered
+replays conflict and cancelled requests never reopen. Reads and bounded keyset
+pages use exact scope. Cancellation requires the current OPEN revision.
+
+File reservation holds the exact parent lock, derives a canonical profile/request
+key, and atomically advances revision with the inserted reservation. Stable per-
+uploader file keys replay without a second revision or insert; changed file metadata
+conflicts. Closed parents refuse even old reservation replays. File get joins exact
+owned parent and file. Parent ownership/creation payload and every reservation
+field are immutable by SQL triggers. Declared hash/size constrain a future verifier;
+RESERVED is not an attachment, uploaded-byte proof, or completed ingestion.
+
+Validation:8 real PGlite tests, noEmit and build pass, including actual migration
+replay, isolation, create replay, revision winners, reservation/cancellation order,
+and transaction rollback with an injected SQL failure. Serialized local tests do
+not establish live Neon multiconnection behavior. No full suite or live actions.
+
+APP1fb615f4c087126b415eb92539fa05c0c61afcbc is source-cleared containment only:
+all8 legacy DOCREQ handlers and reminder/digest cron passes remain unavailable.
+No API restoration in this checkpoint. Owned attachment verification, ingestion
+identity/status, owner-side request discovery, paginated file retrieval and fresh
+recipient/reminder admission remain future contracts. All previous0064/0065 gates,
+clientSummary503, non-atomic checklist audit and whole SEC014 exclusions remain.

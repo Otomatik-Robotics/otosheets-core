@@ -24,3 +24,5 @@ export * from './smsResponse';
 export * from './signatureRequests';
 
 export * from './profileChecklist';
+
+export * from './documentRequests';

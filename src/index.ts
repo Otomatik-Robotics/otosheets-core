@@ -100,3 +100,5 @@ export * from './advisorAudit';
 export * from './signatureRequest';
 
 export * from './profileChecklist';
+
+export * from './documentRequest';
