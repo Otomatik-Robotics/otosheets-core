@@ -44,3 +44,24 @@ payload conflicts, canonical file reservation, uncertain retry, cancellation,
 immutable SQL identity/lifecycle and scoped pagination. Core typecheck/build pass.
 This checkpoint has no authenticated API/provider adoption, no live DDL or sends,
 and does not close the signature-request functional gap or overall SEC014.
+
+## Signature admission correction and checklist source checkpoint
+
+Source-reviewed core cda6b51 and APP8ced362c use exact owned request send admission
+before dispatch, server claim authority on credential and SES writes, and live
+owned completion. Terminal delivery races remain pending. Generic draft/credential
+ports consult the signature-request table:0064 must precede ALL native/workflow
+send consumers, not just new request routes. The app ledger records15 real request
+and7 existing envelope tests, API285 and consumer gates. Legacy change-acceptance
+and reviewer-verdict lifecycle ports remain open; source clearance is bounded.
+
+0065 adds a separate PostgreSQL profile setup checklist, with immutable composite
+org/profile/item ownership and revision CAS. GET returns four static defaults for
+missing rows without seeding or importing legacy checklist data. Successful writes
+stamp the trusted actor and advance one revision; stale/competing writes conflict.
+Actor membership/role is freshly checked by the eventual HTTP adopter, not core.
+The profile FK depends on0064's composite unique index and intentionally retains
+referenced profiles.0065 must precede checklist readers. Six real PGlite cases and
+core noEmit/build pass, including read-without-write, scope/FK/override refusal,
+concurrent insert/stale revision, actor stamps and migration replay/immutability.
+No legacy import, live DDL, API adoption or checklist functional acceptance yet.

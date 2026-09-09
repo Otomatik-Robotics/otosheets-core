@@ -22,3 +22,5 @@ export * from './notifications';
 export * from './smsResponse';
 
 export * from './signatureRequests';
+
+export * from './profileChecklist';

@@ -98,3 +98,5 @@ export * from './pushDevice';
 export * from './advisorAudit';
 
 export * from './signatureRequest';
+
+export * from './profileChecklist';
