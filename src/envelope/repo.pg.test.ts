@@ -1393,3 +1393,35 @@ describe('document creation and field ownership races', () => {
         expect(await repo.listFields(version.versionId)).toHaveLength(2);
     });
 });
+
+describe('immutable exact envelope file authority', () => {
+    it('reads exact owned versions and templates, never another parent/profile or unassigned source', async () => {
+        const { EnvelopeFilePgRepo } = await import('./fileRepo.pg');
+        await pglite.query("INSERT INTO business_profiles (business_profile_id, org_id, business_name) VALUES ('file-a','org_1','File A'), ('file-b','org_1','File B'), ('file-other','org_2','File Other')");
+        const a = new EnvelopeFilePgRepo('org_1', 'file-a', db);
+        const b = new EnvelopeFilePgRepo('org_1', 'file-b', db);
+        const source = await repo.create({ envelopeId: id('file-env'), versionId: id('file-ver'), orgId: 'org_1', businessProfileId: 'file-a', createdBy: 'user', title: 'File', kind: 'nda', s3Key: 'exact-key', sha256: 'exact-hash' });
+        const [version] = await repo.listVersions(source.envelopeId);
+        const other = await makeEnvelope('nda');
+        const templateId = id('file-template');
+        await repo.withTemplateScope('org_1', 'file-a').createTemplate({ templateId, orgId: 'org_1', createdBy: 'user', name: 'File template', kind: 'nda', s3Key: 'exact-template-key' });
+        expect(await a.getVersion(source.envelopeId, version.versionId)).toMatchObject({ s3Key: 'exact-key', sha256: 'exact-hash', envelopeId: source.envelopeId });
+        expect(await b.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        expect(await a.getVersion(other.envelopeId, version.versionId)).toBeNull();
+        expect(await a.getVersion(other.envelopeId, other.versionId)).toBeNull();
+        expect(await a.getVersion(source.envelopeId, 'missing')).toBeNull();
+        expect(await a.getTemplate(templateId)).toMatchObject({ s3Key: 'exact-template-key' });
+        expect(await b.getTemplate(templateId)).toBeNull();
+        expect(await a.getTemplate('missing')).toBeNull();
+        const foreignOrg = new EnvelopeFilePgRepo('org_2', 'file-a', db);
+        expect(await foreignOrg.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        expect(await foreignOrg.getTemplate(templateId)).toBeNull();
+        await pglite.query('UPDATE envelopes SET business_profile_id = $1 WHERE envelope_id = $2', ['file-other', source.envelopeId]);
+        expect(await new EnvelopeFilePgRepo('org_1', 'file-other', db).getVersion(source.envelopeId, version.versionId)).toBeNull();
+        await pglite.query('UPDATE envelopes SET business_profile_id = NULL WHERE envelope_id = $1', [source.envelopeId]);
+        expect(await a.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        await pglite.query('DELETE FROM envelope_versions WHERE version_id = $1', [version.versionId]);
+        expect(await a.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        expect(() => new EnvelopeFilePgRepo('org_1', '', db)).toThrow('scope is required');
+    });
+});
