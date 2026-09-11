@@ -6,8 +6,17 @@ export function notificationScope(orgId: string, businessProfileId: string, curr
     if (current && (current.orgId !== orgId || current.businessProfileId !== businessProfileId)) throw new Error('Notification scope mismatch');
     return Object.freeze({ orgId, businessProfileId });
 }
+/**
+ * A row written before business-profile scoping carries no organizationId at
+ * all. It is still the recipient's own row (the partition key is the user), so
+ * it stays readable and markable in any of that user's scopes rather than
+ * vanishing from every inbox. A stamped row must match the scope exactly.
+ */
+export function notificationLegacy(record: Record<string, any>): boolean {
+    return record.organizationId === undefined || record.organizationId === null;
+}
 export function notificationOwned(record: Record<string, any>, scope?: NotificationScope): boolean {
-    return !scope || (record.organizationId === scope.orgId && record.businessProfileId === scope.businessProfileId);
+    return !scope || notificationLegacy(record) || (record.organizationId === scope.orgId && record.businessProfileId === scope.businessProfileId);
 }
 
 export interface NotificationListOptions { limit?: number; nextToken?: string; }

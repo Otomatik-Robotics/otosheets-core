@@ -138,10 +138,17 @@ describe('immutable notification business scope', () => {
         await a.createNotification('user', 'a2', content);
         await b.createNotification('user', 'z1', content);
         await repo.withScope('other-org', 'a').createNotification('user', 'z2', content);
+        // z3 is written with no scope at all: a pre-cutover row. It is the
+        // recipient's own, so every one of their scopes still lists it.
         await repo.createNotification('user', 'z3', content);
         const page = await a.listNotificationsPage('user', { limit: 1 });
-        expect(page.items.map(n => n.notificationId)).toEqual(['a2']);
-        expect((await a.listNotificationsPage('user', { limit: 1, nextToken: page.nextToken })).items.map(n => n.notificationId)).toEqual(['a1']);
+        expect(page.items.map(n => n.notificationId)).toEqual(['z3']);
+        const second = await a.listNotificationsPage('user', { limit: 1, nextToken: page.nextToken });
+        expect(second.items.map(n => n.notificationId)).toEqual(['a2']);
+        expect((await a.listNotificationsPage('user', { limit: 1, nextToken: second.nextToken })).items.map(n => n.notificationId)).toEqual(['a1']);
+        expect((await b.listNotifications('user')).map(n => n.notificationId)).toEqual(['z3', 'z1']);
+        await a.markRead('user', 'z3');
+        expect(await b.getNotification('user', 'z3')).toMatchObject({ read: true });
         await expect(b.listNotificationsPage('user', { nextToken: page.nextToken })).rejects.toThrow('nextToken');
         await expect(repo.listNotificationsPage('user', { nextToken: page.nextToken })).rejects.toThrow('nextToken');
         await expect(a.listNotificationsPage('other-user', { nextToken: page.nextToken })).rejects.toThrow('nextToken');
@@ -159,7 +166,10 @@ describe('immutable notification business scope', () => {
         await b.deleteNotification('user', 'owned');
         await expect(b.createNotification('user', 'owned', content)).rejects.toThrow('ownership mismatch');
         await expect(a.createNotification('user', 'new', { ...content, businessProfileId: 'b' })).rejects.toThrow('ownership mismatch');
-        await expect(a.importNotification({ ...content, userId: 'user', notificationId: 'legacy', read: false, createdAt: '2026-01-01' })).rejects.toThrow('ownership mismatch');
+        // A backfilled pre-cutover row has no stamp; it is the recipient's own and imports as-is.
+        await a.importNotification({ ...content, userId: 'user', notificationId: 'legacy', read: false, createdAt: '2026-01-01' });
+        expect(await b.getNotification('user', 'legacy')).toMatchObject({ notificationId: 'legacy' });
+        await expect(a.importNotification({ ...content, userId: 'user', notificationId: 'foreign', read: false, createdAt: '2026-01-01', organizationId: 'org', businessProfileId: 'b' })).rejects.toThrow('ownership mismatch');
         expect(await a.getNotification('user', 'owned')).toMatchObject({ read: false });
         await a.markRead('user', 'owned');
         await a.createNotification('user', 'owned', { ...content, title: 'replay' });
@@ -193,7 +203,7 @@ describe('immutable notification business scope', () => {
         expect(query.mock.calls[1][0].ExclusiveStartKey).toEqual({ userId: 'user', notificationId: 'z' });
         expect(await dynamo.getNotification('user', 'foreign')).toBeNull();
         await dynamo.markRead('user', 'foreign');
-        expect(update.mock.calls[0][2]).toMatchObject({ ConditionExpression: 'attribute_exists(notificationId) AND #org = :org AND #profile = :profile', ExpressionAttributeValues: { ':org': 'org', ':profile': 'a' } });
+        expect(update.mock.calls[0][2]).toMatchObject({ ConditionExpression: 'attribute_exists(notificationId) AND (attribute_not_exists(#org) OR #org = :null OR (#org = :org AND #profile = :profile))', ExpressionAttributeValues: { ':org': 'org', ':profile': 'a', ':null': null } });
         await dynamo.deleteNotification('user', 'foreign');
         expect(transactWrite.mock.calls[0][0][0].Delete.ConditionExpression).toContain('#org = :org AND #profile = :profile');
         transactWrite.mockRejectedValueOnce({ name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
