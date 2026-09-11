@@ -339,6 +339,14 @@ export const envelopeTemplates = pgTable('envelope_templates', {
     bodyMarkdown: text('body_markdown'),
     s3Key: text('s3_key'),
 
+    // What the template was drafted FROM, same three as on envelopes. Set at
+    // creation and copied onto every document made from the template, so a
+    // regenerate has something to prefill and the jurisdiction travels with
+    // the wording it governs. Nullable: an uploaded file was never drafted.
+    answers: jsonb('answers'),
+    jurisdiction: text('jurisdiction'),               // NSW | VIC | QLD | WA | SA | TAS | ACT | NT
+    effectiveDate: text('effective_date'),            // YYYY-MM-DD
+
     timesUsed: integer('times_used').notNull().default(0),
     archivedAt: text('archived_at'),
     createdAt: text('created_at').notNull(),
