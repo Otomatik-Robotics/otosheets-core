@@ -9,7 +9,8 @@ export const profileDocumentRequests = pgTable('profile_document_requests', {
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(), updatedBy: text('updated_by').notNull(),
 }, t => [foreignKey({columns:[t.orgId,t.businessProfileId],foreignColumns:[businessProfiles.orgId,businessProfiles.businessProfileId]}),
-    unique().on(t.orgId,t.businessProfileId,t.advisorUserId,t.clientRequestKey), unique().on(t.requestId,t.orgId,t.businessProfileId,t.advisorUserId)]);
+    unique().on(t.orgId,t.businessProfileId,t.advisorUserId,t.clientRequestKey), unique().on(t.requestId,t.orgId,t.businessProfileId,t.advisorUserId),
+    unique().on(t.requestId,t.orgId,t.businessProfileId,t.advisorUserId,t.docType)]);
 export const profileDocumentRequestFiles = pgTable('profile_document_request_files', {
     fileId: text('file_id').primaryKey(), requestId: text('request_id').notNull(), orgId: text('org_id').notNull(),
     businessProfileId: text('business_profile_id').notNull(), advisorUserId: text('advisor_user_id').notNull(),
@@ -26,4 +27,18 @@ export const profileDocumentRequestAttachments = pgTable('profile_document_reque
     bucketName: text('bucket_name').notNull(), fileKey: text('file_key').notNull(), versionId: text('version_id').notNull(),
     sha256: text('sha256').notNull(), sizeBytes: integer('size_bytes').notNull(), attachedBy: text('attached_by').notNull(),
     attachedAt: timestamp('attached_at', {withTimezone:true,mode:'date'}).notNull().defaultNow(),
-}, t => [foreignKey({columns:[t.fileId,t.requestId,t.orgId,t.businessProfileId,t.advisorUserId],foreignColumns:[profileDocumentRequestFiles.fileId,profileDocumentRequestFiles.requestId,profileDocumentRequestFiles.orgId,profileDocumentRequestFiles.businessProfileId,profileDocumentRequestFiles.advisorUserId]})]);
+}, t => [foreignKey({columns:[t.fileId,t.requestId,t.orgId,t.businessProfileId,t.advisorUserId],foreignColumns:[profileDocumentRequestFiles.fileId,profileDocumentRequestFiles.requestId,profileDocumentRequestFiles.orgId,profileDocumentRequestFiles.businessProfileId,profileDocumentRequestFiles.advisorUserId]}),
+    unique().on(t.fileId,t.requestId,t.orgId,t.businessProfileId,t.advisorUserId)]);
+
+/** Immutable admission marker. RESERVED does not mean queued, extracted or fulfilled. */
+export const profileDocumentRequestIngestions = pgTable('profile_document_request_ingestions', {
+    fileId: text('file_id').primaryKey(), requestId: text('request_id').notNull(), orgId: text('org_id').notNull(),
+    businessProfileId: text('business_profile_id').notNull(), advisorUserId: text('advisor_user_id').notNull(),
+    docType: text('doc_type').notNull(), targetId: text('target_id').notNull().unique(), targetUserId: text('target_user_id').notNull(),
+    financialYear: text('financial_year'), admittedBy: text('admitted_by').notNull(), admittedRevision: integer('admitted_revision').notNull(),
+    status: text('status').notNull().default('RESERVED'),
+    createdAt: timestamp('created_at', {withTimezone:true,mode:'date'}).notNull().defaultNow(),
+}, t => [
+    foreignKey({columns:[t.fileId,t.requestId,t.orgId,t.businessProfileId,t.advisorUserId],foreignColumns:[profileDocumentRequestAttachments.fileId,profileDocumentRequestAttachments.requestId,profileDocumentRequestAttachments.orgId,profileDocumentRequestAttachments.businessProfileId,profileDocumentRequestAttachments.advisorUserId]}),
+    foreignKey({columns:[t.requestId,t.orgId,t.businessProfileId,t.advisorUserId,t.docType],foreignColumns:[profileDocumentRequests.requestId,profileDocumentRequests.orgId,profileDocumentRequests.businessProfileId,profileDocumentRequests.advisorUserId,profileDocumentRequests.docType]}),
+]);
