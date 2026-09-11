@@ -149,3 +149,23 @@ describe('BasPeriodPgRepo.listLodgedPaginated', () => {
         expect(seen.every(p => p.startsWith('FY25/26'))).toBe(true);
     });
 });
+
+describe('profile BAS snapshots', () => {
+    it('isolates the same period, reminders, pagination and reopening without importing legacy snapshots', async () => {
+        const a = repo.withScope(ORG, 'profile-a');
+        const b = repo.withScope(ORG, 'profile-b');
+        expect(await a.get(ORG, q1.period)).toBeNull();
+        expect(await a.markLodged(ORG, lodgement({ figures: { netGst: 10 } }))).toBe('lodged');
+        expect(await b.markLodged(ORG, lodgement({ figures: { netGst: 20 } }))).toBe('lodged');
+        expect(await a.markLodged(ORG, lodgement({ figures: { netGst: 999 } }))).toBe('already_lodged');
+        expect((await a.get(ORG, q1.period))?.figures).toEqual({ netGst: 10 });
+        expect((await b.get(ORG, q1.period))?.figures).toEqual({ netGst: 20 });
+        expect((await a.listLodged(ORG)).map(r => r.figures)).toEqual([{ netGst: 10 }]);
+        expect(await a.stampReminder(ORG, q1, 'due')).toBe(true);
+        expect(await a.stampReminder(ORG, q1, 'due')).toBe(false);
+        expect(await b.stampReminder(ORG, q1, 'due')).toBe(true);
+        expect(await a.unlodge(ORG, q1.period)).toBe(true);
+        expect((await b.get(ORG, q1.period))?.figures).toEqual({ netGst: 20 });
+        await expect(a.get('org_2', q1.period)).rejects.toThrow('organisation mismatch');
+    });
+});

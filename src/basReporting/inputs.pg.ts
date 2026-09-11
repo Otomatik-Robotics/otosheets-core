@@ -61,9 +61,11 @@ export class BasReportingPgRepo {
         const { orgId, dateFrom, dateTo } = scope;
         if (!orgId) throw new Error('BasReportingPgRepo.inputs requires orgId');
 
+        const profile = (alias: string) => scope.businessProfileId
+            ? sql`AND ${sql.raw(alias)}.business_profile_id = ${scope.businessProfileId}` : sql``;
         // ── Invoices: real invoices issued in the window. Drafts and voids never count. ──
         const invoiceWindow = sql`
-            i.org_id = ${orgId}
+            i.org_id = ${orgId} ${profile('i')}
             AND i.issue_date >= ${dateFrom} AND i.issue_date <= ${dateTo}
             AND i.status IN ('SENT', 'PARTIAL', 'OVERDUE', 'PAID')
             AND (i.is_quote IS NULL OR i.is_quote = false)
@@ -84,9 +86,9 @@ export class BasReportingPgRepo {
               AND i.status IN ('PAID', 'PARTIAL')
               AND i.stripe_session_id IS NULL
               AND NOT EXISTS (SELECT 1 FROM invoice_payments p
-                              WHERE p.invoice_id = i.invoice_id AND p.stripe_payment_intent_id IS NOT NULL)
-              AND NOT EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_invoice_id = i.invoice_id)
-              AND NOT EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_invoice_id = i.invoice_id)
+                              WHERE p.invoice_id = i.invoice_id AND p.org_id = i.org_id AND p.stripe_payment_intent_id IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM statement_transactions st JOIN statements s ON s.statement_id = st.statement_id WHERE st.matched_invoice_id = i.invoice_id AND s.organization_id = ${orgId} ${profile('s')})
+              AND NOT EXISTS (SELECT 1 FROM bank_transactions bt JOIN bank_accounts ba ON ba.account_id = bt.account_id WHERE bt.matched_invoice_id = i.invoice_id AND bt.organization_id = ${orgId} AND ba.organization_id = ${orgId} ${profile('ba')})
             ORDER BY i.issue_date DESC, i.invoice_id DESC
             LIMIT ${UNATTRIBUTED_IDS_CAP}`);
 
@@ -119,7 +121,7 @@ export class BasReportingPgRepo {
                    (count(*) FILTER (WHERE r.category IS NULL OR upper(r.category) = 'UNCATEGORIZED'))::int AS ex_uncategorised,
                    (count(*) FILTER (WHERE r.total_amount IS NULL OR r.total_amount = 0))::int AS ex_no_amount
             FROM receipts r
-            WHERE r.org_id = ${orgId}
+            WHERE r.org_id = ${orgId} ${profile('r')}
               AND r.receipt_date >= ${dateFrom} AND r.receipt_date <= ${dateTo}
               AND (r.status IS NULL OR r.status NOT IN ('DUPLICATE', 'ARCHIVED'))`);
 
@@ -131,14 +133,14 @@ export class BasReportingPgRepo {
         const tripsQ = this.one(sql`
             SELECT count(*)::int AS count, coalesce(sum(t.distance_km), 0)::text AS km
             FROM trips t
-            WHERE t.org_id = ${orgId} AND t.trip_date >= ${dateFrom} AND t.trip_date <= ${dateTo}
+            WHERE t.org_id = ${orgId} ${profile('t')} AND t.trip_date >= ${dateFrom} AND t.trip_date <= ${dateTo}
               AND upper(coalesce(t.purpose, '')) = 'WORK'`);
 
         // ── Bank coverage: statement periods overlapping the window, and whether a live feed is on. ──
         const periodsQ = this.many(sql`
             SELECT s.period_start::text AS start, s.period_end::text AS "end"
             FROM statements s
-            WHERE s.organization_id = ${orgId}
+            WHERE s.organization_id = ${orgId} ${profile('s')}
               AND s.duplicate_of_statement_id IS NULL
               AND s.period_start IS NOT NULL AND s.period_end IS NOT NULL
               AND s.period_end >= ${dateFrom}::date AND s.period_start <= ${dateTo}::date
@@ -149,7 +151,7 @@ export class BasReportingPgRepo {
         const statementCountQ = this.one(sql`
             SELECT count(*)::int AS count
             FROM statements s
-            WHERE s.organization_id = ${orgId}
+            WHERE s.organization_id = ${orgId} ${profile('s')}
               AND s.duplicate_of_statement_id IS NULL
               AND (
                 (s.period_start IS NOT NULL AND s.period_end IS NOT NULL
@@ -165,7 +167,7 @@ export class BasReportingPgRepo {
         // org that had ever uploaded a statement, statements or not.
         const feedQ = this.one(sql`
             SELECT EXISTS (SELECT 1 FROM bank_accounts ba
-                           WHERE ba.organization_id = ${orgId}
+                           WHERE ba.organization_id = ${orgId} ${profile('ba')}
                              AND ba.status = 'ACTIVE'
                              AND ba.provider <> 'statement') AS active`);
 
@@ -191,7 +193,7 @@ export class BasReportingPgRepo {
                        coalesce(${unmatchedIncomeStatementPredicate('st')}, false) AS unmatched_credit
                 FROM statement_transactions st
                 JOIN statements s ON s.statement_id = st.statement_id
-                WHERE s.organization_id = ${orgId}
+                WHERE s.organization_id = ${orgId} ${profile('s')}
                   AND s.duplicate_of_statement_id IS NULL
                   AND st.txn_date >= ${dateFrom}::date AND st.txn_date <= ${dateTo}::date
                   AND st.duplicate_of_txn_id IS NULL
@@ -201,6 +203,7 @@ export class BasReportingPgRepo {
                        coalesce(${unmatchedIncomeFeedPredicate('bt')}, false) AS unmatched_credit
                 FROM bank_transactions bt
                 WHERE bt.organization_id = ${orgId}
+                  AND EXISTS (SELECT 1 FROM bank_accounts ba WHERE ba.account_id = bt.account_id AND ba.organization_id = ${orgId} ${profile('ba')})
                   AND bt.txn_date >= ${dateFrom}::date AND bt.txn_date <= ${dateTo}::date
                   AND bt.duplicate_of_txn_id IS NULL
             )
@@ -215,7 +218,7 @@ export class BasReportingPgRepo {
             SELECT (count(*) FILTER (WHERE a.status = 'ACTIVE'))::int AS active,
                    (count(*) FILTER (WHERE a.status = 'ACTIVE' AND a.first_used_date IS NULL))::int AS no_first_use
             FROM assets a
-            WHERE a.org_id = ${orgId}`);
+            WHERE a.org_id = ${orgId} ${profile('a')}`);
 
         const [inv, unattributed, rec, trips, periods, statementCount, feed, bank, assets] = await Promise.all([
             invoicesQ, unattributedQ, receiptsQ, tripsQ, periodsQ, statementCountQ, feedQ, bankRowsQ, assetsQ,

@@ -144,3 +144,44 @@ describe('ClientOverviewPgRepo', () => {
         expect(o.timeline[o.timeline.length - 1].type).toBe('client_created');
     });
 });
+
+it('isolates profile reports even when historical records reference the same client or invoice', async () => {
+    const clientBase = { orgId: 'org_1', createdBy: 'u_1', email: 'shared@example.test', createdAt: D('2026-01-01'), updatedAt: D('2026-01-01') };
+    await db.insert(clients).values([
+        { ...clientBase, clientId: 'scope-client', businessProfileId: 'profile-a', name: 'Own client' },
+        { ...clientBase, clientId: 'scope-other-client', businessProfileId: 'profile-b', name: 'Other client' },
+    ]);
+    const invoiceBase = { orgId: 'org_1', ownerId: 'u_1', createdBy: 'u_1', clientId: 'scope-client', date: '2026-01-01', createdAt: D('2026-01-02'), updatedAt: D('2026-01-02') };
+    await db.insert(invoices).values([
+        { ...invoiceBase, invoiceId: 'scope-own', invoiceNumber: 'scope-own', businessProfileId: 'profile-a', status: 'PAID', totalAmount: '100', paidAmount: '100' },
+        { ...invoiceBase, invoiceId: 'scope-foreign', invoiceNumber: 'scope-foreign', businessProfileId: 'profile-b', status: 'SENT', totalAmount: '9000', paidAmount: '0' },
+        { ...invoiceBase, invoiceId: 'scope-unassigned', invoiceNumber: 'scope-unassigned', status: 'SENT', totalAmount: '6000', paidAmount: '0' },
+        { ...invoiceBase, invoiceId: 'scope-wrong-client', invoiceNumber: 'scope-wrong-client', clientId: 'scope-other-client', businessProfileId: 'profile-a', status: 'SENT', totalAmount: '8000', paidAmount: '0' },
+    ]);
+    await db.insert(invoicePayments).values([
+        { paymentId: 'scope-pay-own', invoiceId: 'scope-own', orgId: 'org_1', businessProfileId: 'profile-a', amount: '100', method: 'card', date: '2026-01-05', createdAt: D('2026-01-05') },
+        { paymentId: 'scope-pay-foreign', invoiceId: 'scope-own', orgId: 'org_1', businessProfileId: 'profile-b', amount: '9000', method: 'card', date: '2026-06-01', createdAt: D('2026-06-01') },
+        { paymentId: 'scope-pay-unassigned', invoiceId: 'scope-own', orgId: 'org_1', amount: '6000', method: 'card', date: '2026-07-01', createdAt: D('2026-07-01') },
+    ]);
+    await db.insert(jobs).values(['profile-a', 'profile-b', null].map((businessProfileId, index) => ({
+        jobId: `scope-job-${index}`, orgId: 'org_1', ownerId: 'u_1', createdBy: 'u_1', clientId: 'scope-client', businessProfileId,
+        title: `Job ${index}`, status: 'SCHEDULED', createdAt: D('2026-01-06'), updatedAt: D('2026-01-06'),
+    })));
+    const repo = new ClientOverviewPgRepo(db);
+    const own = await repo.getClientOverview('org_1', 'scope-client', 'profile-a');
+    expect(own?.kpis).toMatchObject({ invoiceCount: 1, lifetimeValue: 100, outstanding: 0, avgPayDays: 4 });
+    expect(own?.recentInvoices.map(i => i.invoiceId)).toEqual(['scope-own']);
+    expect(own?.timeline.map(e => e.refId).sort()).toEqual(['scope-client', 'scope-job-0', 'scope-own', 'scope-pay-own']);
+    expect(await repo.getClientOverview('org_1', 'scope-client', 'profile-b')).toBeNull();
+    expect(await repo.getClientOverview('org_1', 'c_1', 'profile-a')).toBeNull();
+    const rollups = await repo.batchClientRollups('org_1', ['scope-client', 'scope-other-client'], 'profile-a');
+    expect(rollups).toHaveLength(1);
+    expect(rollups[0]).toMatchObject({ clientId: 'scope-client', invoiceCount: 1, lifetimeValue: 100, outstanding: 0 });
+    // The internal delete guard still sees every reference, so isolation cannot orphan old invoices.
+    expect(await repo.clientInvoiceCount('org_1', 'scope-client')).toBe(3);
+    const { ClientPgRepo } = await import('../client/repo.pg');
+    const clientsRepo = new ClientPgRepo(db);
+    expect((await clientsRepo.findClientByEmail('org_1', 'SHARED@example.test', 'profile-a'))?.clientId).toBe('scope-client');
+    expect((await clientsRepo.findClientByEmail('org_1', 'shared@example.test', 'profile-b'))?.clientId).toBe('scope-other-client');
+    expect(await clientsRepo.findClientByEmail('org_1', 'shared@example.test', 'missing-profile')).toBeNull();
+});

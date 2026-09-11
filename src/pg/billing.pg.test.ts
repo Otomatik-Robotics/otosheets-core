@@ -284,3 +284,45 @@ describe('InvoicePgRepo.getInvoiceTotals', () => {
         expect(all.invoiced).toBe(10799); // 500 + 300 + 9999
     });
 });
+
+describe('invoice profile and overdue pagination', () => {
+    it('filters by profile, client, strict cutoff and status before paging', async () => {
+        const repo = new InvoicePgRepo(db, db);
+        const clientRepo = new ClientPgRepo(db);
+        await clientRepo.createClient('org_1', 'scope-client', { createdBy: 'u', name: 'Scope' });
+        await clientRepo.createClient('org_1', 'other-scope-client', { createdBy: 'u', name: 'Other' });
+        const rows = [
+            ['sc-a', 'a', 'scope-client', 'SENT', '2026-01-01'],
+            ['sc-partial', 'a', 'scope-client', 'PARTIAL', '2026-01-01'],
+            ['sc-foreign', 'b', 'scope-client', 'SENT', '2026-01-01'],
+            ['sc-client', 'a', 'other-scope-client', 'SENT', '2026-01-01'],
+            ['sc-today', 'a', 'scope-client', 'SENT', '2026-02-01'],
+            ['sc-paid', 'a', 'scope-client', 'PAID', '2026-01-01'],
+            ['sc-draft', 'a', 'scope-client', 'DRAFT', '2026-01-01'],
+        ];
+        for (const [id, profile, clientId, status, dueDate] of rows) {
+            await repo.createInvoice('org_1', 'u', id, { invoiceNumber: id, businessProfileId: profile, clientId, status, dueDate });
+        }
+        const filter = { orgId: 'org_1', businessProfileId: 'a', clientId: 'scope-client', overdueBefore: '2026-02-01', limit: 1 };
+        const first = await repo.listOrgInvoicesPaginated(filter);
+        expect(first.items).toHaveLength(1);
+        expect(first.lastEvaluatedKey).toBeDefined();
+        const second = await repo.listOrgInvoicesPaginated({ ...filter, exclusiveStartKey: first.lastEvaluatedKey });
+        expect([...first.items, ...second.items].map(row => row.invoiceId).sort()).toEqual(['sc-a', 'sc-partial']);
+    });
+});
+
+
+describe('Invoice summary business profile isolation', () => {
+    it('excludes another profile and unassigned invoices from every aggregate', async () => {
+        const orgId = 'org_profile_summary';
+        await db.execute(sql`INSERT INTO orgs (org_id, name) VALUES (${orgId}, 'Profile summary')`);
+        const repo = new InvoicePgRepo(db, db);
+        await repo.createInvoice(orgId, 'user_1', 'summary_profile_a', { invoiceNumber: 'summary_profile_a', businessProfileId: 'profile-a', status: 'SENT', totalAmount: 100, dueDate: '2999-01-01' });
+        await repo.createInvoice(orgId, 'user_1', 'summary_profile_b', { invoiceNumber: 'summary_profile_b', businessProfileId: 'profile-b', status: 'SENT', totalAmount: 900, dueDate: '2999-01-01' });
+        await repo.createInvoice(orgId, 'user_1', 'summary_unassigned', { invoiceNumber: 'summary_unassigned', status: 'SENT', totalAmount: 700, dueDate: '2999-01-01' });
+        expect((await repo.getInvoiceSummary(orgId, 'profile-a')).outstanding).toEqual({ count: 1, amount: 100 });
+        expect((await repo.getInvoiceSummary(orgId, 'profile-b')).outstanding).toEqual({ count: 1, amount: 900 });
+        expect((await repo.getInvoiceSummary(orgId, 'profile-empty')).outstanding).toEqual({ count: 0, amount: 0 });
+    });
+});

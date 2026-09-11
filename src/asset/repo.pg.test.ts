@@ -120,3 +120,19 @@ describe('AssetPgRepo', () => {
         expect(await repo.get('org_1', 'a3')).toBeNull();
     });
 });
+
+describe('profile-bound asset schedule', () => {
+    it('keeps creates, reads, schedules, counts and mutations inside the bound profile', async () => {
+        const a = repo.withScope('org_1', 'profile-a');
+        const b = repo.withScope('org_1', 'profile-b');
+        await a.createConditional(asset({ assetId: 'scoped-a' }));
+        await b.createConditional(asset({ assetId: 'scoped-b' }));
+        expect((await a.listAllForSchedule('org_1')).map(x => x.assetId)).toEqual(['scoped-a']);
+        expect(await a.countActive('org_1')).toBe(1);
+        expect(await a.get('org_1', 'scoped-b')).toBeNull();
+        expect(await a.update('org_1', 'scoped-b', { name: 'wrong' })).toBe(false);
+        expect(await a.remove('org_1', 'scoped-b')).toBe(false);
+        expect((await b.get('org_1', 'scoped-b'))?.name).toBe('Hilux');
+        await expect(a.createConditional(asset({ assetId: 'bad', businessProfileId: 'profile-b' }))).rejects.toThrow('profile mismatch');
+    });
+});

@@ -291,3 +291,161 @@ describe('depositCheckForInvoices', () => {
         expect(await repo.depositCheckForInvoices(ORG, [])).toEqual([]);
     });
 });
+
+
+describe('profile-scoped matching candidates', () => {
+    const org = 'matching_scope_org';
+    beforeAll(async () => {
+        await db.execute(`INSERT INTO orgs (org_id, name) VALUES ('${org}', 'Scoped')`);
+        for (const profile of ['A', 'B']) {
+            await db.insert(clients).values({ clientId: `scope_client_${profile}`, orgId: org, businessProfileId: profile, createdBy: USER, name: `Client ${profile}` });
+        }
+        for (const [id, profile, client] of [['own', 'A', 'A'], ['foreign_client', 'A', 'B'], ['other', 'B', 'B'], ['legacy', null, 'A']] as const) {
+            await db.insert(invoices).values({ invoiceId: `scope_invoice_${id}`, invoiceNumber: `SCOPE-${id}`, orgId: org, businessProfileId: profile, ownerId: USER, createdBy: USER,
+                clientId: `scope_client_${client}`, status: 'SENT', totalAmount: '10', paidAmount: '0' });
+        }
+        for (const [id, profile] of [['open', 'A'], ['foreign_statement', 'A'], ['foreign_feed', 'A'], ['own_statement', 'A'], ['own_feed', 'A'], ['other', 'B'], ['legacy', null]] as const) {
+            await db.insert(receipts).values({ receiptId: `scope_receipt_${id}`, orgId: org, businessProfileId: profile, ownerId: USER, createdBy: USER,
+                totalAmount: '10', date: '2026-03-01' });
+        }
+        for (const profile of ['A', 'B']) {
+            await db.insert(statements).values({ statementId: `scope_statement_${profile}`, userId: USER, organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: `scope_${profile}` });
+            await db.insert(statementTransactions).values({ txnId: `scope_statement_${profile}#00001`, statementId: `scope_statement_${profile}`, userId: USER, fy: '2025-26', seq: 1,
+                amountCents: -1000, matchedReceiptId: `scope_receipt_${profile === 'A' ? 'own_statement' : 'foreign_statement'}` });
+            await db.insert(bankAccounts).values({ accountId: `scope_account_${profile}`, userId: USER, organizationId: org, businessProfileId: profile });
+            await db.insert(bankTransactions).values({ txnId: `scope_feed_${profile}`, accountId: `scope_account_${profile}`, userId: USER, organizationId: org, fy: '2025-26',
+                amountCents: -1000, matchedReceiptId: `scope_receipt_${profile === 'A' ? 'own_feed' : 'foreign_feed'}` });
+        }
+    });
+
+    it('excludes other and unassigned invoices, and withholds foreign client details', async () => {
+        const result = await repo.listOpenInvoicesForMatching(org, 'A');
+        expect(result.map(r => r.invoiceId).sort()).toEqual(['scope_invoice_foreign_client', 'scope_invoice_own']);
+        expect(result.find(r => r.invoiceId === 'scope_invoice_own')).toMatchObject({ clientId: 'scope_client_A', clientName: 'Client A' });
+        expect(result.find(r => r.invoiceId === 'scope_invoice_foreign_client')).toMatchObject({ clientId: null, clientName: null });
+        expect(await repo.listOpenInvoicesForMatching(org, '')).toEqual([]);
+    });
+
+    it('uses scoped parents for receipt links so foreign links cannot hide owned candidates', async () => {
+        const result = await repo.listUnlinkedReceipts(org, { businessProfileId: 'A', dateFrom: '2026-01-01', dateTo: '2026-12-31' });
+        expect(result.map(r => r.receiptId).sort()).toEqual(['scope_receipt_foreign_feed', 'scope_receipt_foreign_statement', 'scope_receipt_open']);
+        expect(await repo.listUnlinkedReceipts(org, { businessProfileId: '', dateFrom: '2026-01-01', dateTo: '2026-12-31' })).toEqual([]);
+    });
+});
+
+describe('immutable matching repository scope', () => {
+    const org = 'matching_contract_org';
+    let a: LedgerMatchPgRepo;
+    let b: LedgerMatchPgRepo;
+    beforeAll(async () => {
+        await db.execute(`INSERT INTO orgs (org_id, name) VALUES ('${org}', 'Contract'), ('matching_contract_foreign', 'Foreign')`);
+        for (const [label, ownerOrg, profile] of [['A', org, 'A'], ['B', org, 'B'], ['legacy', org, null], ['foreign', 'matching_contract_foreign', 'A']] as const) {
+            await db.insert(statements).values({ statementId: `contract_${label}`, userId: USER, organizationId: ownerOrg, businessProfileId: profile, fy: '2025-26', s3Key: label });
+            await db.insert(bankAccounts).values({ accountId: `contract_${label}`, userId: USER, organizationId: ownerOrg, businessProfileId: profile });
+            await db.insert(invoices).values({ invoiceId: `contract_${label}`, invoiceNumber: `CONTRACT-${label}`, orgId: ownerOrg, businessProfileId: profile, ownerId: USER, createdBy: USER, status: 'SENT', totalAmount: '10', paidAmount: '0' });
+            await db.insert(receipts).values({ receiptId: `contract_${label}`, orgId: ownerOrg, businessProfileId: profile, ownerId: USER, createdBy: USER, totalAmount: '10', date: '2026-01-01' });
+            await db.insert(statementTransactions).values({ txnId: `contract_st_${label}`, statementId: `contract_${label}`, userId: USER, fy: '2025-26', seq: 1, amountCents: 10000,
+                direction: 'CREDIT', flowClass: 'INCOME', category: 'INCOME', categorySource: 'AI', txnDate: label === 'A' ? '2026-02-01' : '2026-01-01' });
+            await db.insert(bankTransactions).values({ txnId: `contract_bt_${label}`, accountId: `contract_${label}`, userId: USER, organizationId: ownerOrg, fy: '2025-26', amountCents: 10000,
+                direction: 'CREDIT', description: 'PAYMENT FROM CUSTOMER', category: 'INCOME', categorySource: 'AI', txnDate: label === 'A' ? '2026-02-02' : '2026-01-01' });
+        }
+        a = repo.withScope(org, 'A'); b = repo.withScope(org, 'B');
+    });
+
+    it('cannot rebind a scoped instance or override candidate scope', async () => {
+        expect(() => a.withScope(org, 'B')).toThrow('scope mismatch');
+        expect(() => repo.withScope(org, '')).toThrow('scope is required');
+        await expect(a.listOpenInvoicesForMatching(org, 'B')).rejects.toThrow('scope mismatch');
+        await expect(a.listReceiptChips('matching_contract_foreign', [])).rejects.toThrow('scope mismatch');
+        expect((await a.listOpenInvoicesForMatching(org)).map(r => r.invoiceId)).toEqual(['contract_A']);
+        expect((await b.listOpenInvoicesForMatching(org)).map(r => r.invoiceId)).toEqual(['contract_B']);
+    });
+
+    it.each(['B', 'legacy', 'foreign'])('refuses %s parent rows and mutations even for the same user', async label => {
+        expect(await a.listStatementRowsForMatching(USER, `contract_${label}`)).toEqual([]);
+        expect(await a.listFeedRowsForMatching(USER, `contract_${label}`, { dateFrom: '2025-01-01' })).toEqual([]);
+        for (const [source, prefix] of [['statement', 'st'], ['feed', 'bt']] as const) {
+            const id = `contract_${prefix}_${label}`;
+            expect(await a.getRowForMatching(USER, source, id)).toBeNull();
+            expect(await a.stampMatch(USER, source, id, { type: 'INVOICE', id: 'contract_A' }, 'USER')).toBe('not_found');
+            expect(await a.unstampMatch(USER, source, id, { type: 'INVOICE', id: 'contract_A' })).toBe('not_found');
+            await a.rejectMatch(USER, id, 'INVOICE', 'contract_A');
+            expect((await repo.getRowForMatching(USER, source, id))?.matchedInvoiceId).toBeNull();
+            expect(await repo.listRejections(USER, [id])).toEqual([]);
+        }
+    });
+
+    it.each(['B', 'legacy', 'foreign', 'missing'])('rejects %s receipt/invoice references without a stamp or rejection record', async label => {
+        for (const type of ['INVOICE', 'RECEIPT'] as const) {
+            for (const [source, id] of [['statement', 'contract_st_A'], ['feed', 'contract_bt_A']] as const) {
+                expect(await a.stampMatch(USER, source, id, { type, id: `contract_${label}` }, 'USER')).toBe('conflict');
+                await a.rejectMatch(USER, id, type, `contract_${label}`);
+                const row = await repo.getRowForMatching(USER, source, id);
+                expect(row?.matchedInvoiceId).toBeNull(); expect(row?.matchedReceiptId).toBeNull();
+                expect(await repo.listRejections(USER, [id])).toEqual([]);
+            }
+        }
+    });
+
+    it('scope is applied before keyset pagination and total counting', async () => {
+        const first = await a.listUnmatchedIncome(USER, { olderThan: '2026-03-01', limit: 1 });
+        expect(first.items.map(r => r.txnId)).toEqual(['contract_st_A']); expect(first.totalCount).toBe(2);
+        const second = await a.listUnmatchedIncome(USER, { olderThan: '2026-03-01', limit: 1, nextToken: first.nextToken });
+        expect(second.items.map(r => r.txnId)).toEqual(['contract_bt_A']); expect(second.totalCount).toBe(2); expect(second.nextToken).toBeNull();
+    });
+
+    it('filters chips/deposit evidence and ignores foreign links to owned invoices', async () => {
+        const ids = ['contract_A', 'contract_B', 'contract_legacy', 'contract_foreign'];
+        expect((await a.listInvoiceChips(org, ids)).map(r => r.invoiceId)).toEqual(['contract_A']);
+        expect((await a.listReceiptChips(org, ids)).map(r => r.receiptId)).toEqual(['contract_A']);
+        await repo.stampMatch(USER, 'statement', 'contract_st_B', { type: 'INVOICE', id: 'contract_A' }, 'USER');
+        expect(await a.depositCheckForInvoices(org, ids)).toEqual([{ invoiceId: 'contract_A', bankMatched: false, lastBankTransferPaymentDate: null }]);
+    });
+
+    it('deposit dates quarantine foreign and unassigned payment profiles', async () => {
+        for (const [id, profile, date] of [['foreign', 'B', '2026-06-01'], ['legacy', null, '2026-07-01']] as const) {
+            await db.insert(invoicePayments).values({ paymentId: `contract_payment_${id}`, invoiceId: 'contract_A', orgId: org,
+                businessProfileId: profile, userId: USER, amount: '10', method: 'BANK_TRANSFER', date });
+        }
+        expect(await a.depositCheckForInvoices(org, ['contract_A'])).toEqual([
+            { invoiceId: 'contract_A', bankMatched: false, lastBankTransferPaymentDate: null },
+        ]);
+        await db.insert(invoicePayments).values({ paymentId: 'contract_payment_own', invoiceId: 'contract_A', orgId: org,
+            businessProfileId: 'A', userId: USER, amount: '10', method: 'BANK_TRANSFER', date: '2026-01-01' });
+        expect(await a.depositCheckForInvoices(org, ['contract_A'])).toEqual([
+            { invoiceId: 'contract_A', bankMatched: false, lastBankTransferPaymentDate: '2026-01-01' },
+        ]);
+    });
+
+    it('quarantines legacy foreign links instead of returning their identifiers', async () => {
+        // This invalid old link was inserted through the legacy unscoped adapter above.
+        expect(await b.getRowForMatching(USER, 'statement', 'contract_st_B')).toBeNull();
+        expect(await b.listStatementRowsForMatching(USER, 'contract_B')).toEqual([]);
+    });
+
+    it('checks ownership again in the mutation after a previously owned read', async () => {
+        const row = await a.getRowForMatching(USER, 'statement', 'contract_st_A');
+        expect(row).not.toBeNull();
+        await db.execute(`UPDATE statements SET business_profile_id = 'B' WHERE statement_id = 'contract_A'`);
+        expect(await a.stampMatch(USER, 'statement', 'contract_st_A', { type: 'INVOICE', id: 'contract_A' }, 'USER')).toBe('not_found');
+        await a.rejectMatch(USER, 'contract_st_A', 'INVOICE', 'contract_A');
+        expect(await repo.listRejections(USER, ['contract_st_A'])).toEqual([]);
+        expect((await repo.getRowForMatching(USER, 'statement', 'contract_st_A'))?.matchedInvoiceId).toBeNull();
+        await db.execute(`UPDATE statements SET business_profile_id = 'A' WHERE statement_id = 'contract_A'`);
+        await db.execute(`UPDATE invoices SET business_profile_id = 'B' WHERE invoice_id = 'contract_A'`);
+        expect(await a.stampMatch(USER, 'statement', 'contract_st_A', { type: 'INVOICE', id: 'contract_A' }, 'USER')).toBe('conflict');
+        expect((await repo.getRowForMatching(USER, 'statement', 'contract_st_A'))?.matchedInvoiceId).toBeNull();
+        await db.execute(`UPDATE invoices SET business_profile_id = 'A' WHERE invoice_id = 'contract_A'`);
+    });
+
+    it('same-profile stamp, reject and reverse remain usable for statement and feed rows', async () => {
+        for (const [source, id] of [['statement', 'contract_st_A'], ['feed', 'contract_bt_A']] as const) {
+            expect(await a.stampMatch(USER, source, id, { type: 'INVOICE', id: 'contract_A' }, 'USER')).toBe('linked');
+            expect(await a.stampMatch(USER, source, id, { type: 'INVOICE', id: 'contract_A' }, 'USER')).toBe('linked');
+            expect(await a.unstampMatch(USER, source, id, { type: 'INVOICE', id: 'contract_A' })).toBe('cleared');
+            await a.rejectMatch(USER, id, 'INVOICE', 'contract_A');
+            expect(await a.listRejections(USER, [id])).toEqual([{ txnId: id, targetType: 'INVOICE', targetId: 'contract_A' }]);
+            expect(await b.listRejections(USER, [id])).toEqual([]);
+        }
+    });
+});

@@ -1,4 +1,6 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { ownedMatchingParent, ownedMatchingTarget, ownedMatchingRow } from './scopeSql';
+import { mutateScopedInvoiceMatch, type InvoiceMatchMutationInput, type InvoiceMatchMutationResult } from './invoiceMutation.pg';
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { getPg, type PgDb } from '../pg/client';
 import { statements, statementTransactions } from '../pg/schema/statements';
 import { bankAccounts, bankTransactions } from '../pg/schema/bankFeeds';
@@ -30,8 +32,49 @@ const CANDIDATE_CAP = 1000; // open invoices / unlinked receipts per org
  * run twice (idempotency §5).
  */
 export class LedgerMatchPgRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private readonly scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    withScope(orgId: string, businessProfileId: string): LedgerMatchPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Ledger matching scope is required');
+        this.checkScope(orgId, businessProfileId);
+        return new LedgerMatchPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+
+    private checkScope(orgId: string, profile?: string | null): string | null | undefined {
+        if (this.scope && (orgId !== this.scope.orgId || (profile != null && profile !== this.scope.businessProfileId))) {
+            throw new Error('Ledger matching scope mismatch');
+        }
+        return this.scope?.businessProfileId ?? profile;
+    }
+
+    private parent(source: 'statement' | 'feed', alias?: string): SQL {
+        return ownedMatchingParent(this.scope, source, alias);
+    }
+    private target(type: MatchTargetType, id: SQL): SQL {
+        return ownedMatchingTarget(this.scope, type, id);
+    }
+    private row(source: 'statement' | 'feed'): SQL {
+        return ownedMatchingRow(this.scope, source);
+    }
+
+    private rejectionRow(user: SQL, id: SQL): SQL {
+        if (!this.scope) return sql`true`;
+        return sql`(EXISTS (SELECT 1 FROM statement_transactions rst
+            WHERE rst.user_id = ${user} AND rst.txn_id = ${id} AND ${this.parent('statement', 'rst')})
+            OR EXISTS (SELECT 1 FROM bank_transactions rbt
+            WHERE rbt.user_id = ${user} AND rbt.txn_id = ${id} AND ${this.parent('feed', 'rbt')}))`;
+    }
+
+    private rejectionTarget(): SQL {
+        return sql`((${matchRejections.targetType} = 'INVOICE' AND ${this.target('INVOICE', sql`${matchRejections.targetId}`)})
+            OR (${matchRejections.targetType} = 'RECEIPT' AND ${this.target('RECEIPT', sql`${matchRejections.targetId}`)}))`;
+    }
     private get db(): PgDb { return this.injected ?? getPg(); }
+
+    async mutateInvoiceMatch(input: InvoiceMatchMutationInput): Promise<InvoiceMatchMutationResult> {
+        if (!this.scope) throw new Error('Ledger matching scope is required');
+        return mutateScopedInvoiceMatch(this.scope, input, this.injected);
+    }
 
     /** Every row of one statement, engine-shaped. Bounded: statements are finite. */
     async listStatementRowsForMatching(userId: string, statementId: string): Promise<MatchableLedgerRow[]> {
@@ -52,6 +95,7 @@ export class LedgerMatchPgRepo {
         })
             .from(statementTransactions)
             .where(and(
+                this.row('statement'),
                 eq(statementTransactions.statementId, statementId),
                 eq(statementTransactions.userId, userId),
             ))
@@ -81,6 +125,7 @@ export class LedgerMatchPgRepo {
         dateFrom: string; dateTo?: string;
     }): Promise<MatchableLedgerRow[]> {
         const conditions: any[] = [
+            this.row('feed'),
             eq(bankTransactions.userId, userId),
             eq(bankTransactions.accountId, accountId),
             sql`${bankTransactions.txnDate} >= ${opts.dateFrom}::date`,
@@ -127,7 +172,7 @@ export class LedgerMatchPgRepo {
     ): Promise<MatchableLedgerRow | null> {
         if (source === 'statement') {
             const rows = await this.db.select().from(statementTransactions)
-                .where(and(eq(statementTransactions.txnId, txnId), eq(statementTransactions.userId, userId)))
+                .where(and(eq(statementTransactions.txnId, txnId), eq(statementTransactions.userId, userId), this.row('statement')))
                 .limit(1);
             const r = rows[0];
             if (!r) return null;
@@ -142,7 +187,7 @@ export class LedgerMatchPgRepo {
             };
         }
         const rows = await this.db.select().from(bankTransactions)
-            .where(and(eq(bankTransactions.txnId, txnId), eq(bankTransactions.userId, userId)))
+            .where(and(eq(bankTransactions.txnId, txnId), eq(bankTransactions.userId, userId), this.row('feed')))
             .limit(1);
         const r = rows[0];
         if (!r) return null;
@@ -161,17 +206,18 @@ export class LedgerMatchPgRepo {
      * with the client name joined live — the CREDIT candidate set. Cents.
      */
     async listOpenInvoicesForMatching(orgId: string, businessProfileId?: string | null): Promise<OpenInvoiceForMatching[]> {
+        businessProfileId = this.checkScope(orgId, businessProfileId);
         const conditions: any[] = [
             eq(invoices.orgId, orgId),
             sql`${invoices.status} IN ('SENT', 'PARTIAL', 'OVERDUE')`,
             sql`(${invoices.isQuote} IS NULL OR ${invoices.isQuote} = false)`,
             sql`(${invoices.isPaymentLink} IS NULL OR ${invoices.isPaymentLink} = false)`,
         ];
-        if (businessProfileId) conditions.push(eq(invoices.businessProfileId, businessProfileId));
+        if (businessProfileId != null) conditions.push(eq(invoices.businessProfileId, businessProfileId));
         const rows = await this.db.select({
             invoiceId: invoices.invoiceId,
             invoiceNumber: invoices.invoiceNumber,
-            clientId: invoices.clientId,
+            clientId: businessProfileId != null ? clients.clientId : invoices.clientId,
             clientName: clients.name,
             totalAmount: invoices.totalAmount,
             paidAmount: invoices.paidAmount,
@@ -179,7 +225,8 @@ export class LedgerMatchPgRepo {
             status: invoices.status,
         })
             .from(invoices)
-            .leftJoin(clients, eq(clients.clientId, invoices.clientId))
+            .leftJoin(clients, and(eq(clients.clientId, invoices.clientId), eq(clients.orgId, invoices.orgId),
+                businessProfileId != null ? eq(clients.businessProfileId, businessProfileId) : undefined))
             .where(and(...conditions))
             .limit(CANDIDATE_CAP);
         return rows.map((r) => {
@@ -203,7 +250,8 @@ export class LedgerMatchPgRepo {
      * Receipts in a date window that no bank row (either source) links to yet —
      * the DEBIT candidate set. Cents.
      */
-    async listUnlinkedReceipts(orgId: string, opts: { dateFrom: string; dateTo: string }): Promise<UnlinkedReceiptForMatching[]> {
+    async listUnlinkedReceipts(orgId: string, opts: { dateFrom: string; dateTo: string; businessProfileId?: string }): Promise<UnlinkedReceiptForMatching[]> {
+        opts = { ...opts, businessProfileId: this.checkScope(orgId, opts.businessProfileId) ?? undefined };
         const rows = await this.db.select({
             receiptId: receipts.receiptId,
             vendorName: receipts.vendorName,
@@ -213,12 +261,19 @@ export class LedgerMatchPgRepo {
             .from(receipts)
             .where(and(
                 eq(receipts.orgId, orgId),
+                opts.businessProfileId !== undefined ? eq(receipts.businessProfileId, opts.businessProfileId) : undefined,
                 isNull(receipts.duplicateOf),
                 sql`${receipts.date} >= ${opts.dateFrom}`,
                 sql`${receipts.date} <= ${opts.dateTo}`,
                 sql`${receipts.totalAmount} IS NOT NULL AND ${receipts.totalAmount} > 0`,
-                sql`NOT EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_receipt_id = ${receipts.receiptId})`,
-                sql`NOT EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_receipt_id = ${receipts.receiptId})`,
+                opts.businessProfileId !== undefined
+                    ? sql`NOT EXISTS (SELECT 1 FROM statement_transactions st JOIN statements s ON s.statement_id = st.statement_id
+                        WHERE st.matched_receipt_id = ${receipts.receiptId} AND s.organization_id = ${orgId} AND s.business_profile_id = ${opts.businessProfileId})`
+                    : sql`NOT EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_receipt_id = ${receipts.receiptId})`,
+                opts.businessProfileId !== undefined
+                    ? sql`NOT EXISTS (SELECT 1 FROM bank_transactions bt JOIN bank_accounts a ON a.account_id = bt.account_id
+                        WHERE bt.matched_receipt_id = ${receipts.receiptId} AND a.organization_id = ${orgId} AND a.business_profile_id = ${opts.businessProfileId})`
+                    : sql`NOT EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_receipt_id = ${receipts.receiptId})`,
             ))
             .limit(CANDIDATE_CAP);
         return rows.map((r) => ({
@@ -242,6 +297,8 @@ export class LedgerMatchPgRepo {
                 .from(matchRejections)
                 .where(and(
                     eq(matchRejections.userId, userId),
+                    this.rejectionRow(sql`${matchRejections.userId}`, sql`${matchRejections.txnId}`),
+                    this.rejectionTarget(),
                     inArray(matchRejections.txnId, txnIds.slice(i, i + CHUNK)),
                 ));
             out.push(...rows.map((r) => ({
@@ -257,6 +314,13 @@ export class LedgerMatchPgRepo {
     async rejectMatch(
         userId: string, txnId: string, targetType: MatchTargetType, targetId: string, rejectedBy?: string,
     ): Promise<void> {
+        if (this.scope) {
+            await this.db.execute(sql`INSERT INTO match_rejections (user_id, txn_id, target_type, target_id, rejected_by)
+                SELECT ${userId}, ${txnId}, ${targetType}, ${targetId}, ${rejectedBy ?? userId}
+                WHERE ${this.rejectionRow(sql`${userId}`, sql`${txnId}`)} AND ${this.target(targetType, sql`${targetId}`)}
+                ON CONFLICT DO NOTHING`);
+            return;
+        }
         await this.db.insert(matchRejections)
             .values({ userId, txnId, targetType, targetId, rejectedBy: rejectedBy ?? userId })
             .onConflictDoNothing();
@@ -277,6 +341,7 @@ export class LedgerMatchPgRepo {
         matchSource: MatchSource,
     ): Promise<'linked' | 'conflict' | 'not_found'> {
         const table = source === 'statement' ? sql.raw('statement_transactions') : sql.raw('bank_transactions');
+        const other = target.type === 'INVOICE' ? sql.raw('matched_receipt_id') : sql.raw('matched_invoice_id');
         const column = target.type === 'INVOICE' ? sql.raw('matched_invoice_id') : sql.raw('matched_receipt_id');
         const result: any = await this.db.execute(sql`
             UPDATE ${table} SET
@@ -284,7 +349,9 @@ export class LedgerMatchPgRepo {
                 match_source = ${matchSource},
                 updated_at = now()
             WHERE txn_id = ${txnId} AND user_id = ${userId}
+              AND ${this.row(source)} AND ${this.target(target.type, sql`${target.id}`)}
               AND (${column} IS NULL OR ${column} = ${target.id})
+              AND ${this.scope ? sql`${other} IS NULL` : sql`true`}
             RETURNING txn_id
         `);
         const rows = result.rows ?? result;
@@ -316,6 +383,7 @@ export class LedgerMatchPgRepo {
                 match_source = CASE WHEN ${other} IS NULL THEN NULL ELSE match_source END,
                 updated_at = now()
             WHERE txn_id = ${txnId} AND user_id = ${userId}
+              AND ${this.row(source)} AND ${this.target(target.type, sql`${target.id}`)}
               AND (${column} IS NULL OR ${column} = ${target.id})
             RETURNING txn_id
         `);
@@ -365,6 +433,7 @@ export class LedgerMatchPgRepo {
             FROM statement_transactions st
             JOIN statements s ON s.statement_id = st.statement_id
             WHERE st.user_id = ${userId}
+              AND ${this.parent('statement', 'st')}
               AND ${unmatchedIncomeStatementPredicate('st', minCents)}
               AND st.txn_date <= ${opts.olderThan}::date
             UNION ALL
@@ -384,6 +453,7 @@ export class LedgerMatchPgRepo {
             FROM bank_transactions bt
             JOIN bank_accounts ba ON ba.account_id = bt.account_id
             WHERE bt.user_id = ${userId}
+              AND ${this.parent('feed', 'bt')}
               AND ${unmatchedIncomeFeedPredicate('bt', minCents)}
               AND bt.txn_date <= ${opts.olderThan}::date
         `;
@@ -429,6 +499,7 @@ export class LedgerMatchPgRepo {
 
     /** Live chip facts for already-matched invoices (any status — incl. PAID). */
     async listInvoiceChips(orgId: string, invoiceIds: string[]): Promise<InvoiceChipInfo[]> {
+        const profile = this.checkScope(orgId);
         if (invoiceIds.length === 0) return [];
         const out: InvoiceChipInfo[] = [];
         const CHUNK = 200;
@@ -441,10 +512,12 @@ export class LedgerMatchPgRepo {
                 totalAmount: invoices.totalAmount,
             })
                 .from(invoices)
-                .leftJoin(clients, eq(clients.clientId, invoices.clientId))
+                .leftJoin(clients, and(eq(clients.clientId, invoices.clientId), eq(clients.orgId, invoices.orgId),
+                    profile != null ? eq(clients.businessProfileId, profile) : undefined))
                 .where(and(
                     eq(invoices.orgId, orgId),
                     inArray(invoices.invoiceId, invoiceIds.slice(i, i + CHUNK)),
+                    profile != null ? eq(invoices.businessProfileId, profile) : undefined,
                 ));
             out.push(...rows.map((r) => ({
                 invoiceId: r.invoiceId,
@@ -459,6 +532,7 @@ export class LedgerMatchPgRepo {
 
     /** Live chip facts for already-matched receipts. */
     async listReceiptChips(orgId: string, receiptIds: string[]): Promise<ReceiptChipInfo[]> {
+        const profile = this.checkScope(orgId);
         if (receiptIds.length === 0) return [];
         const out: ReceiptChipInfo[] = [];
         const CHUNK = 200;
@@ -473,6 +547,7 @@ export class LedgerMatchPgRepo {
                 .where(and(
                     eq(receipts.orgId, orgId),
                     inArray(receipts.receiptId, receiptIds.slice(i, i + CHUNK)),
+                    profile != null ? eq(receipts.businessProfileId, profile) : undefined,
                 ));
             out.push(...rows.map((r) => ({
                 receiptId: r.receiptId,
@@ -490,6 +565,7 @@ export class LedgerMatchPgRepo {
      * payment recorded. Feeds the "no bank deposit found" advisory.
      */
     async depositCheckForInvoices(orgId: string, invoiceIds: string[]): Promise<InvoiceDepositCheck[]> {
+        this.checkScope(orgId);
         if (invoiceIds.length === 0) return [];
         const out: InvoiceDepositCheck[] = [];
         const CHUNK = 200;
@@ -499,14 +575,15 @@ export class LedgerMatchPgRepo {
             const result: any = await this.db.execute(sql`
                 SELECT
                     i.invoice_id,
-                    (EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_invoice_id = i.invoice_id)
-                     OR EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_invoice_id = i.invoice_id))
+                    (EXISTS (SELECT 1 FROM statement_transactions st WHERE st.matched_invoice_id = i.invoice_id AND ${this.parent('statement', 'st')})
+                     OR EXISTS (SELECT 1 FROM bank_transactions bt WHERE bt.matched_invoice_id = i.invoice_id AND ${this.parent('feed', 'bt')}))
                         AS bank_matched,
                     (SELECT MAX(p.paid_date) FROM invoice_payments p
-                     WHERE p.invoice_id = i.invoice_id AND p.method = 'BANK_TRANSFER')
+                     WHERE p.invoice_id = i.invoice_id AND p.org_id = i.org_id AND p.method = 'BANK_TRANSFER'
+                       AND ${this.scope ? sql`p.business_profile_id = ${this.scope.businessProfileId}` : sql`true`})
                         AS last_bank_transfer_payment_date
                 FROM invoices i
-                WHERE i.org_id = ${orgId} AND i.invoice_id IN (${idList})
+                WHERE i.org_id = ${orgId} AND i.invoice_id IN (${idList}) AND ${this.target('INVOICE', sql`i.invoice_id`)}
             `);
             const rows: any[] = result.rows ?? result;
             out.push(...rows.map((r) => ({

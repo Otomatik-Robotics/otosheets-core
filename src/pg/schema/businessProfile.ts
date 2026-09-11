@@ -1,5 +1,5 @@
 import {
-    pgTable, text, boolean, numeric, jsonb, timestamp, index,
+    pgTable, text, boolean, numeric, jsonb, timestamp, index, uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { orgs } from './identity';
 
@@ -108,4 +108,5 @@ export const businessProfiles = pgTable('business_profiles', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('business_profiles_org_idx').on(t.orgId),
+    uniqueIndex('business_profiles_org_profile_uq').on(t.orgId, t.businessProfileId),
 ]);

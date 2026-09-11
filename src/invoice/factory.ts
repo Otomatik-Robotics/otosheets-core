@@ -76,10 +76,10 @@ export class RoutingInvoiceRepo implements IInvoiceRepo {
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listOverdueInvoices' }, result, () => this.pg.listOverdueInvoices(orgId, beforeDate));
         return result;
     }
-    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
+    async getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).getInvoiceSummary(orgId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceSummary' }, result, () => this.pg.getInvoiceSummary(orgId));
+        const result = await this.pick(route).getInvoiceSummary(orgId, businessProfileId);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceSummary' }, result, () => this.pg.getInvoiceSummary(orgId, businessProfileId));
         return result;
     }
 

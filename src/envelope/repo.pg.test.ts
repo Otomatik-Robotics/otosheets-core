@@ -1266,3 +1266,162 @@ describe('moving a draft signing box', () => {
         expect(await repo.moveField(envelopeId, 'org_1', fieldId, { ...rect, x: 30 })).toBe(false);
     });
 });
+
+describe('reusable template profile scope', () => {
+    it('isolates template lists, shape, direct reads and preparation mutations', async () => {
+        const a = repo.withTemplateScope('org_1', 'template-a');
+        const b = repo.withTemplateScope('org_1', 'template-b');
+        const records: Array<{ templateId: string; fieldId: string; roleId: string; profile: string | null; org: string }> = [];
+        for (const [profile, org] of [['template-a', 'org_1'], ['template-b', 'org_1'], ['template-a', 'org_2'], [null, 'org_1']] as const) {
+            const templateId = id('scope-template');
+            const roleId = id('scope-role');
+            const fieldId = id('scope-field');
+            await repo.createTemplate({ templateId, orgId: org, businessProfileId: profile, createdBy: 'user_1', name: 'Scope fixture', kind: 'nda', bodyMarkdown: 'Terms' });
+            await repo.addTemplateRole({ templateId, templateRoleId: roleId, roleKey: 'signer', label: 'Signer', signingRole: 'signer' });
+            await repo.addTemplateField({ templateId, templateFieldId: fieldId, roleKey: 'signer', type: 'signature', page: 1, x: 10, y: 60, w: 40, h: 5 });
+            records.push({ templateId, roleId, fieldId, profile, org });
+        }
+        const own = records[0];
+        const page = await a.listTemplates('org_1', { search: 'Scope fixture', limit: 1 });
+        expect(page.items.map(t => t.templateId)).toEqual([own.templateId]);
+        expect(page.nextCursor).toBeNull();
+        expect((await b.listTemplates('org_1', { search: 'Scope fixture' })).items.map(t => t.templateId)).toEqual([records[1].templateId]);
+        const counts = await a.templateShapeFor(records.map(r => r.templateId));
+        expect(counts[own.templateId]).toEqual({ roles: 1, fields: 1 });
+        for (const foreign of records.slice(1)) {
+            expect(await a.getTemplate(foreign.templateId)).toBeNull();
+            expect(await a.listTemplateRoles(foreign.templateId)).toEqual([]);
+            expect(await a.listTemplateFields(foreign.templateId)).toEqual([]);
+            expect(counts[foreign.templateId]).toEqual({ roles: 0, fields: 0 });
+            expect(await a.moveTemplateField(foreign.templateId, foreign.fieldId, { x: 20, y: 50, w: 20, h: 5 })).toBe(false);
+            await a.removeTemplateField(foreign.fieldId);
+            await a.archiveTemplate(foreign.templateId);
+            await expect(a.updateTemplate(foreign.templateId, { name: 'Changed' })).rejects.toThrow('No such template');
+            await expect(a.addTemplateRole({ templateId: foreign.templateId, templateRoleId: id('bad-role'), roleKey: 'extra', label: 'Extra', signingRole: 'signer' })).rejects.toThrow('No such template');
+            await expect(a.prepareTemplate({ templateId: foreign.templateId, orgId: 'org_1', expectedUpdatedAt: '', s3Key: 'bad.pdf', fields: [] })).rejects.toThrow('No such template');
+            await expect(a.configureTemplate(foreign.templateId, 'org_1', [], 'wet')).rejects.toThrow('No such template');
+            await expect(a.createFromTemplate({ templateId: foreign.templateId, orgId: 'org_1', envelopeId: id('bad-env'), versionId: id('bad-ver'), createdBy: 'user_1', prepareOnly: true })).rejects.toThrow('No such template');
+            expect(await repo.getTemplate(foreign.templateId)).toMatchObject({ name: 'Scope fixture', archivedAt: null, timesUsed: 0 });
+            expect(await repo.listTemplateFields(foreign.templateId)).toHaveLength(1);
+        }
+        await a.updateTemplate(own.templateId, { name: 'Renamed', businessProfileId: 'template-b', orgId: 'org_2', s3Key: 'foreign.pdf' } as any);
+        expect(await a.getTemplate(own.templateId)).toMatchObject({ name: 'Renamed', businessProfileId: 'template-a', orgId: 'org_1', s3Key: null });
+        expect(() => a.withTemplateScope('org_1', 'template-b')).toThrow('scope mismatch');
+    });
+
+    it('stamps new template ownership and retains scope through template-use transactions and replay', async () => {
+        const a = repo.withTemplateScope('org_1', 'template-a');
+        const templateId = id('scope-new');
+        await a.createTemplate({ templateId, orgId: 'org_1', createdBy: 'user_1', name: 'Reusable', kind: 'nda', bodyMarkdown: 'Terms' });
+        expect(await a.getTemplate(templateId)).toMatchObject({ businessProfileId: 'template-a' });
+        await expect(repo.withTemplateScope('org_1', 'template-b').createTemplate({ templateId, orgId: 'org_1', createdBy: 'user_1', name: 'Collision', kind: 'nda' })).rejects.toThrow('No such template');
+        await expect(a.createTemplate({ templateId: id('bad'), orgId: 'org_1', businessProfileId: 'template-b', createdBy: 'user_1', name: 'Bad', kind: 'nda' })).rejects.toThrow('scope mismatch');
+        await a.configureTemplate(templateId, 'org_1', [{ templateId, templateRoleId: id('scope-role'), roleKey: 'signer', label: 'Signer', signingRole: 'signer' }], 'digital');
+        const template = await a.getTemplate(templateId);
+        await a.prepareTemplate({ templateId, orgId: 'org_1', expectedUpdatedAt: template.updatedAt, s3Key: 'documents/org_1/profiles/template-a/template.pdf', fields: [
+            { templateId, templateFieldId: id('scope-field'), roleKey: 'signer', type: 'signature', page: 1, x: 10, y: 60, w: 30, h: 5 },
+        ] });
+        const input = { templateId, orgId: 'org_1', envelopeId: id('scope-use'), versionId: id('scope-ver'), createdBy: 'user_1', prepareOnly: true };
+        expect(await a.createFromTemplate(input)).toMatchObject({ businessProfileId: 'template-a' });
+        expect(await a.createFromTemplate(input)).toMatchObject({ businessProfileId: 'template-a' });
+        expect((await a.getTemplate(templateId)).timesUsed).toBe(1);
+        const foreign = await repo.create({ envelopeId: id('foreign-use'), versionId: id('foreign-ver'), orgId: 'org_1', businessProfileId: 'template-b', createdBy: 'user_1', title: 'Private', kind: 'nda' });
+        await expect(a.createFromTemplate({ ...input, envelopeId: foreign.envelopeId })).rejects.toThrow('No such document');
+        await expect(a.createFromTemplate({ ...input, orgId: 'org_2' })).rejects.toThrow('scope mismatch');
+    });
+});
+
+describe('document vault profile queries', () => {
+    it('filters before pagination/search and counts, excluding foreign and unassigned documents', async () => {
+        const created: string[] = [];
+        for (const [profile, org] of [['vault-a', 'org_1'], ['vault-b', 'org_1'], ['vault-a', 'org_2'], [null, 'org_1']] as const) {
+            const envelopeId = id('vault-scope'); created.push(envelopeId);
+            await repo.create({ envelopeId, orgId: org, businessProfileId: profile, createdBy: 'user_1', title: 'Profile vault fixture', kind: 'nda', versionId: id('vault-version') });
+        }
+        const page = await repo.listEnvelopes({ orgId: 'org_1', businessProfileId: 'vault-a', search: 'Profile vault fixture', limit: 1 });
+        expect(page.items.map(e => e.envelopeId)).toEqual([created[0]]);
+        expect(page.nextCursor).toBeNull();
+        expect(await repo.countByStatus('org_1', 'vault-a')).toEqual({ draft: 1 });
+        expect(await repo.countByStatus('org_1', '')).toEqual({});
+    });
+});
+
+describe('document creation and field ownership races', () => {
+    it('rejects creation collisions before inserting children or returning another profile document', async () => {
+        const envelopeId = id('create-race');
+        const make = (profile: string) => ({ envelopeId, versionId: id('race-ver'), orgId: 'org_1', businessProfileId: profile,
+            createdBy: 'user_1', title: `Private ${profile}`, kind: 'nda',
+            recipients: [{ recipientId: id('race-recipient'), role: 'signer' as const, email: `${profile}@example.com` }] });
+        const inputs = [make('race-a'), make('race-b')];
+        const results = await Promise.allSettled(inputs.map(input => repo.create(input)));
+        expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter(r => r.status === 'rejected')).toHaveLength(1);
+        const winnerIndex = results.findIndex(r => r.status === 'fulfilled');
+        const winner = inputs[winnerIndex];
+        const loser = inputs[1 - winnerIndex];
+        expect((results[1 - winnerIndex] as PromiseRejectedResult).reason.message).toBe('No such document');
+        expect((results[winnerIndex] as PromiseFulfilledResult<any>).value).toMatchObject({ title: winner.title, businessProfileId: winner.businessProfileId });
+        expect((await repo.listVersions(envelopeId)).map(v => v.versionId)).toEqual([winner.versionId]);
+        expect((await repo.listRecipients(envelopeId)).map(r => r.recipientId)).toEqual([winner.recipients[0].recipientId]);
+        expect(await repo.getRecipient(loser.recipients[0].recipientId)).toBeNull();
+        expect((await repo.listEvents(envelopeId)).items).toHaveLength(1);
+        await expect(repo.create({ ...loser, orgId: 'org_2' })).rejects.toThrow('No such document');
+        await expect(repo.create({ ...loser, businessProfileId: null })).rejects.toThrow('No such document');
+        // A same-scope retry returns the stored snapshot, never adds new children.
+        const replay = { ...winner, versionId: id('replay-ver'), title: 'Replacement', recipients: [{ recipientId: id('replay-recipient'), role: 'signer' as const, email: 'new@example.com' }] };
+        expect(await repo.create(replay)).toMatchObject({ title: winner.title });
+        expect((await repo.listVersions(envelopeId))).toHaveLength(1);
+        expect(await repo.getRecipient(replay.recipients[0].recipientId)).toBeNull();
+    });
+
+    it('requires a field recipient on its version document, while allowing multiple fields for that signer', async () => {
+        const source = await repo.create({ envelopeId: id('field-owner'), versionId: id('field-version'), orgId: 'org_1', businessProfileId: 'field-a', createdBy: 'user_1', title: 'Owner', kind: 'nda' });
+        const version = (await repo.listVersions(source.envelopeId))[0];
+        const ownRecipient = await addRecipient(source.envelopeId, 'signer');
+        const foreignIds: string[] = ['missing-recipient'];
+        for (const [orgId, businessProfileId] of [['org_1', 'field-b'], ['org_1', 'field-a'], ['org_2', 'field-a'], ['org_1', null]]) {
+            const other = await repo.create({ envelopeId: id('foreign-field-owner'), versionId: id('foreign-field-version'), orgId: orgId!, businessProfileId, createdBy: 'user_1', title: 'Other', kind: 'nda' });
+            foreignIds.push(await addRecipient(other.envelopeId, 'signer'));
+        }
+        for (const recipientId of foreignIds) {
+            await expect(repo.addField({ fieldId: id('bad-field'), versionId: version.versionId, recipientId,
+                type: 'signature', page: 1, x: 10, y: 60, w: 30, h: 5 })).rejects.toThrow('No such recipient on this document');
+        }
+        expect(await repo.listFields(version.versionId)).toEqual([]);
+        for (const page of [1, 2]) await repo.addField({ fieldId: id('good-field'), versionId: version.versionId, recipientId: ownRecipient,
+            type: 'signature', page, x: 10, y: 60, w: 30, h: 5 });
+        expect(await repo.listFields(version.versionId)).toHaveLength(2);
+    });
+});
+
+describe('immutable exact envelope file authority', () => {
+    it('reads exact owned versions and templates, never another parent/profile or unassigned source', async () => {
+        const { EnvelopeFilePgRepo } = await import('./fileRepo.pg');
+        await pglite.query("INSERT INTO business_profiles (business_profile_id, org_id, business_name) VALUES ('file-a','org_1','File A'), ('file-b','org_1','File B'), ('file-other','org_2','File Other')");
+        const a = new EnvelopeFilePgRepo('org_1', 'file-a', db);
+        const b = new EnvelopeFilePgRepo('org_1', 'file-b', db);
+        const source = await repo.create({ envelopeId: id('file-env'), versionId: id('file-ver'), orgId: 'org_1', businessProfileId: 'file-a', createdBy: 'user', title: 'File', kind: 'nda', s3Key: 'exact-key', sha256: 'exact-hash' });
+        const [version] = await repo.listVersions(source.envelopeId);
+        const other = await makeEnvelope('nda');
+        const templateId = id('file-template');
+        await repo.withTemplateScope('org_1', 'file-a').createTemplate({ templateId, orgId: 'org_1', createdBy: 'user', name: 'File template', kind: 'nda', s3Key: 'exact-template-key' });
+        expect(await a.getVersion(source.envelopeId, version.versionId)).toMatchObject({ s3Key: 'exact-key', sha256: 'exact-hash', envelopeId: source.envelopeId });
+        expect(await b.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        expect(await a.getVersion(other.envelopeId, version.versionId)).toBeNull();
+        expect(await a.getVersion(other.envelopeId, other.versionId)).toBeNull();
+        expect(await a.getVersion(source.envelopeId, 'missing')).toBeNull();
+        expect(await a.getTemplate(templateId)).toMatchObject({ s3Key: 'exact-template-key' });
+        expect(await b.getTemplate(templateId)).toBeNull();
+        expect(await a.getTemplate('missing')).toBeNull();
+        const foreignOrg = new EnvelopeFilePgRepo('org_2', 'file-a', db);
+        expect(await foreignOrg.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        expect(await foreignOrg.getTemplate(templateId)).toBeNull();
+        await pglite.query('UPDATE envelopes SET business_profile_id = $1 WHERE envelope_id = $2', ['file-other', source.envelopeId]);
+        expect(await new EnvelopeFilePgRepo('org_1', 'file-other', db).getVersion(source.envelopeId, version.versionId)).toBeNull();
+        await pglite.query('UPDATE envelopes SET business_profile_id = NULL WHERE envelope_id = $1', [source.envelopeId]);
+        expect(await a.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        await pglite.query('DELETE FROM envelope_versions WHERE version_id = $1', [version.versionId]);
+        expect(await a.getVersion(source.envelopeId, version.versionId)).toBeNull();
+        expect(() => new EnvelopeFilePgRepo('org_1', '', db)).toThrow('scope is required');
+    });
+});

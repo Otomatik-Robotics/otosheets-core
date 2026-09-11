@@ -126,9 +126,9 @@ export class ClientPgRepo implements IClientRepo {
         return { items, lastEvaluatedKey };
     }
 
-    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
+    async findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null> {
         const rows = await this.db.select().from(clients)
-            .where(and(eq(clients.orgId, orgId), eq(clients.email, email.toLowerCase()))).limit(1);
+            .where(and(eq(clients.orgId, orgId), eq(clients.email, email.toLowerCase()), businessProfileId ? eq(clients.businessProfileId, businessProfileId) : undefined)).limit(1);
         if (!rows[0]) return null;
         const contacts = (await this.contactsByClient([rows[0].clientId])).get(rows[0].clientId) ?? [];
         return this.toClient(rows[0], contacts);
@@ -141,7 +141,7 @@ export class ClientPgRepo implements IClientRepo {
      * Archived clients are excluded. Returns the closest matches, best first.
      */
     async findSimilarClients(
-        orgId: string, name: string, opts?: { limit?: number; threshold?: number },
+        orgId: string, name: string, opts?: { limit?: number; threshold?: number; businessProfileId?: string },
     ): Promise<Array<{ clientId: string; name: string; similarity: number }>> {
         const q = (name ?? '').trim();
         if (!orgId || !q) return [];
@@ -155,6 +155,7 @@ export class ClientPgRepo implements IClientRepo {
             .from(clients)
             .where(and(
                 eq(clients.orgId, orgId),
+                opts?.businessProfileId !== undefined ? eq(clients.businessProfileId, opts.businessProfileId) : undefined,
                 sql`${clients.archived} IS NOT TRUE`,
                 sql`similarity(${clients.name}, ${q}) >= ${threshold}`,
             ))
@@ -191,10 +192,10 @@ export class ClientPgRepo implements IClientRepo {
         if (contacts !== undefined) await this.replaceContacts(clientId, contacts);
     }
 
-    async batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]> {
+    async batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]> {
         if (clientIds.length === 0) return [];
         const rows = await this.db.select().from(clients)
-            .where(and(eq(clients.orgId, orgId), inArray(clients.clientId, clientIds)));
+            .where(and(eq(clients.orgId, orgId), inArray(clients.clientId, clientIds), businessProfileId !== undefined ? eq(clients.businessProfileId, businessProfileId) : undefined));
         const contacts = await this.contactsByClient(rows.map((r: any) => r.clientId));
         return rows.map((r: any) => this.toClient(r, contacts.get(r.clientId) ?? []));
     }

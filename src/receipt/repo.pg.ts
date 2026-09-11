@@ -81,22 +81,41 @@ export interface ReceiptSummary {
 }
 
 export class ReceiptPgRepo implements IReceiptRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    /** Bind every query, aggregate and mutation to an already validated tenant. */
+    withScope(orgId: string, businessProfileId: string): ReceiptPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Receipt scope is required');
+        if (this.scope && (this.scope.orgId !== orgId || this.scope.businessProfileId !== businessProfileId)) throw new Error('Receipt scope cannot change');
+        return new ReceiptPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+
+    private orgScope(orgId: string) {
+        if (this.scope && this.scope.orgId !== orgId) throw new Error('Receipt organisation mismatch');
+        return and(eq(receipts.orgId, orgId), this.scope ? eq(receipts.businessProfileId, this.scope.businessProfileId) : undefined)!;
+    }
+
+    private scopedData(orgId: string, data: Record<string, any>) {
+        this.orgScope(orgId);
+        if (data.orgId !== undefined && data.orgId !== orgId) throw new Error('Receipt organisation mismatch');
+        if (this.scope && data.businessProfileId !== undefined && data.businessProfileId !== this.scope.businessProfileId) throw new Error('Receipt profile mismatch');
+        return this.scope ? { ...data, businessProfileId: this.scope.businessProfileId } : data;
+    }
     private get db(): PgDb { return this.injected ?? getPg(); }
 
-    async getReceipt(o: string, _u: string, id: string) { const r = await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id))).limit(1); return r[0] ? toDto(r[0]) : null; }
-    async findReceiptByIdInOrg(o: string, id: string) { const r = await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id))).limit(1); return r[0] ? { receipt: toDto(r[0]), ownerId: (r[0] as any).ownerId } : null; }
-    async findReceiptByDescriptionPrefix(o: string, prefix: string) { const r = await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), sql`${receipts.description} LIKE ${prefix + '%'}`)).orderBy(desc(receipts.createdAt)).limit(1); return r[0] ? toDto(r[0]) : null; }
-    async findReceiptByContentHash(o: string, contentHash: string) { const r = await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), eq(receipts.contentHash, contentHash), notInArray(receipts.status, ['ARCHIVED', 'DUPLICATE']))).orderBy(desc(receipts.createdAt)).limit(1); return r[0] ? toDto(r[0]) : null; }
-    async findReceiptsByDuplicateOf(o: string, receiptId: string) { return (await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), eq(receipts.duplicateOf, receiptId)))).map(toDto); }
-    async findReceiptsByVendorAndAmount(o: string, vendorName: string, amount: number) { return (await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), eq(receipts.vendorName, vendorName), eq(receipts.totalAmount, String(amount))))).map(toDto); }
-    async listAllOrgReceipts(o: string) { return (await this.db.select().from(receipts).where(eq(receipts.orgId, o))).map(toDto); }
-    async listUserReceipts(o: string, userId: string) { return (await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), eq(receipts.ownerId, userId)))).map(toDto); }
-    async listReceiptsByDate(o: string, from: string, to: string, _projection?: string) { return (await this.db.select().from(receipts).where(and(eq(receipts.orgId, o), gte(receipts.date, from), lte(receipts.date, to)))).map(toDto); }
-    async createReceipt(o: string, u: string, id: string, data: Record<string, any>) { await this.db.insert(receipts).values({ ...dtoToRow(data, NUM, STRIP), orgId: o, receiptId: id, ownerId: u, createdBy: u, createdAt: new Date() } as any); }
-    async updateReceipt(o: string, _u: string, id: string, upd: Record<string, any>) { await this.db.update(receipts).set(dtoToRow(upd, NUM, STRIP) as any).where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id))); }
-    async deleteReceipt(o: string, _u: string, id: string) { await this.db.delete(receipts).where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id))); }
-    async upsertReceipt(receipt: Receipt) { const row = { ...dtoToRow(receipt as Record<string, any>, NUM, STRIP), ownerId: ownerFromSk(receipt as any) }; await this.db.insert(receipts).values(row as any).onConflictDoUpdate({ target: receipts.receiptId, set: row as any }); }
+    async getReceipt(o: string, _u: string, id: string) { const r = await this.db.select().from(receipts).where(and(this.orgScope(o), eq(receipts.receiptId, id))).limit(1); return r[0] ? toDto(r[0]) : null; }
+    async findReceiptByIdInOrg(o: string, id: string) { const r = await this.db.select().from(receipts).where(and(this.orgScope(o), eq(receipts.receiptId, id))).limit(1); return r[0] ? { receipt: toDto(r[0]), ownerId: (r[0] as any).ownerId } : null; }
+    async findReceiptByDescriptionPrefix(o: string, prefix: string) { const r = await this.db.select().from(receipts).where(and(this.orgScope(o), sql`${receipts.description} LIKE ${prefix + '%'}`)).orderBy(desc(receipts.createdAt)).limit(1); return r[0] ? toDto(r[0]) : null; }
+    async findReceiptByContentHash(o: string, contentHash: string) { const r = await this.db.select().from(receipts).where(and(this.orgScope(o), eq(receipts.contentHash, contentHash), notInArray(receipts.status, ['ARCHIVED', 'DUPLICATE']))).orderBy(desc(receipts.createdAt)).limit(1); return r[0] ? toDto(r[0]) : null; }
+    async findReceiptsByDuplicateOf(o: string, receiptId: string) { return (await this.db.select().from(receipts).where(and(this.orgScope(o), eq(receipts.duplicateOf, receiptId)))).map(toDto); }
+    async findReceiptsByVendorAndAmount(o: string, vendorName: string, amount: number) { return (await this.db.select().from(receipts).where(and(this.orgScope(o), eq(receipts.vendorName, vendorName), eq(receipts.totalAmount, String(amount))))).map(toDto); }
+    async listAllOrgReceipts(o: string) { return (await this.db.select().from(receipts).where(this.orgScope(o))).map(toDto); }
+    async listUserReceipts(o: string, userId: string) { return (await this.db.select().from(receipts).where(and(this.orgScope(o), eq(receipts.ownerId, userId)))).map(toDto); }
+    async listReceiptsByDate(o: string, from: string, to: string, _projection?: string) { return (await this.db.select().from(receipts).where(and(this.orgScope(o), gte(receipts.date, from), lte(receipts.date, to)))).map(toDto); }
+    async createReceipt(o: string, u: string, id: string, data: Record<string, any>) { await this.db.insert(receipts).values({ ...dtoToRow(this.scopedData(o, data), NUM, STRIP), orgId: o, receiptId: id, ownerId: u, createdBy: u, createdAt: new Date() } as any); }
+    async updateReceipt(o: string, _u: string, id: string, upd: Record<string, any>) { await this.db.update(receipts).set(dtoToRow(this.scopedData(o, upd), NUM, [...STRIP, 'orgId', 'receiptId', 'ownerId', 'createdBy']) as any).where(and(this.orgScope(o), eq(receipts.receiptId, id))); }
+    async deleteReceipt(o: string, _u: string, id: string) { await this.db.delete(receipts).where(and(this.orgScope(o), eq(receipts.receiptId, id))); }
+    async upsertReceipt(receipt: Receipt) { if (this.scope) throw new Error('Scoped receipt repositories cannot import records'); const row = { ...dtoToRow(receipt as Record<string, any>, NUM, STRIP), ownerId: ownerFromSk(receipt as any) }; await this.db.insert(receipts).values(row as any).onConflictDoUpdate({ target: receipts.receiptId, set: row as any }); }
 
     // ── Review + asset signals (0046). Each is a single conditional UPDATE … RETURNING:
     //    true only when this call changed the row, so every caller is retry-safe. ──
@@ -104,7 +123,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
     async markOpened(o: string, id: string, userId: string): Promise<boolean> {
         const rows = await this.db.update(receipts)
             .set({ openedAt: new Date(), openedBy: userId })
-            .where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id), isNull(receipts.openedAt)))
+            .where(and(this.orgScope(o), eq(receipts.receiptId, id), isNull(receipts.openedAt)))
             .returning({ receiptId: receipts.receiptId });
         return rows.length > 0;
     }
@@ -121,7 +140,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
                 reviewedAt: sql`coalesce(${receipts.reviewedAt}, ${nowIso}::timestamptz)`,
                 reviewedBy: sql`coalesce(${receipts.reviewedBy}, ${opts.userId})`,
             })
-            .where(and(eq(receipts.orgId, o), eq(receipts.receiptId, id)))
+            .where(and(this.orgScope(o), eq(receipts.receiptId, id)))
             .returning({ receiptId: receipts.receiptId });
         return rows.length > 0;
     }
@@ -130,7 +149,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
         const rows = await this.db.update(receipts)
             .set({ assetId })
             .where(and(
-                eq(receipts.orgId, o), eq(receipts.receiptId, id),
+                this.orgScope(o), eq(receipts.receiptId, id),
                 or(isNull(receipts.assetId), eq(receipts.assetId, assetId)),
             ))
             .returning({ receiptId: receipts.receiptId });
@@ -141,7 +160,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
         const rows = await this.db.update(receipts)
             .set({ assetDeclinedAt: new Date() })
             .where(and(
-                eq(receipts.orgId, o), eq(receipts.receiptId, id),
+                this.orgScope(o), eq(receipts.receiptId, id),
                 isNull(receipts.assetDeclinedAt), isNull(receipts.assetId),
             ))
             .returning({ receiptId: receipts.receiptId });
@@ -159,7 +178,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
     private assetCandidateConds(orgId: string, categories: string[]): any[] {
         const cats = [...new Set(categories.map((c) => c.toUpperCase()))];
         return [
-            eq(receipts.orgId, orgId),
+            this.orgScope(orgId),
             sql`upper(${receipts.category}) IN (${sql.join(cats.map((c) => sql`${c}`), sql`, `)})`,
             isNull(receipts.assetId),
             isNull(receipts.assetDeclinedAt),
@@ -214,7 +233,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
      *  sparse DateIndex on Dynamo, so we keep that parity. */
     private listConds(f: ReceiptListFilters, requireDate: boolean): any[] {
         const conds: any[] = [
-            eq(receipts.orgId, f.orgId),
+            this.orgScope(f.orgId),
             notInArray(receipts.status, ['DUPLICATE', 'ARCHIVED']),
         ];
         if (requireDate) conds.push(sql`${receipts.date} IS NOT NULL`);

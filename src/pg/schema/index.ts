@@ -16,3 +16,13 @@ export * from './adCampaigns';
 export * from './forms';
 export * from './envelopes';
 export * from './bookkeeping';
+export * from './workflows';
+export * from './inboundEmail';
+export * from './notifications';
+export * from './smsResponse';
+
+export * from './signatureRequests';
+
+export * from './profileChecklist';
+
+export * from './documentRequests';

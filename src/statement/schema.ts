@@ -141,6 +141,7 @@ export const StatementRecordSchema = z.object({
 export type StatementRecord = z.infer<typeof StatementRecordSchema>;
 
 export const StatementCreateSchema = z.object({
+    businessProfileId: z.string().nullish(),
     statementId: z.string(),
     userId: z.string(),
     organizationId: z.string().nullish(),

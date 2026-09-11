@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
     pgTable, text, integer, bigint, boolean, numeric, jsonb, timestamp, date,
     index, uniqueIndex, unique,
@@ -68,7 +69,10 @@ export const statements = pgTable('statements', {
     index('statements_org').on(t.organizationId, t.fy),
     index('statements_profile').on(t.businessProfileId, t.fy),
     index('statements_account').on(t.accountId),
+    // Expansion state: contract removal is a separate reviewed operation.
     uniqueIndex('statements_dedupe').on(t.userId, t.contentHash),
+    uniqueIndex('statements_dedupe_profile').on(t.userId, t.organizationId, t.businessProfileId, t.contentHash).where(sql`${t.organizationId} IS NOT NULL AND ${t.businessProfileId} IS NOT NULL`),
+    uniqueIndex('statements_dedupe_legacy').on(t.userId, t.contentHash).where(sql`${t.organizationId} IS NULL OR ${t.businessProfileId} IS NULL`),
 ]);
 
 export const statementTransactions = pgTable('statement_transactions', {

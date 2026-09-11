@@ -129,7 +129,7 @@ export class InvoicePgRepo implements IInvoiceRepo {
      * silently stop matching the list.
      */
     private invoiceFilterConds(params: InvoiceTotalsFilter): any[] {
-        const { orgId, businessProfileId, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
+        const { orgId, businessProfileId, overdueBefore, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params as any;
         const conds: any[] = [eq(invoices.orgId, orgId)];
         if (businessProfileId) conds.push(eq(invoices.businessProfileId, businessProfileId));
 
@@ -143,6 +143,7 @@ export class InvoicePgRepo implements IInvoiceRepo {
         if (isQuote === true) conds.push(eq(invoices.isQuote, true));
         else if (isQuote === false) conds.push(or(sql`${invoices.isQuote} IS NULL`, eq(invoices.isQuote, false)));
 
+        if (overdueBefore) conds.push(lt(invoices.dueDate, overdueBefore), inArray(invoices.status, ['SENT', 'PARTIAL', 'OVERDUE']));
         if (status) conds.push(eq(invoices.status, status));
         if (clientId) conds.push(eq(invoices.clientId, clientId));
         if (search) {
@@ -240,7 +241,7 @@ export class InvoicePgRepo implements IInvoiceRepo {
         return composeInvoiceTotals(buckets);
     }
 
-    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
+    async getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary> {
         // One GROUP BY over (status, past-due) — the org_status_due index backs it.
         // Past-due is derived here, not read from a maintained counter.
         const today = new Date().toISOString().slice(0, 10);
@@ -260,6 +261,7 @@ export class InvoicePgRepo implements IInvoiceRepo {
             .from(invoices)
             .where(and(
                 eq(invoices.orgId, orgId),
+                ...(businessProfileId ? [eq(invoices.businessProfileId, businessProfileId)] : []),
                 or(sql`${invoices.isPaymentLink} IS NULL`, eq(invoices.isPaymentLink, false)),
                 or(sql`${invoices.isQuote} IS NULL`, eq(invoices.isQuote, false)),
             ))

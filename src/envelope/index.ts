@@ -4,3 +4,5 @@ export * from './chain';
 export * from './repo.pg';
 export * from './factory';
 export * from './sweep.pg';
+
+export * from "./fileRepo.pg";

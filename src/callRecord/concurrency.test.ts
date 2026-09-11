@@ -119,6 +119,40 @@ describe('CallRecordRepo — per-number serialization', () => {
         // Second claim fails — status is no longer QUEUED (mutual exclusion latch).
         expect(await repo.tryClaimForDial('org1', 'lead-01A', '01A')).toBe(false);
     });
+
+    it('blocking a queued chase removes admission and retry markers and admits the next call', async () => {
+        await queue('01A', 'num1');
+        await queue('01B', 'num1');
+        await repo.update('org1', 'lead-01A', '01A', { retryShard: 'RETRY', nextAttemptAt: '2026-09-08T00:00:00Z' });
+        expect(await repo.tryBlockQueued('org1', 'lead-01A', '01A', 'reply_received')).toBe(true);
+        const row = await repo.get('org1', 'lead-01A', '01A');
+        expect(row).toMatchObject({ status: 'BLOCKED', blockReason: 'reply_received' });
+        expect(row?.activeNumberShard).toBeUndefined();
+        expect(row?.retryShard).toBeUndefined();
+        expect(row?.nextAttemptAt).toBeUndefined();
+        expect((await repo.headQueuedByNumber('org1', 'num1'))?.callId).toBe('01B');
+        expect(await repo.tryClaimForDial('org1', 'lead-01B', '01B')).toBe(true);
+        expect(await repo.tryBlockQueued('org1', 'lead-01A', '01A', 'duplicate')).toBe(false);
+    });
+
+    it.each(['DIALING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'])('never blocks a call already %s', async (status) => {
+        await queue('01A', 'num1', status);
+        const before = await repo.get('org1', 'lead-01A', '01A');
+        expect(await repo.tryBlockQueued('org1', 'lead-01A', '01A', 'duplicate')).toBe(false);
+        expect(await repo.get('org1', 'lead-01A', '01A')).toEqual(before);
+    });
+
+    it('a concurrent dial and block have one winner, without clearing a winning dial', async () => {
+        await queue('01A', 'num1');
+        const [dialed, blocked] = await Promise.all([
+            repo.tryClaimForDial('org1', 'lead-01A', '01A'),
+            repo.tryBlockQueued('org1', 'lead-01A', '01A', 'duplicate'),
+        ]);
+        expect([dialed, blocked]).toEqual([true, false]);
+        expect(await repo.get('org1', 'lead-01A', '01A')).toMatchObject({ status: 'DIALING', activeNumberShard: shard('org1', 'num1') });
+        expect(await repo.tryBlockQueued('other-org', 'lead-01A', '01A', 'duplicate')).toBe(false);
+        expect(await repo.get('other-org', 'lead-01A', '01A')).toBeNull();
+    });
 });
 
 describe('CallRecordRepo — inbound-active markers', () => {

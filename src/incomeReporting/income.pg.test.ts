@@ -282,3 +282,29 @@ describe('owedBy', () => {
         expect(other).toEqual({ clients: 0, amount: 0 });
     });
 });
+
+describe('business profile isolation', () => {
+    it('scopes Ledger totals, rows, months and client enrichment, excluding unassigned records', async () => {
+        await (db as any).execute((await import('drizzle-orm')).sql`INSERT INTO orgs (org_id, name) VALUES ('profile_report', 'Profile Report')`);
+        for (const [id, profile] of [['scope_a', 'a'], ['scope_b', 'b']] as const) {
+            await db.insert(clients).values({ clientId: id, orgId: 'profile_report', businessProfileId: profile, createdBy: USER, name: id });
+        }
+        for (const [id, profile, clientId, amount] of [
+            ['profile_a', 'a', 'scope_a', '10'], ['profile_b', 'b', 'scope_b', '999'],
+            ['profile_legacy', null, 'scope_b', '999'], ['profile_bad_relation', 'a', 'scope_b', '20'],
+        ] as const) {
+            await db.insert(invoices).values({ invoiceId: id, invoiceNumber: id, orgId: 'profile_report', businessProfileId: profile, ownerId: USER, createdBy: USER, clientId, status: 'SENT', date: '2026-08-01', totalAmount: amount, subtotal: amount, gstAmount: '0', paidAmount: '0' });
+        }
+        const scope = { ...SCOPE, orgId: 'profile_report', businessProfileId: 'a' };
+        const page = await repo.listIssued({ ...scope, limit: 20 });
+        expect(page.items.map(i => i.invoiceId).sort()).toEqual(['profile_a', 'profile_bad_relation']);
+        expect(page.items.find(i => i.invoiceId === 'profile_bad_relation')?.clientName).toBeNull();
+        expect(page.items.find(i => i.invoiceId === 'profile_a')?.clientName).toBe('scope_a');
+        expect((await repo.totals(scope)).invoiced).toBe(30);
+        expect((await repo.byMonth(scope)).reduce((n, m) => n + m.invoiced, 0)).toBe(30);
+        expect((await repo.owedBy(scope)).top.find(c => c.clientId === 'scope_b')?.clientName).toBeNull();
+        expect((await bas.inputs(scope)).invoices.count).toBe(2);
+        expect((await repo.totals({ ...scope, businessProfileId: 'b' })).invoiced).toBe(999);
+        expect((await repo.totals({ ...scope, businessProfileId: 'missing' })).invoiceCount).toBe(0);
+    });
+});

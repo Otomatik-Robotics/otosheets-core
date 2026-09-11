@@ -50,6 +50,7 @@ export const OnboardingRunStoredSchema = WorkflowRunStoredSchema;
 export type OnboardingRun = WorkflowRun;
 
 export const WorkflowApprovalStoredSchema = z.object({
+    businessProfileId: z.string().optional(),
     orgId: z.string(),
     sk: z.string(),
     approvalId: z.string(),
@@ -57,7 +58,7 @@ export const WorkflowApprovalStoredSchema = z.object({
     workflowId: z.string(),
     workflowName: z.string(),
     nodeId: z.string(),
-    status: z.enum(['pending', 'approved', 'rejected']).default('pending'),
+    status: z.enum(['pending', 'approved', 'rejected', 'expired']).default('pending'),
     requestedAt: z.string(),
     requestedBy: z.string(),
     resolvedAt: z.string().optional(),
@@ -67,5 +68,10 @@ export const WorkflowApprovalStoredSchema = z.object({
     message: z.string().optional(),
     comment: z.string().optional(),
     expiryDays: z.number().optional(),
+    expiresAt: z.string().optional(),
+    decidedAt: z.string().optional(),
+    decidedBy: z.string().optional(),
+    decision: z.enum(['approved', 'rejected']).optional(),
+    ttl: z.number().optional(),
 });
 export type WorkflowApproval = z.infer<typeof WorkflowApprovalStoredSchema>;

@@ -146,6 +146,7 @@ export const invoicePayments = pgTable('invoice_payments', {
     method: text('method').notNull(),
     date: text('paid_date'),                   // DTO `date` — exact string
     note: text('note'),
+    matchEvent: jsonb('match_event'),           // immutable paid-transition intent for scoped bank matches
     stripePaymentIntentId: text('stripe_payment_intent_id'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [

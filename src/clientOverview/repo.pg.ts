@@ -28,9 +28,9 @@ export class ClientOverviewPgRepo {
     constructor(private injected?: PgDb) {}
     private get db(): PgDb { return this.injected ?? getPg(); }
 
-    async getClientOverview(orgId: string, clientId: string): Promise<ClientOverview | null> {
+    async getClientOverview(orgId: string, clientId: string, businessProfileId?: string): Promise<ClientOverview | null> {
         const client = await new ClientPgRepo(this.injected).getClient(orgId, clientId);
-        if (!client) return null;
+        if (!client || (businessProfileId && client.businessProfileId !== businessProfileId)) return null;
 
         const today = new Date().toISOString().slice(0, 10);
 
@@ -38,6 +38,7 @@ export class ClientOverviewPgRepo {
         const realInvoice = and(
             eq(invoices.orgId, orgId),
             eq(invoices.clientId, clientId),
+            businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
             sql`(${invoices.isPaymentLink} IS NULL OR ${invoices.isPaymentLink} = false)`,
             sql`(${invoices.isQuote} IS NULL OR ${invoices.isQuote} = false)`,
         );
@@ -56,10 +57,10 @@ export class ClientOverviewPgRepo {
             .from(invoices)
             .where(realInvoice);
 
-        const avgPayDays = await this.avgPayDays(orgId, clientId);
+        const avgPayDays = await this.avgPayDays(orgId, clientId, businessProfileId);
 
-        const recentInvoices = await this.recentInvoices(orgId, clientId);
-        const timeline = await this.timeline(orgId, clientId, client.createdAt, client.name);
+        const recentInvoices = await this.recentInvoices(orgId, clientId, businessProfileId);
+        const timeline = await this.timeline(orgId, clientId, client.createdAt, client.name, businessProfileId);
 
         return {
             client,
@@ -93,7 +94,7 @@ export class ClientOverviewPgRepo {
      * client ids, never a query per row. Clients with no real invoices are simply
      * absent from the result (the caller treats a miss as all-zero / "quiet").
      */
-    async batchClientRollups(orgId: string, clientIds: string[]): Promise<ClientRollup[]> {
+    async batchClientRollups(orgId: string, clientIds: string[], businessProfileId?: string): Promise<ClientRollup[]> {
         const ids = [...new Set(clientIds.filter(Boolean))];
         if (ids.length === 0) return [];
 
@@ -111,9 +112,13 @@ export class ClientOverviewPgRepo {
                 overdue: sql<string>`coalesce(sum(${owed}) filter (where ${openStatus} and ${invoices.dueDate} is not null and ${invoices.dueDate} < ${today}), 0)`,
             })
             .from(invoices)
+            .innerJoin(clients, eq(invoices.clientId, clients.clientId))
             .where(and(
                 eq(invoices.orgId, orgId),
                 inArray(invoices.clientId, ids),
+                eq(clients.orgId, orgId),
+                businessProfileId ? eq(clients.businessProfileId, businessProfileId) : undefined,
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
                 sql`(${invoices.isPaymentLink} IS NULL OR ${invoices.isPaymentLink} = false)`,
                 sql`(${invoices.isQuote} IS NULL OR ${invoices.isQuote} = false)`,
             ))
@@ -138,7 +143,7 @@ export class ClientOverviewPgRepo {
      * its own try/catch — a date-shaped surprise degrades this one KPI to null, never the
      * whole overview.
      */
-    private async avgPayDays(orgId: string, clientId: string): Promise<number | null> {
+    private async avgPayDays(orgId: string, clientId: string, businessProfileId?: string): Promise<number | null> {
         try {
             const res: any = await this.db.execute(sql`
                 select avg(diff)::float as avg_pay_days from (
@@ -147,11 +152,14 @@ export class ClientOverviewPgRepo {
                     join (
                         select invoice_id, max(paid_date) as last_paid
                         from invoice_payments
-                        where org_id = ${orgId} and paid_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                        where org_id = ${orgId}
+                          ${businessProfileId ? sql`and business_profile_id = ${businessProfileId}` : sql``}
+                          and paid_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                         group by invoice_id
                     ) mp on mp.invoice_id = i.invoice_id
                     where i.org_id = ${orgId}
                       and i.client_id = ${clientId}
+                      ${businessProfileId ? sql`and i.business_profile_id = ${businessProfileId}` : sql``}
                       and i.status = 'PAID'
                       and i.issue_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                 ) d
@@ -164,7 +172,7 @@ export class ClientOverviewPgRepo {
         }
     }
 
-    private async recentInvoices(orgId: string, clientId: string): Promise<ClientOverviewInvoice[]> {
+    private async recentInvoices(orgId: string, clientId: string, businessProfileId?: string): Promise<ClientOverviewInvoice[]> {
         const rows = await this.db
             .select({
                 invoiceId: invoices.invoiceId,
@@ -180,6 +188,7 @@ export class ClientOverviewPgRepo {
             .where(and(
                 eq(invoices.orgId, orgId),
                 eq(invoices.clientId, clientId),
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
                 sql`(${invoices.isPaymentLink} IS NULL OR ${invoices.isPaymentLink} = false)`,
                 sql`(${invoices.isQuote} IS NULL OR ${invoices.isQuote} = false)`,
             ))
@@ -203,6 +212,7 @@ export class ClientOverviewPgRepo {
         clientId: string,
         clientCreatedAt: string,
         clientName: string,
+        businessProfileId?: string,
     ): Promise<ClientTimelineEvent[]> {
         const iso = (v: any): string => (v instanceof Date ? v.toISOString() : String(v));
         const events: ClientTimelineEvent[] = [];
@@ -219,6 +229,7 @@ export class ClientOverviewPgRepo {
             .where(and(
                 eq(invoices.orgId, orgId),
                 eq(invoices.clientId, clientId),
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
                 sql`(${invoices.isPaymentLink} IS NULL OR ${invoices.isPaymentLink} = false)`,
             ))
             .orderBy(desc(invoices.createdAt))
@@ -244,7 +255,10 @@ export class ClientOverviewPgRepo {
             })
             .from(invoicePayments)
             .innerJoin(invoices, eq(invoicePayments.invoiceId, invoices.invoiceId))
-            .where(and(eq(invoices.orgId, orgId), eq(invoices.clientId, clientId)))
+            .where(and(eq(invoices.orgId, orgId), eq(invoices.clientId, clientId),
+                eq(invoicePayments.orgId, orgId),
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
+                businessProfileId ? eq(invoicePayments.businessProfileId, businessProfileId) : undefined))
             .orderBy(desc(invoicePayments.createdAt))
             .limit(SOURCE_LIMIT);
         for (const r of pay as any[]) {
@@ -268,7 +282,8 @@ export class ClientOverviewPgRepo {
                 createdAt: jobs.createdAt,
             })
             .from(jobs)
-            .where(and(eq(jobs.orgId, orgId), eq(jobs.clientId, clientId)))
+            .where(and(eq(jobs.orgId, orgId), eq(jobs.clientId, clientId),
+                businessProfileId ? eq(jobs.businessProfileId, businessProfileId) : undefined))
             .orderBy(desc(jobs.createdAt))
             .limit(SOURCE_LIMIT);
         for (const r of jobRows as any[]) {

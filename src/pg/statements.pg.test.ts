@@ -444,3 +444,194 @@ describe('cross-statement reconciliation layer', () => {
         expect(accounts[0].statementCount).toBe(3);
     });
 });
+
+
+describe('StatementPgRepo business profile scope', () => {
+    it('filters lists, hashes, direct reads and every mutation to the fixed organization/profile', async () => {
+        const root = new StatementPgRepo(db);
+        const a = root.withScope('scope-org', 'a');
+        const b = root.withScope('scope-org', 'b');
+        for (const [id, profile, org] of [['scope-a', 'a', 'scope-org'], ['scope-b', 'b', 'scope-org'], ['scope-foreign', 'a', 'other-org'], ['scope-legacy', null, 'scope-org']] as const) {
+            await root.createStatement({ statementId: id, userId: 'scope-user', organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: id } as any);
+            await root.updateStatement(id, { contentHash: id === 'scope-a' ? 'same-hash' : `${id}-hash`, accountId: 'same-account' });
+        }
+        expect((await a.listStatements('scope-user')).items.map(s => s.statementId)).toEqual(['scope-a']);
+        expect((await b.listStatementsByOrg('scope-org')).items.map(s => s.statementId)).toEqual(['scope-b']);
+        expect(await a.getStatement('scope-user', 'scope-b')).toBeNull();
+        expect(await a.findStatementByIdInOrg('other-org', 'scope-foreign')).toBeNull();
+        expect((await a.findStatementByContentHash('scope-user', 'same-hash'))?.statementId).toBe('scope-a');
+        expect((await a.listStatementsByAccount('scope-user', 'same-account')).map(s => s.statementId)).toEqual(['scope-a']);
+        await a.updateStatement('scope-b', { status: 'FAILED' });
+        await a.setProcessingResult('scope-b', { status: 'FAILED' });
+        expect(await a.updateStatementStatusConditional('scope-b', ['UPLOADED'], { status: 'FAILED' })).toBe(false);
+        expect(await a.resolvePeriod('scope-user', 'scope-b', { periodStart: '2025-07-01', periodEnd: '2025-07-31' })).toBe(false);
+        expect(await a.adjustNeedsReviewCount('scope-b', 1)).toBeNull();
+        expect(await a.deleteStatement('scope-user', 'scope-b')).toBe(false);
+        expect((await b.getStatement('scope-user', 'scope-b'))?.status).toBe('UPLOADED');
+        await a.updateStatement('scope-a', { status: 'FAILED', statementId: 'changed', userId: 'changed', s3Key: 'foreign-file' });
+        expect(await a.getStatement('scope-user', 'scope-a')).toMatchObject({ status: 'FAILED', s3Key: 'scope-a' });
+        await expect(a.updateStatement('scope-a', { businessProfileId: 'b' })).rejects.toThrow('scope mismatch');
+        await expect(a.claimProspectStatements('guest', 'scope-user', 'scope-org')).rejects.toThrow('explicit reviewed assignment');
+        await a.createStatement({ statementId: 'scope-stamped', userId: 'scope-user', fy: '2025-26', s3Key: 'owned' });
+        expect(await a.getStatement('scope-user', 'scope-stamped')).toMatchObject({ organizationId: 'scope-org', businessProfileId: 'a' });
+        expect(() => a.withScope('scope-org', 'b')).toThrow('scope mismatch');
+    });
+});
+
+
+describe('StatementTransactionPgRepo business profile scope', () => {
+    it('isolates transactions, summaries and writes through the owned parent statement', async () => {
+        const root = new StatementTransactionPgRepo(db);
+        const a = root.withScope('scope-org', 'a');
+        const b = root.withScope('scope-org', 'b');
+        const row = (statementId: string, amountCents: number) => ({ ...txn(1), txnId: statementTxnId(statementId, 1), statementId, userId: 'scope-user', amountCents, category: 'OTHER', categorySource: 'USER', reviewReason: 'CHECK', flowClass: 'EXPENSE' });
+        await a.upsertTransactions([row('scope-a', -100)]);
+        await b.upsertTransactions([row('scope-b', -200)]);
+        await root.upsertTransactions([row('scope-foreign', -400), row('scope-legacy', -800)]);
+        expect((await a.listByFy('scope-user', '2025-26')).items.map(t => t.amountCents)).toEqual([-100]);
+        expect((await a.listReview('scope-user')).items).toHaveLength(1);
+        expect((await a.listByStatement('scope-user', 'scope-b')).items).toEqual([]);
+        expect(await a.getTransaction('scope-user', 'scope-b', 1)).toBeNull();
+        expect((await a.summariseByCategory({ userId: 'scope-user' }))[0].outCents).toBe(100);
+        expect((await a.summariseFlows({ organizationId: 'scope-org' }))[0].outCents).toBe(100);
+        const patch = { category: 'OTHER', categorySource: 'USER' } as any;
+        expect(await a.updateCategory('scope-user', 'scope-b', 1, patch)).toEqual({ found: false, hadReviewReason: false });
+        expect(await a.updateCategory('scope-user', 'scope-a', 1, patch)).toEqual({ found: true, hadReviewReason: true });
+        await a.setTransferPairIds([{ txnId: statementTxnId('scope-b', 1), transferPairId: 'foreign-pair' }]);
+        expect((await b.getTransaction('scope-user', 'scope-b', 1))?.transferPairId).toBeNull();
+        expect(await a.deleteByStatement('scope-b')).toBe(0);
+        await expect(a.upsertTransactions([row('scope-b', -999)])).rejects.toThrow('parent ownership mismatch');
+        await expect(a.upsertTransactions([{ ...row('scope-a', -999), txnId: statementTxnId('scope-b', 1) }])).rejects.toThrow('identity mismatch');
+        await expect(a.claimProspectTransactions('guest', 'scope-user')).rejects.toThrow('explicit reviewed assignment');
+        expect(await a.deleteByStatement('scope-a')).toBe(1);
+        expect((await b.getTransaction('scope-user', 'scope-b', 1))?.amountCents).toBe(-200);
+    });
+});
+
+describe('scoped statement references', () => {
+    it('rejects foreign and missing account/duplicate references before any accepting entrypoint writes', async () => {
+        const root = new StatementPgRepo(db);
+        const scoped = root.withScope('refs-org', 'a');
+        for (const [id, profile, user, org] of [['refs-a', 'a', 'refs-user', 'refs-org'], ['refs-b', 'b', 'refs-user', 'refs-org'], ['refs-other-user', 'a', 'someone-else', 'refs-org'], ['refs-other-org', 'a', 'refs-user', 'other-org'], ['refs-legacy', null, 'refs-user', 'refs-org']] as const) {
+            await root.createStatement({ statementId: id, userId: user, organizationId: org, businessProfileId: profile, fy: '2025-26', s3Key: id });
+            await pglite.query('INSERT INTO bank_accounts(account_id,user_id,organization_id,business_profile_id) VALUES ($1,$2,$3,$4)', [`account-${id}`, user, org, profile]);
+        }
+        for (const id of ['refs-b', 'refs-other-user', 'refs-other-org', 'refs-legacy', 'missing']) {
+            for (const patch of [{ accountId: `account-${id}` }, { duplicateOfStatementId: id }]) {
+                await expect(scoped.updateStatement('refs-a', { status: 'VERIFIED', ...patch })).rejects.toThrow('reference ownership mismatch');
+                await expect(scoped.updateStatementStatusConditional('refs-a', ['UPLOADED'], { status: 'VERIFIED', ...patch })).rejects.toThrow('reference ownership mismatch');
+                await expect(scoped.setProcessingResult('refs-a', { status: 'VERIFIED', ...patch } as any)).rejects.toThrow('reference ownership mismatch');
+                await expect(scoped.createStatement({ statementId: 'bad-create', userId: 'refs-user', fy: '2025-26', s3Key: 'bad', ...patch } as any)).rejects.toThrow('reference ownership mismatch');
+            }
+        }
+        expect(await scoped.getStatement('refs-user', 'bad-create')).toBeNull();
+        expect(await scoped.getStatement('refs-user', 'refs-a')).toMatchObject({ status: 'UPLOADED', accountId: null, duplicateOfStatementId: null });
+        await scoped.createStatement({ statementId: 'refs-valid', userId: 'refs-user', fy: '2025-26', s3Key: 'valid' });
+        await scoped.updateStatement('refs-a', { accountId: 'account-refs-a', duplicateOfStatementId: 'refs-valid' });
+        expect(await scoped.getStatement('refs-user', 'refs-a')).toMatchObject({ accountId: 'account-refs-a', duplicateOfStatementId: 'refs-valid' });
+        await scoped.updateStatement('refs-a', { accountId: null, duplicateOfStatementId: null });
+        expect(await scoped.getStatement('refs-user', 'refs-a')).toMatchObject({ accountId: null, duplicateOfStatementId: null });
+    });
+
+    it('validates transfer/duplicate targets including fresh rows in the same upsert batch', async () => {
+        const root = new StatementTransactionPgRepo(db);
+        const scoped = root.withScope('refs-org', 'a');
+        const row = (statementId: string, seq: number, userId = 'refs-user') => ({ ...txn(seq), txnId: statementTxnId(statementId, seq), statementId, userId, flowClass: 'TRANSFER' });
+        await root.upsertTransactions([row('refs-a', 1), row('refs-b', 1), row('refs-other-user', 1, 'someone-else'), row('refs-other-org', 1), row('refs-legacy', 1)]);
+        const source = statementTxnId('refs-a', 1);
+        for (const target of ['refs-b', 'refs-other-user', 'refs-other-org', 'refs-legacy', 'missing']) {
+            const targetId = statementTxnId(target, 1);
+            await expect(scoped.setTransferPairIds([{ txnId: source, transferPairId: source }, { txnId: source, transferPairId: targetId }])).rejects.toThrow('reference ownership mismatch');
+            for (const key of ['transferPairId', 'duplicateOfTxnId']) {
+                await expect(scoped.upsertTransactions([{ ...row('refs-a', 2), [key]: targetId }])).rejects.toThrow('reference ownership mismatch');
+            }
+        }
+        for (const key of ['matchedInvoiceId', 'matchedReceiptId']) {
+            await expect(scoped.upsertTransactions([{ ...row('refs-a', 2), [key]: 'missing' }])).rejects.toThrow('reference ownership mismatch');
+        }
+        expect((await scoped.getTransaction('refs-user', 'refs-a', 1))?.transferPairId).toBeNull();
+        expect(await scoped.getTransaction('refs-user', 'refs-a', 2)).toBeNull();
+        expect((await scoped.listTransferRows({ userId: 'refs-user' }, { unpairedOnly: true })).map(r => r.txnId)).toContain(source);
+        const pendingId = statementTxnId('refs-a', 3);
+        await scoped.upsertTransactions([{ ...row('refs-a', 2), transferPairId: pendingId }, { ...row('refs-a', 3), transferPairId: pendingId }]);
+        await scoped.setTransferPairIds([{ txnId: source, transferPairId: pendingId }]);
+        expect((await scoped.getTransaction('refs-user', 'refs-a', 1))?.transferPairId).toBe(pendingId);
+        expect((await scoped.getTransaction('refs-user', 'refs-a', 2))?.transferPairId).toBe(pendingId);
+    });
+});
+
+describe('statement dedupe expansion and controlled contract', () => {
+    it('retains old uniqueness until explicit contract, then keeps each profile and legacy constraint', async () => {
+        const { readFile } = await import('node:fs/promises');
+        const root = new StatementPgRepo(db);
+        for (const [id, profile] of [['contract-a', 'a'], ['contract-b', 'b'], ['contract-a2', 'a'], ['contract-legacy', null], ['contract-legacy2', null]] as const) {
+            await root.createStatement({ statementId: id, userId: 'contract-user', organizationId: 'contract-org', businessProfileId: profile, fy: '2025-26', s3Key: id });
+        }
+        const indexes = await pglite.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='statements'");
+        expect(indexes.rows.map(r => r.indexname)).toEqual(expect.arrayContaining(['statements_dedupe', 'statements_dedupe_profile', 'statements_dedupe_legacy']));
+        await root.updateStatement('contract-a', { contentHash: 'contract-hash' });
+        await expect(root.updateStatement('contract-b', { contentHash: 'contract-hash' })).rejects.toThrow();
+        // Execute only in this test database, outside the automatic migration runner.
+        const contract = await readFile(new URL('../../operations/statement-profile-dedupe-contract.sql', import.meta.url), 'utf8');
+        await pglite.exec(contract);
+        await pglite.exec(contract); // reviewed contract remains idempotent
+        await root.updateStatement('contract-b', { contentHash: 'contract-hash' });
+        await expect(root.updateStatement('contract-a2', { contentHash: 'contract-hash' })).rejects.toThrow();
+        await root.updateStatement('contract-legacy', { contentHash: 'legacy-contract-hash' });
+        await expect(root.updateStatement('contract-legacy2', { contentHash: 'legacy-contract-hash' })).rejects.toThrow();
+    });
+});
+
+describe('atomic statement replacement with feed duplicates', () => {
+    const user = 'replace-user';
+    const id = 'replace-statement';
+    const scoped = () => new StatementTransactionPgRepo(db).withScope('replace-org', 'a');
+    const row = (seq: number, extra = {}) => ({ ...txn(seq), txnId: statementTxnId(id, seq), statementId: id, userId: user, ...extra });
+    beforeAll(async () => {
+        await new StatementPgRepo(db).createStatement({ statementId: id, userId: user, organizationId: 'replace-org', businessProfileId: 'a', fy: '2025-26', s3Key: id });
+        for (const [name, org, profile, owner] of [['own', 'replace-org', 'a', user], ['profile', 'replace-org', 'b', user], ['org', 'foreign-org', 'a', user], ['user', 'replace-org', 'a', 'other-user'], ['legacy', 'replace-org', null, user]] as const) {
+            await pglite.query('INSERT INTO bank_accounts(account_id,user_id,organization_id,business_profile_id) VALUES ($1,$2,$3,$4)', [`replace-account-${name}`, owner, org, profile]);
+            await pglite.query('INSERT INTO bank_transactions(txn_id,account_id,user_id,organization_id,fy,amount_cents) VALUES ($1,$2,$3,$4,$5,$6)', [`replace-feed-${name}`, `replace-account-${name}`, owner, org, '2025-26', -1000]);
+        }
+        await scoped().upsertTransactions([row(1, { description: 'original' })]);
+    });
+
+    it('accepts an owned feed duplicate and excludes it from totals, idempotently', async () => {
+        const replacement = [row(1, { duplicateOfTxnId: 'replace-feed-own' })];
+        await scoped().replaceTransactions(user, id, replacement);
+        await scoped().replaceTransactions(user, id, replacement);
+        expect((await scoped().getTransaction(user, id, 1))?.duplicateOfTxnId).toBe('replace-feed-own');
+        expect(await scoped().summariseByCategory({ userId: user, statementId: id })).toEqual([]);
+    });
+
+    it('rejects foreign, unassigned, missing feed duplicates and feed transfer targets without losing old rows', async () => {
+        const original = await scoped().getTransaction(user, id, 1);
+        for (const target of ['profile', 'org', 'user', 'legacy', 'missing']) {
+            await expect(scoped().replaceTransactions(user, id, [row(2, { duplicateOfTxnId: `replace-feed-${target}` })])).rejects.toThrow('reference ownership mismatch');
+            expect(await scoped().getTransaction(user, id, 1)).toEqual(original);
+        }
+        await expect(scoped().replaceTransactions(user, id, [row(2, { transferPairId: 'replace-feed-own' })])).rejects.toThrow('reference ownership mismatch');
+        expect(await scoped().getTransaction(user, id, 1)).toEqual(original);
+        expect(await scoped().getTransaction(user, id, 2)).toBeNull();
+    });
+
+    it('rolls back deletion and earlier chunks when a later storage constraint fails', async () => {
+        const original = await scoped().getTransaction(user, id, 1);
+        const replacement = Array.from({ length: 201 }, (_, i) => row(i + 1, i === 200 ? { amountCents: null } : {}));
+        await expect(scoped().replaceTransactions(user, id, replacement)).rejects.toThrow();
+        expect(await scoped().getTransaction(user, id, 1)).toEqual(original);
+        expect((await scoped().listByStatement(user, id)).items).toHaveLength(1);
+    });
+
+    it('preserves the current accepted link and its reversal over an earlier pipeline snapshot', async () => {
+        await pglite.query("INSERT INTO orgs(org_id,name) VALUES ('replace-org','Replacement')");
+        await pglite.query("INSERT INTO receipts(receipt_id,org_id,business_profile_id,owner_id,created_by) VALUES ('replace-receipt','replace-org','a',$1,$1)", [user]);
+        await pglite.query("UPDATE statement_transactions SET matched_receipt_id='replace-receipt',match_source='USER' WHERE statement_id=$1", [id]);
+        await scoped().replaceTransactions(user, id, [row(1)]);
+        expect((await scoped().getTransaction(user, id, 1))?.matchedReceiptId).toBe('replace-receipt');
+        await pglite.query('UPDATE statement_transactions SET matched_receipt_id=NULL,match_source=NULL WHERE statement_id=$1', [id]);
+        await scoped().replaceTransactions(user, id, [row(1, { matchedReceiptId: 'replace-receipt', matchSource: 'USER' })]);
+        expect((await scoped().getTransaction(user, id, 1))?.matchedReceiptId).toBeNull();
+    });
+
+});

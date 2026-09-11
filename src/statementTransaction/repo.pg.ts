@@ -1,6 +1,9 @@
-import { and, asc, eq, gt, isNotNull, isNull, ne, sql } from 'drizzle-orm';
-import { getPg, type PgDb } from '../pg/client';
+import { and, asc, eq, gt, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
+import { getPg, getPgTx, type PgDb } from '../pg/client';
 import { statementTransactions, statements } from '../pg/schema/statements';
+import { bankAccounts, bankTransactions } from '../pg/schema/bankFeeds';
+import { invoices } from '../pg/schema/billingCore';
+import { receipts } from '../pg/schema/opsEntities';
 import { toRow, fromRow } from '../pg/rows';
 import { foldAccountGroups } from './accountBookends';
 import type { StatementTransaction, StatementTransactionCategoryPatch } from './schema';
@@ -158,13 +161,109 @@ const EPOCH_DATE = '0001-01-01'; // sort key stand-in for rows with no parseable
  * the read-and-clear happens in a single CTE statement).
  */
 export class StatementTransactionPgRepo {
-    constructor(private injected?: PgDb) {}
+    constructor(private injected?: PgDb, private readonly scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    withScope(orgId: string, businessProfileId: string): StatementTransactionPgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Statement transaction scope is required');
+        if (this.scope && (orgId !== this.scope.orgId || businessProfileId !== this.scope.businessProfileId)) throw new Error('Statement transaction scope mismatch');
+        return new StatementTransactionPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
+    }
+    private ownedParent(statementId: SQL = sql`${statementTransactions.statementId}`): SQL {
+        return this.scope ? sql`EXISTS (SELECT 1 FROM statements owned_statement
+            WHERE owned_statement.statement_id = ${statementId}
+                AND owned_statement.organization_id = ${this.scope.orgId}
+                AND owned_statement.business_profile_id = ${this.scope.businessProfileId})` : sql`true`;
+    }
+    private within(...conditions: (SQL | undefined)[]) { return and(...conditions, this.ownedParent()); }
+
 
     private get db(): PgDb {
         return this.injected ?? getPg();
     }
 
+    private async validateTxnReference(targetId: string, userId: string, pending = new Map<string, Record<string, any>>(), allowFeed = false) {
+        const target = pending.get(targetId);
+        if (target) {
+            // Pending rows have already passed the entire batch's parent validation.
+            if (target.userId !== userId) throw new Error('Statement transaction reference ownership mismatch');
+            return;
+        }
+        const [stored] = await this.db.select({ id: statementTransactions.txnId }).from(statementTransactions)
+            .where(this.within(eq(statementTransactions.txnId, targetId), eq(statementTransactions.userId, userId),
+                sql`EXISTS (SELECT 1 FROM statements parent WHERE parent.statement_id = ${statementTransactions.statementId} AND parent.user_id = ${userId})`)).limit(1);
+        if (stored) return;
+        if (allowFeed && this.scope) {
+            const [feed] = await this.db.select({ id: bankTransactions.txnId }).from(bankTransactions)
+                .innerJoin(bankAccounts, eq(bankAccounts.accountId, bankTransactions.accountId))
+                .where(and(eq(bankTransactions.txnId, targetId), eq(bankTransactions.userId, userId),
+                    eq(bankAccounts.userId, userId), eq(bankTransactions.organizationId, this.scope.orgId),
+                    eq(bankAccounts.organizationId, this.scope.orgId), eq(bankAccounts.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (feed) return;
+        }
+        throw new Error('Statement transaction reference ownership mismatch');
+    }
+
+    private async validateReferences(item: Record<string, any>, pending: Map<string, Record<string, any>>) {
+        if (!this.scope) return;
+        for (const key of ['transferPairId', 'duplicateOfTxnId']) {
+            if (item[key] != null) await this.validateTxnReference(item[key], item.userId, pending, key === 'duplicateOfTxnId');
+        }
+        if (item.matchedInvoiceId != null) {
+            const [invoice] = await this.db.select({ id: invoices.invoiceId }).from(invoices)
+                .where(and(eq(invoices.invoiceId, item.matchedInvoiceId), eq(invoices.orgId, this.scope.orgId), eq(invoices.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (!invoice) throw new Error('Statement invoice reference ownership mismatch');
+        }
+        if (item.matchedReceiptId != null) {
+            const [receipt] = await this.db.select({ id: receipts.receiptId }).from(receipts)
+                .where(and(eq(receipts.receiptId, item.matchedReceiptId), eq(receipts.orgId, this.scope.orgId), eq(receipts.businessProfileId, this.scope.businessProfileId))).limit(1);
+            if (!receipt) throw new Error('Statement receipt reference ownership mismatch');
+        }
+    }
+
+    /** Replace one owned statement atomically: failed validation or any chunk rolls back the deletion. */
+    async replaceTransactions(userId: string, statementId: string, items: Array<Record<string, any>>): Promise<void> {
+        if (!this.scope) throw new Error('Statement replacement requires validated scope');
+        if (items.some(item => item.statementId !== statementId || item.userId !== userId)) throw new Error('Statement replacement ownership mismatch');
+        const scope = this.scope;
+        await (this.injected ?? getPgTx()).transaction(async tx => {
+            const [parent] = await tx.select({ id: statements.statementId }).from(statements)
+                .where(and(eq(statements.statementId, statementId), eq(statements.userId, userId),
+                    eq(statements.organizationId, scope.orgId), eq(statements.businessProfileId, scope.businessProfileId)))
+                .for('update').limit(1);
+            if (!parent) throw new Error('Statement replacement ownership mismatch');
+            // The locked current rows, rather than an earlier pipeline snapshot,
+            // own accepted links (including a link reversed during extraction).
+            const previous = await tx.select().from(statementTransactions)
+                .where(and(eq(statementTransactions.statementId, statementId), eq(statementTransactions.userId, userId))).for('update');
+            const byId = new Map(previous.map(row => [row.txnId, row]));
+            const replacement = items.map(item => {
+                const old = byId.get(statementTxnId(statementId, item.seq));
+                return old ? { ...item, matchedInvoiceId: old.matchedInvoiceId, matchedReceiptId: old.matchedReceiptId, matchSource: old.matchSource } : item;
+            });
+            const repo = new StatementTransactionPgRepo(tx as unknown as PgDb, scope);
+            await repo.deleteByStatement(statementId);
+            await repo.upsertTransactions(replacement);
+        });
+    }
+
     async upsertTransactions(items: Array<Record<string, any>>): Promise<void> {
+        if (this.scope) {
+            // Validate the entire batch before inserting any chunk. Deterministic IDs
+            // prevent a caller from repointing an existing foreign transaction.
+            const parents = new Map<string, string>();
+            for (const item of items) {
+                if (item.txnId && item.txnId !== statementTxnId(item.statementId, item.seq)) throw new Error('Statement transaction identity mismatch');
+                if (!parents.has(item.statementId)) {
+                    const parent = await this.db.select({ userId: statements.userId }).from(statements)
+                        .where(and(eq(statements.statementId, item.statementId), eq(statements.organizationId, this.scope.orgId), eq(statements.businessProfileId, this.scope.businessProfileId))).limit(1);
+                    if (!parent[0]) throw new Error('Statement transaction parent ownership mismatch');
+                    parents.set(item.statementId, parent[0].userId);
+                }
+                if (parents.get(item.statementId) !== item.userId) throw new Error('Statement transaction parent ownership mismatch');
+            }
+            const pending = new Map(items.map(item => [statementTxnId(item.statementId, item.seq), item]));
+            for (const item of items) await this.validateReferences(item, pending);
+        }
         const CHUNK = 200;
         for (let i = 0; i < items.length; i += CHUNK) {
             const rows = items.slice(i, i + CHUNK).map((item) => {
@@ -185,13 +284,14 @@ export class StatementTransactionPgRepo {
                 .onConflictDoUpdate({
                     target: statementTransactions.txnId,
                     set: { ...setClause, updatedAt: new Date() } as any,
+                    setWhere: this.ownedParent(),
                 });
         }
     }
 
     async getTransaction(userId: string, statementId: string, seq: number): Promise<StatementTransaction | null> {
         const rows = await this.db.select().from(statementTransactions)
-            .where(and(
+            .where(this.within(
                 eq(statementTransactions.txnId, statementTxnId(statementId, seq)),
                 eq(statementTransactions.userId, userId),
             ))
@@ -214,7 +314,7 @@ export class StatementTransactionPgRepo {
             }
         }
         const rows = await this.db.select().from(statementTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(asc(statementTransactions.seq))
             .limit(limit + 1);
         const page = rows.slice(0, limit);
@@ -240,7 +340,7 @@ export class StatementTransactionPgRepo {
             }
         }
         const rows = await this.db.select().from(statementTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(sql`${sortDate} DESC`, sql`${statementTransactions.txnId} DESC`)
             .limit(limit + 1);
         const page = rows.slice(0, limit);
@@ -265,7 +365,7 @@ export class StatementTransactionPgRepo {
             }
         }
         const rows = await this.db.select().from(statementTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(asc(statementTransactions.txnId))
             .limit(limit + 1);
         const page = rows.slice(0, limit);
@@ -293,7 +393,7 @@ export class StatementTransactionPgRepo {
         const result: any = await this.db.execute(sql`
             WITH before AS (
                 SELECT txn_id, review_reason FROM statement_transactions
-                WHERE txn_id = ${txnId} AND user_id = ${userId}
+                WHERE txn_id = ${txnId} AND user_id = ${userId} AND ${this.ownedParent()}
             )
             UPDATE statement_transactions t SET
                 category            = ${patch.category ?? null},
@@ -307,7 +407,7 @@ export class StatementTransactionPgRepo {
                 confirmed_at        = CASE WHEN ${confirm} THEN now() ELSE t.confirmed_at END,
                 updated_at          = now()
             FROM before
-            WHERE t.txn_id = before.txn_id
+            WHERE t.txn_id = before.txn_id AND ${this.ownedParent(sql`t.statement_id`)}
             RETURNING before.review_reason AS prev_review_reason
         `);
         const rows = result.rows ?? result;
@@ -352,7 +452,7 @@ export class StatementTransactionPgRepo {
             confirmedCount: sql<number>`SUM(CASE WHEN ${statementTransactions.reviewStatus} = 'CONFIRMED' THEN 1 ELSE 0 END)::int`,
         })
             .from(statementTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .groupBy(sql`COALESCE(${statementTransactions.category}, 'UNCATEGORIZED')`)
             .orderBy(sql`GREATEST(
                 COALESCE(SUM(CASE WHEN ${statementTransactions.amountCents} > 0 THEN ${statementTransactions.amountCents} ELSE 0 END), 0),
@@ -384,7 +484,7 @@ export class StatementTransactionPgRepo {
             txnCount: sql<number>`COUNT(*)::int`,
         })
             .from(statementTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .groupBy(flowExpr);
         return rows.map((r) => ({
             flowClass: r.flowClass,
@@ -431,7 +531,7 @@ export class StatementTransactionPgRepo {
         })
             .from(statementTransactions)
             .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .groupBy(statements.accountId, statements.bankName, statements.accountLast4)
             .orderBy(sql`COALESCE(SUM(${statementTransactions.amountCents}), 0) DESC`);
 
@@ -486,7 +586,7 @@ export class StatementTransactionPgRepo {
             confirmedCount: sql<number>`SUM(CASE WHEN ${statementTransactions.reviewStatus} = 'CONFIRMED' THEN 1 ELSE 0 END)::int`,
         })
             .from(statementTransactions)
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .groupBy(bucketExpr);
         return rows.map((r) => ({
             bucket: r.bucket,
@@ -545,7 +645,7 @@ export class StatementTransactionPgRepo {
             pairedTransferGstCents: sql<string>`COALESCE(SUM(CASE WHEN ${pairedNotTransfer} THEN ${statementTransactions.gstAmountCents} ELSE 0 END), 0)::bigint`,
         })
             .from(statementTransactions)
-            .where(and(...conditions));
+            .where(this.within(...conditions));
 
         return {
             gstCents: Number(row?.gstCents ?? 0),
@@ -581,7 +681,7 @@ export class StatementTransactionPgRepo {
         })
             .from(statementTransactions)
             .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(sql`COALESCE(${statementTransactions.txnDate}, ${EPOCH_DATE}::date)`, asc(statementTransactions.txnId))
             .limit(opts.cap ?? 2000);
         return rows.map((r) => ({
@@ -624,7 +724,7 @@ export class StatementTransactionPgRepo {
         })
             .from(statementTransactions)
             .innerJoin(statements, eq(statements.statementId, statementTransactions.statementId))
-            .where(and(...conditions))
+            .where(this.within(...conditions))
             .orderBy(asc(statementTransactions.txnDate), asc(statementTransactions.txnId))
             .limit(opts.cap ?? 5000);
         return rows.map((r) => ({
@@ -642,6 +742,14 @@ export class StatementTransactionPgRepo {
      * through the ingest upsert. Idempotent single UPDATE per chunk.
      */
     async setTransferPairIds(updates: Array<{ txnId: string; transferPairId: string }>): Promise<void> {
+        if (this.scope) {
+            // Refuse the whole batch before any write, including batches over CHUNK.
+            for (const update of updates) {
+                const [source] = await this.db.select({ userId: statementTransactions.userId }).from(statementTransactions)
+                    .where(this.within(eq(statementTransactions.txnId, update.txnId))).limit(1);
+                if (source) await this.validateTxnReference(update.transferPairId, source.userId);
+            }
+        }
         const CHUNK = 200;
         for (let i = 0; i < updates.length; i += CHUNK) {
             const chunk = updates.slice(i, i + CHUNK);
@@ -653,7 +761,7 @@ export class StatementTransactionPgRepo {
                 UPDATE statement_transactions AS t
                 SET transfer_pair_id = v.pair_id, updated_at = now()
                 FROM (VALUES ${values}) AS v(txn_id, pair_id)
-                WHERE t.txn_id = v.txn_id
+                WHERE t.txn_id = v.txn_id AND ${this.ownedParent(sql`t.statement_id`)}
             `);
         }
     }
@@ -661,7 +769,7 @@ export class StatementTransactionPgRepo {
     /** Wipe a statement's transactions (reprocess path — FK cascade covers deletes). */
     async deleteByStatement(statementId: string): Promise<number> {
         const deleted = await this.db.delete(statementTransactions)
-            .where(eq(statementTransactions.statementId, statementId))
+            .where(this.within(eq(statementTransactions.statementId, statementId)))
             .returning({ txnId: statementTransactions.txnId });
         return deleted.length;
     }
@@ -670,6 +778,7 @@ export class StatementTransactionPgRepo {
     async claimProspectTransactions(
         prospectUserId: string, newUserId: string,
     ): Promise<number> {
+        if (this.scope) throw new Error('Guest ownership claims require explicit reviewed assignment');
         const updated = await this.db.update(statementTransactions)
             .set({ userId: newUserId, updatedAt: new Date() } as any)
             .where(eq(statementTransactions.userId, prospectUserId))

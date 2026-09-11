@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { makeSweepQueries } from './sweep.pg';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
 import {
@@ -67,6 +67,8 @@ export interface AddRecipientInput {
 }
 
 export interface DispatchInput {
+    /** Server-only persisted request attempt. Required for request-owned recipients. */
+    signatureRequest?: { requestId: string; attemptId: string; orgId: string; businessProfileId: string };
     recipientId: string;
     /**
      * Supply this ONLY when a new link is genuinely being issued. The stored
@@ -210,6 +212,7 @@ export interface EnvelopeCursor { createdAt: string; envelopeId: string }
 
 export interface ListEnvelopesParams {
     orgId: string;
+    businessProfileId?: string;
     limit?: number;
     cursor?: EnvelopeCursor | null;
     status?: EnvelopeStatus;
@@ -248,7 +251,26 @@ export interface SealArtifactInput {
 const APPEND_ATTEMPTS = 5;
 
 export class EnvelopePgRepo {
-    constructor(private readonly injected?: PgDb, private readonly injectedTx?: PgDb) {}
+    constructor(private readonly injected?: PgDb, private readonly injectedTx?: PgDb,
+        private readonly templateScope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
+
+    /** Scope reusable-template operations; document/recipient operations require their own authorization. */
+    withTemplateScope(orgId: string, businessProfileId: string): EnvelopePgRepo {
+        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Template scope is required');
+        if (this.templateScope && (this.templateScope.orgId !== orgId || this.templateScope.businessProfileId !== businessProfileId)) throw new Error('Template scope mismatch');
+        return new EnvelopePgRepo(this.injected, this.injectedTx, Object.freeze({ orgId, businessProfileId }));
+    }
+    private withinTemplate(...conditions: (SQL | undefined)[]) {
+        return and(...conditions, ...(this.templateScope ? [eq(envelopeTemplates.orgId, this.templateScope.orgId), eq(envelopeTemplates.businessProfileId, this.templateScope.businessProfileId)] : []));
+    }
+    private ownedTemplate(templateId: SQL): SQL {
+        return this.templateScope ? sql`EXISTS (SELECT 1 FROM envelope_templates owned_template
+            WHERE owned_template.template_id = ${templateId} AND owned_template.org_id = ${this.templateScope.orgId}
+            AND owned_template.business_profile_id = ${this.templateScope.businessProfileId})` : sql`true`;
+    }
+    private async assertTemplate(templateId: string) {
+        if (this.templateScope && !await this.getTemplate(templateId)) throw new Error('No such template');
+    }
     private get db(): PgDb { return this.injected ?? getPg(); }
     private get tx(): PgDb { return this.injectedTx ?? this.injected ?? getPgTx(); }
 
@@ -428,8 +450,8 @@ export class EnvelopePgRepo {
         const tier = tierForKind(input.kind);
         const now = new Date().toISOString();
 
-        await (this.tx as any).transaction(async (tx: any) => {
-            await tx.insert(envelopes).values({
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const inserted = await tx.insert(envelopes).values({
                 envelopeId: input.envelopeId,
                 orgId: input.orgId,
                 businessProfileId: input.businessProfileId ?? null,
@@ -446,7 +468,17 @@ export class EnvelopePgRepo {
                 effectiveDate: input.effectiveDate ?? null,
                 createdAt: now,
                 updatedAt: now,
-            }).onConflictDoNothing({ target: envelopes.envelopeId });
+            }).onConflictDoNothing({ target: envelopes.envelopeId }).returning({ id: envelopes.envelopeId });
+
+            // INSERT's conflict wait and this row lock serialize competing creators.
+            // Validate before child writes and return the locked snapshot, never an
+            // unscoped post-transaction read of a potentially foreign winner.
+            const [owned] = await tx.select().from(envelopes)
+                .where(eq(envelopes.envelopeId, input.envelopeId)).for('update');
+            if (!owned || owned.orgId !== input.orgId || (owned.businessProfileId ?? null) !== (input.businessProfileId ?? null)) {
+                throw new Error('No such document');
+            }
+            if (inserted.length === 0) return owned as EnvelopeDTO;
 
             await tx.insert(envelopeVersions).values({
                 versionId: input.versionId,
@@ -458,12 +490,12 @@ export class EnvelopePgRepo {
                 createdBy: input.createdBy,
                 createdReason: 'original',
                 createdAt: now,
-            }).onConflictDoNothing({ target: envelopeVersions.versionId });
+            });
 
             for (const recipient of input.recipients ?? []) {
                 await tx.insert(envelopeRecipients).values({ ...recipient, envelopeId: input.envelopeId,
                     status: 'pending', createdAt: now, updatedAt: now,
-                }).onConflictDoNothing({ target: envelopeRecipients.recipientId });
+                });
             }
             const entry: ChainEntryInput = {
                 envelopeId: input.envelopeId, seq: 1, type: 'created', actorType: 'owner',
@@ -475,11 +507,8 @@ export class EnvelopePgRepo {
             const { canonical, hash } = hashChainEntry(entry);
             await tx.insert(envelopeEvents).values({ ...entry, eventId: `${input.envelopeId}:1`, canonical, hash })
                 .onConflictDoNothing({ target: envelopeEvents.eventId });
+            return owned as EnvelopeDTO;
         });
-
-        const row = await this.get(input.envelopeId);
-        if (!row) throw new Error('Envelope vanished immediately after creation');
-        return row;
     }
 
     /** Edits are scoped and locked against send; old PDF bytes are never overwritten. */
@@ -606,7 +635,8 @@ export class EnvelopePgRepo {
     async beginDraftSend(envelopeId: string, orgId: string, versionNo: number, status: 'in_review' | 'out_for_signing'): Promise<boolean> {
         const rows = await (this.db as any).update(envelopes).set({ status, updatedAt: new Date().toISOString() })
             .where(and(eq(envelopes.envelopeId, envelopeId), eq(envelopes.orgId, orgId),
-                eq(envelopes.status, 'draft'), eq(envelopes.currentVersionNo, versionNo)))
+                eq(envelopes.status, 'draft'), eq(envelopes.currentVersionNo, versionNo),
+                sql`NOT EXISTS (SELECT 1 FROM profile_signature_requests sr WHERE 'env_' || sr.request_id = ${envelopes.envelopeId})`))
             .returning({ id: envelopes.envelopeId });
         return rows.length > 0;
     }
@@ -722,6 +752,24 @@ export class EnvelopePgRepo {
      * back instead of appending a second chain entry and re-sending the email.
      * Returns whether this call was the one that actually signed.
      */
+    /** Public signing revalidates the exact owned parent under the cancellation lock. */
+    async recordScopedSignature(scope: { orgId: string; businessProfileId: string; envelopeId: string; s3Key: string | null; sha256: string | null }, input: RecordSignatureInput) {
+        scope = { ...scope }; input = { ...input };
+        if (!scope.orgId || !scope.businessProfileId || !scope.envelopeId) throw new Error('Signature scope is required');
+        return (this.tx as any).transaction(async (tx: any) => {
+            const [parent] = await tx.select().from(envelopes).where(and(eq(envelopes.envelopeId, scope.envelopeId),
+                eq(envelopes.orgId, scope.orgId), eq(envelopes.businessProfileId, scope.businessProfileId))).for('update');
+            if (!parent || !['out_for_signing','in_review','completed'].includes(parent.status)) throw new Error('Signature document is unavailable');
+            const [version] = await tx.select().from(envelopeVersions).where(and(eq(envelopeVersions.versionId, input.versionId),
+                eq(envelopeVersions.envelopeId, parent.envelopeId), eq(envelopeVersions.versionNo, parent.currentVersionNo))).for('update');
+            const [recipient] = await tx.select().from(envelopeRecipients).where(and(eq(envelopeRecipients.recipientId, input.recipientId),
+                eq(envelopeRecipients.envelopeId, parent.envelopeId))).for('update');
+            if (!version || version.s3Key !== scope.s3Key || version.sha256 !== scope.sha256 || !recipient || recipient.revokedAt ||
+                ['revoked','declined','bounced'].includes(recipient.status)) throw new Error('Signature document is unavailable');
+            return new EnvelopePgRepo(tx, tx).recordSignature(input);
+        });
+    }
+
     async recordSignature(input: RecordSignatureInput): Promise<{ created: boolean; signatureId: string }> {
         const recipient = await this.getRecipient(input.recipientId);
         if (!recipient) throw new Error('Unknown recipient');
@@ -830,7 +878,9 @@ export class EnvelopePgRepo {
      * that dies, which is the same outcome as sending twice in any order.
      */
     async markDispatched(input: DispatchInput): Promise<{ claimed: boolean; previous: DispatchSnapshot | null }> {
+        input = { ...input, signatureRequest: input.signatureRequest ? { ...input.signatureRequest } : undefined };
         const now = new Date().toISOString();
+        const authority = input.signatureRequest;
         return await (this.tx as any).transaction(async (tx: any) => {
             const before = await tx.select({
                 tokenHash: envelopeRecipients.tokenHash,
@@ -848,12 +898,11 @@ export class EnvelopePgRepo {
             const previous = (before[0] as DispatchSnapshot | undefined) ?? null;
 
             const set: Record<string, unknown> = {
-                status: 'dispatched',
-                dispatchedAt: now,
                 updatedAt: now,
             };
             if (input.sesMessageId !== undefined) set.sesMessageId = input.sesMessageId ?? null;
             if (input.tokenHash) {
+                set.status = 'dispatched'; set.dispatchedAt = now;
                 set.tokenHash = input.tokenHash;
                 set.expiresAt = input.expiresAt ?? null;
                 set.accessCodeHash = input.accessCodeHash ?? null;
@@ -866,6 +915,14 @@ export class EnvelopePgRepo {
                 .where(and(
                     eq(envelopeRecipients.recipientId, input.recipientId),
                     sql`${envelopeRecipients.revokedAt} IS NULL`,
+                    sql`(NOT EXISTS (SELECT 1 FROM profile_signature_requests sr WHERE 'env_' || sr.request_id = ${envelopeRecipients.envelopeId})
+                        OR EXISTS (SELECT 1 FROM profile_signature_requests sr JOIN envelopes e ON e.envelope_id = 'env_' || sr.request_id
+                            WHERE e.envelope_id = ${envelopeRecipients.envelopeId} AND e.org_id = sr.org_id AND e.business_profile_id = sr.business_profile_id
+                            AND sr.request_id = ${authority?.requestId ?? ''} AND sr.attempt_id = ${authority?.attemptId ?? ''}
+                            AND sr.org_id = ${authority?.orgId ?? ''} AND sr.business_profile_id = ${authority?.businessProfileId ?? ''}
+                            AND sr.status = 'SENDING' AND ${envelopeRecipients.recipientId} = 'rcp_' || sr.request_id
+                            AND (${!input.tokenHash} OR (e.status = 'out_for_signing' AND e.current_version_no = 1
+                                AND ${envelopeRecipients.status} = 'pending' AND ${envelopeRecipients.tokenHash} IS NULL))))`,
                 ))
                 .returning({ id: envelopeRecipients.recipientId });
 
@@ -1045,20 +1102,31 @@ export class EnvelopePgRepo {
      * with the write rather than only in whatever screen happens to call it.
      */
     async addField(input: AddFieldInput): Promise<{ fieldId: string; created: boolean }> {
-        if (input.recipientId) await this.assertFieldAssignable(input.recipientId);
-        const inserted = await (this.db as any).insert(envelopeFields).values({
-            fieldId: input.fieldId,
-            versionId: input.versionId,
-            recipientId: input.recipientId ?? null,
-            type: input.type,
-            label: input.label ?? null,
-            required: input.required ?? true,
-            page: input.page,
-            x: String(input.x), y: String(input.y), w: String(input.w), h: String(input.h),
-            createdAt: new Date().toISOString(),
-        }).onConflictDoNothing({ target: envelopeFields.fieldId })
-            .returning({ id: envelopeFields.fieldId });
-        return { fieldId: input.fieldId, created: inserted.length > 0 };
+        return await (this.tx as any).transaction(async (tx: any) => {
+            const [version] = await tx.select({ envelopeId: envelopeVersions.envelopeId }).from(envelopeVersions)
+                .where(eq(envelopeVersions.versionId, input.versionId)).for('update');
+            if (!version) throw new Error('No such document version');
+            if (input.recipientId) {
+                const [recipient] = await tx.select().from(envelopeRecipients).where(and(
+                    eq(envelopeRecipients.recipientId, input.recipientId), eq(envelopeRecipients.envelopeId, version.envelopeId),
+                )).for('update');
+                if (!recipient) throw new Error('No such recipient on this document');
+                if (!canHoldFields(recipient.role as RecipientRole)) throw new Error(`A ${recipient.role} cannot be assigned a field`);
+            }
+            const inserted = await tx.insert(envelopeFields).values({
+                fieldId: input.fieldId,
+                versionId: input.versionId,
+                recipientId: input.recipientId ?? null,
+                type: input.type,
+                label: input.label ?? null,
+                required: input.required ?? true,
+                page: input.page,
+                x: String(input.x), y: String(input.y), w: String(input.w), h: String(input.h),
+                createdAt: new Date().toISOString(),
+            }).onConflictDoNothing({ target: envelopeFields.fieldId })
+                .returning({ id: envelopeFields.fieldId });
+            return { fieldId: input.fieldId, created: inserted.length > 0 };
+        });
     }
 
     /**
@@ -1187,6 +1255,10 @@ export class EnvelopePgRepo {
     // ── reusable documents ───────────────────────────────────────────────
 
     async createTemplate(input: CreateTemplateInput): Promise<{ templateId: string; created: boolean }> {
+        if (this.templateScope) {
+            if (input.orgId !== this.templateScope.orgId || (input.businessProfileId != null && input.businessProfileId !== this.templateScope.businessProfileId)) throw new Error('Template scope mismatch');
+            input = { ...input, businessProfileId: this.templateScope.businessProfileId };
+        }
         if (isRefusedKind(input.kind)) {
             throw new Error(`Documents of kind "${input.kind}" are not handled here`);
         }
@@ -1206,10 +1278,12 @@ export class EnvelopePgRepo {
             updatedAt: now,
         }).onConflictDoNothing({ target: envelopeTemplates.templateId })
             .returning({ id: envelopeTemplates.templateId });
+        await this.assertTemplate(input.templateId);
         return { templateId: input.templateId, created: inserted.length > 0 };
     }
 
     async addTemplateRole(input: TemplateRoleInput): Promise<{ templateRoleId: string; created: boolean }> {
+        await this.assertTemplate(input.templateId);
         const inserted = await (this.db as any).insert(envelopeTemplateRoles).values({
             templateRoleId: input.templateRoleId,
             templateId: input.templateId,
@@ -1227,7 +1301,7 @@ export class EnvelopePgRepo {
 
     async listTemplateRoles(templateId: string) {
         return this.db.select().from(envelopeTemplateRoles)
-            .where(eq(envelopeTemplateRoles.templateId, templateId))
+            .where(and(eq(envelopeTemplateRoles.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateRoles.templateId}`)))
             .orderBy(asc(envelopeTemplateRoles.orderNo));
     }
 
@@ -1265,7 +1339,7 @@ export class EnvelopePgRepo {
     async moveTemplateField(templateId: string, fieldId: string, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
         const rows = await this.db.update(envelopeTemplateFields)
             .set({ x: String(rect.x), y: String(rect.y), w: String(rect.w), h: String(rect.h) })
-            .where(and(eq(envelopeTemplateFields.templateId, templateId), eq(envelopeTemplateFields.templateFieldId, fieldId)))
+            .where(and(eq(envelopeTemplateFields.templateId, templateId), eq(envelopeTemplateFields.templateFieldId, fieldId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)))
             .returning({ id: envelopeTemplateFields.templateFieldId });
         return rows.length > 0;
     }
@@ -1276,19 +1350,19 @@ export class EnvelopePgRepo {
         fields: TemplateFieldInput[];
     }): Promise<boolean> {
         return (this.tx as any).transaction(async (tx: any) => {
-            const [template] = await tx.select().from(envelopeTemplates).where(and(
+            const [template] = await tx.select().from(envelopeTemplates).where(this.withinTemplate(
                 eq(envelopeTemplates.templateId, input.templateId), eq(envelopeTemplates.orgId, input.orgId),
             )).for('update');
             if (!template) throw new Error('No such template');
             if (template.s3Key) return false;
             if (template.updatedAt !== input.expectedUpdatedAt) throw new Error('Template changed during preparation. Try again.');
-            const scoped = new EnvelopePgRepo(tx, tx);
+            const scoped = new EnvelopePgRepo(tx, tx, this.templateScope);
             await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, input.templateId));
             for (const field of input.fields) {
                 await scoped.addTemplateField({ ...field, templateId: input.templateId });
             }
             await tx.update(envelopeTemplates).set({ s3Key: input.s3Key, updatedAt: new Date().toISOString() })
-                .where(eq(envelopeTemplates.templateId, input.templateId));
+                .where(this.withinTemplate(eq(envelopeTemplates.templateId, input.templateId)));
             return true;
         });
     }
@@ -1296,41 +1370,41 @@ export class EnvelopePgRepo {
     /** Role definitions belong to the template; recipient identities belong to each use. */
     async configureTemplate(templateId: string, orgId: string, roles: TemplateRoleInput[], signatureMethod: 'digital' | 'wet'): Promise<void> {
         return (this.tx as any).transaction(async (tx: any) => {
-            const [template] = await tx.select().from(envelopeTemplates).where(and(
+            const [template] = await tx.select().from(envelopeTemplates).where(this.withinTemplate(
                 eq(envelopeTemplates.templateId, templateId), eq(envelopeTemplates.orgId, orgId),
             )).for('update');
             if (!template) throw new Error('No such template');
-            const scoped = new EnvelopePgRepo(tx, tx);
+            const scoped = new EnvelopePgRepo(tx, tx, this.templateScope);
             const before = await scoped.listTemplateRoles(templateId);
             const shape = (rows: any[]) => JSON.stringify(rows.map(r => [r.roleKey, r.label, r.signingRole, r.signingCapacity || 'principal', r.orderNo || 0, r.required ?? true]));
             if (shape(before) === shape(roles) && (template.signatureMethod || 'digital') === signatureMethod) return;
             const layoutChanged = shape(before) !== shape(roles);
             // Generated pages contain the role labels. Changing roles requires new pages.
             if (layoutChanged && template.bodyMarkdown) {
-                await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, templateId));
+                await tx.delete(envelopeTemplateFields).where(and(eq(envelopeTemplateFields.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)));
             } else {
                 const fieldRoles = roles.filter(r => canHoldFields(r.signingRole)).map(r => r.roleKey);
                 const fields = await scoped.listTemplateFields(templateId);
                 for (const field of fields) if (!fieldRoles.includes(field.roleKey)) await scoped.removeTemplateField(field.templateFieldId);
             }
-            await tx.delete(envelopeTemplateRoles).where(eq(envelopeTemplateRoles.templateId, templateId));
+            await tx.delete(envelopeTemplateRoles).where(and(eq(envelopeTemplateRoles.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateRoles.templateId}`)));
             for (const role of roles) await scoped.addTemplateRole({ ...role, templateId });
             await tx.update(envelopeTemplates).set({
                 signatureMethod, updatedAt: new Date().toISOString(),
                 ...(layoutChanged && template.bodyMarkdown ? { s3Key: null } : {}),
-            }).where(eq(envelopeTemplates.templateId, templateId));
+            }).where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId)));
         });
     }
 
     async listTemplateFields(templateId: string) {
         return this.db.select().from(envelopeTemplateFields)
-            .where(eq(envelopeTemplateFields.templateId, templateId))
+            .where(and(eq(envelopeTemplateFields.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)))
             .orderBy(asc(envelopeTemplateFields.page));
     }
 
     async removeTemplateField(templateFieldId: string): Promise<void> {
         await (this.db as any).delete(envelopeTemplateFields)
-            .where(eq(envelopeTemplateFields.templateFieldId, templateFieldId));
+            .where(and(eq(envelopeTemplateFields.templateFieldId, templateFieldId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)));
     }
 
     /**
@@ -1375,7 +1449,7 @@ export class EnvelopePgRepo {
         }
 
         const rows = await this.db.select().from(envelopeTemplates)
-            .where(and(...clauses))
+            .where(this.withinTemplate(...clauses))
             .orderBy(desc(envelopeTemplates.createdAt), desc(envelopeTemplates.templateId))
             .limit(limit + 1);
 
@@ -1430,11 +1504,11 @@ export class EnvelopePgRepo {
         const [roleRows, fieldRows] = await Promise.all([
             this.db.select({ id: envelopeTemplateRoles.templateId, n: sql<number>`count(*)::int` })
                 .from(envelopeTemplateRoles)
-                .where(inArray(envelopeTemplateRoles.templateId, templateIds))
+                .where(and(inArray(envelopeTemplateRoles.templateId, templateIds), this.ownedTemplate(sql`${envelopeTemplateRoles.templateId}`)))
                 .groupBy(envelopeTemplateRoles.templateId),
             this.db.select({ id: envelopeTemplateFields.templateId, n: sql<number>`count(*)::int` })
                 .from(envelopeTemplateFields)
-                .where(inArray(envelopeTemplateFields.templateId, templateIds))
+                .where(and(inArray(envelopeTemplateFields.templateId, templateIds), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)))
                 .groupBy(envelopeTemplateFields.templateId),
         ]);
 
@@ -1447,7 +1521,7 @@ export class EnvelopePgRepo {
 
     async getTemplate(templateId: string) {
         const r = await this.db.select().from(envelopeTemplates)
-            .where(eq(envelopeTemplates.templateId, templateId)).limit(1);
+            .where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId))).limit(1);
         return (r[0] as any) ?? null;
     }
 
@@ -1457,14 +1531,15 @@ export class EnvelopePgRepo {
      * fields are placed would silently re-tier a prepared template.
      */
     async updateTemplate(templateId: string, patch: { name?: string; bodyMarkdown?: string; description?: string }): Promise<void> {
+        if (this.templateScope) patch = Object.fromEntries(Object.entries(patch).filter(([key]) => ['name', 'bodyMarkdown', 'description'].includes(key)));
         await (this.tx as any).transaction(async (tx: any) => {
-            const [template] = await tx.select().from(envelopeTemplates).where(eq(envelopeTemplates.templateId, templateId)).for('update');
+            const [template] = await tx.select().from(envelopeTemplates).where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId))).for('update');
             if (!template) throw new Error('No such template');
             const changed = (patch.bodyMarkdown !== undefined && patch.bodyMarkdown !== template.bodyMarkdown)
                 || (patch.name !== undefined && patch.name !== template.name && !!template.bodyMarkdown);
             const set = { ...patch, updatedAt: new Date().toISOString(), ...(changed ? { s3Key: null } : {}) };
-            if (changed) await tx.delete(envelopeTemplateFields).where(eq(envelopeTemplateFields.templateId, templateId));
-            await tx.update(envelopeTemplates).set(set).where(eq(envelopeTemplates.templateId, templateId));
+            if (changed) await tx.delete(envelopeTemplateFields).where(and(eq(envelopeTemplateFields.templateId, templateId), this.ownedTemplate(sql`${envelopeTemplateFields.templateId}`)));
+            await tx.update(envelopeTemplates).set(set).where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId)));
         });
     }
 
@@ -1472,7 +1547,7 @@ export class EnvelopePgRepo {
     async archiveTemplate(templateId: string): Promise<void> {
         await (this.db as any).update(envelopeTemplates)
             .set({ archivedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
-            .where(eq(envelopeTemplates.templateId, templateId));
+            .where(this.withinTemplate(eq(envelopeTemplates.templateId, templateId)));
     }
 
     /**
@@ -1484,13 +1559,15 @@ export class EnvelopePgRepo {
      * signed has to stay what it was.
      */
     async createFromTemplate(input: CreateFromTemplateInput): Promise<EnvelopeDTO> {
+        if (this.templateScope && input.orgId !== this.templateScope.orgId) throw new Error('Template scope mismatch');
         return await (this.tx as any).transaction(async (tx: any) => {
-            await tx.select().from(envelopeTemplates).where(and(eq(envelopeTemplates.templateId, input.templateId),
+            await tx.select().from(envelopeTemplates).where(this.withinTemplate(eq(envelopeTemplates.templateId, input.templateId),
                 eq(envelopeTemplates.orgId, input.orgId))).for('update');
-            const scoped = new EnvelopePgRepo(tx, tx);
+            const scoped = new EnvelopePgRepo(tx, tx, this.templateScope);
+            await scoped.assertTemplate(input.templateId);
             const existing = await scoped.get(input.envelopeId);
             if (existing) {
-                if (existing.orgId !== input.orgId) throw new Error('No such document');
+                if (existing.orgId !== input.orgId || (this.templateScope && existing.businessProfileId !== this.templateScope.businessProfileId)) throw new Error('No such document');
                 return existing;
             }
             return scoped.createFromTemplateInside(input);
@@ -1577,7 +1654,7 @@ export class EnvelopePgRepo {
         // template at once should count as two.
         await (this.db as any).update(envelopeTemplates)
             .set({ timesUsed: sql`${envelopeTemplates.timesUsed} + 1`, updatedAt: new Date().toISOString() })
-            .where(eq(envelopeTemplates.templateId, input.templateId));
+            .where(this.withinTemplate(eq(envelopeTemplates.templateId, input.templateId)));
 
         return envelope;
     }
@@ -1591,6 +1668,7 @@ export class EnvelopePgRepo {
     async listEnvelopes(params: ListEnvelopesParams): Promise<ListEnvelopesResult> {
         const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
         const clauses = [eq(envelopes.orgId, params.orgId)];
+        if (params.businessProfileId !== undefined) clauses.push(eq(envelopes.businessProfileId, params.businessProfileId));
         if (params.status) clauses.push(eq(envelopes.status, params.status));
 
         // In the database, for the reason listTemplates says: filtering an
@@ -1620,10 +1698,10 @@ export class EnvelopePgRepo {
      * The vault's column counts, as one grouped query. Counting by reducing over
      * a loaded page works at a dozen documents and is silently wrong at sixty.
      */
-    async countByStatus(orgId: string): Promise<Record<string, number>> {
+    async countByStatus(orgId: string, businessProfileId?: string): Promise<Record<string, number>> {
         const rows = await this.db.select({ status: envelopes.status, n: sql<number>`count(*)::int` })
             .from(envelopes)
-            .where(eq(envelopes.orgId, orgId))
+            .where(and(eq(envelopes.orgId, orgId), businessProfileId !== undefined ? eq(envelopes.businessProfileId, businessProfileId) : undefined))
             .groupBy(envelopes.status);
         const out: Record<string, number> = {};
         for (const r of rows as any[]) out[r.status] = Number(r.n);

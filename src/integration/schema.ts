@@ -8,6 +8,7 @@ export const IntegrationStoredSchema = z.object({
     credentials: z.any().nullish(),
     config: z.any().nullish(),
     syncSettings: z.any().nullish(),
+    connectionVersion: z.string().optional(),
     connectedBy: z.string().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),

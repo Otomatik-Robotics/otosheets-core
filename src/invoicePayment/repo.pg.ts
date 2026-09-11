@@ -11,6 +11,7 @@ const NUMERIC_KEYS = ['amount'];
 function toPaymentDto(row: any): InvoicePayment {
     const dto: any = {};
     for (const [k, v] of Object.entries(row)) {
+        if (k === 'matchEvent') continue; // internal delivery intent, never a public payment DTO
         if (v === null) continue;
         if (v instanceof Date) dto[k] = v.toISOString();
         else if (NUMERIC_KEYS.includes(k) && typeof v === 'string') dto[k] = Number(v);
@@ -22,7 +23,7 @@ function toPaymentDto(row: any): InvoicePayment {
 
 function toPaymentRow(p: Record<string, any>): Record<string, any> {
     // Strip the Dynamo-only sort key; columns are named to match DTO keys.
-    const { sk, ...rest } = p;
+    const { sk, matchEvent: _matchEvent, ...rest } = p;
     const row: Record<string, any> = {};
     for (const [k, v] of Object.entries(rest)) {
         if (v === undefined) continue;

@@ -31,7 +31,13 @@ function withDefaults(p: BusinessProfile): ResolvedBusinessProfile {
  * Post-backfill every org has an active profile; if one is somehow missing this
  * synthesises a minimal profile from the org record so callers still render.
  */
-export async function resolveBusinessProfile(orgId: string): Promise<ResolvedBusinessProfile> {
+export async function resolveBusinessProfile(orgId: string, businessProfileId?: string): Promise<ResolvedBusinessProfile> {
+    if (businessProfileId !== undefined) {
+        if (!businessProfileId.trim()) throw new Error('Business profile is required');
+        const profile = await getBusinessProfileRepo().getByOrgAndId(orgId, businessProfileId);
+        if (!profile) throw new Error('Business profile is not available in this organisation');
+        return withDefaults(profile);
+    }
     const org = await getOrgRepo().getOrg(orgId);
     const profileId = (org as any)?.businessProfileId;
 
