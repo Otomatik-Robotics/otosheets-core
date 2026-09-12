@@ -8,7 +8,7 @@ import { TripDynamoRepo, type ITripRepo } from './repo';
 import { TripPgRepo } from './repo.pg';
 
 const DOMAIN = 'ops' as const, ENTITY = 'trip';
-type PP = { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string };
+type PP = { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string };
 
 export class RoutingTripRepo implements ITripRepo {
     constructor(private dynamo: ITripRepo, private pg: ITripRepo) {}
