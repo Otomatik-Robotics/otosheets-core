@@ -189,9 +189,10 @@ export class InvoicePgRepo implements IInvoiceRepo {
         return this.hydrate(rows);
     }
 
-    async listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]> {
+    async listInvoicesByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Invoice[]> {
         const rows = await this.db.select().from(invoices)
-            .where(and(eq(invoices.orgId, orgId), gte(invoices.date, from), lte(invoices.date, to)));
+            .where(and(eq(invoices.orgId, orgId), gte(invoices.date, from), lte(invoices.date, to),
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined));
         return this.hydrate(rows);
     }
 
@@ -200,16 +201,18 @@ export class InvoicePgRepo implements IInvoiceRepo {
         return this.hydrate(rows);
     }
 
-    async listDraftInvoices(orgId: string): Promise<Invoice[]> {
+    async listDraftInvoices(orgId: string, businessProfileId?: string): Promise<Invoice[]> {
         const rows = await this.db.select().from(invoices)
             .where(and(eq(invoices.orgId, orgId), eq(invoices.status, 'DRAFT'),
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
                 or(sql`${invoices.isPaymentLink} IS NULL`, eq(invoices.isPaymentLink, false))));
         return this.hydrate(rows);
     }
 
-    async listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]> {
+    async listOverdueInvoices(orgId: string, beforeDate: string, businessProfileId?: string): Promise<Invoice[]> {
         const rows = await this.db.select().from(invoices)
             .where(and(eq(invoices.orgId, orgId), lt(invoices.dueDate, beforeDate),
+                businessProfileId ? eq(invoices.businessProfileId, businessProfileId) : undefined,
                 inArray(invoices.status, ['SENT', 'PARTIAL', 'OVERDUE'])));
         return this.hydrate(rows);
     }

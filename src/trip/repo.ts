@@ -10,7 +10,7 @@ export interface ITripRepo {
     findTripByIdInOrg(orgId: string, tripId: string): Promise<{ trip: Trip; ownerId: string } | null>;
     listAllOrgTrips(orgId: string): Promise<Trip[]>;
     listUserTrips(orgId: string, userId: string): Promise<Trip[]>;
-    listTripsByDate(orgId: string, from: string, to: string): Promise<Trip[]>;
+    listTripsByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Trip[]>;
     listOrgTripsPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string; }): Promise<PaginatedResult<Trip>>;
     createTrip(orgId: string, userId: string, tripId: string, data: Record<string, any>): Promise<void>;
     deleteTrip(orgId: string, userId: string, tripId: string): Promise<void>;
@@ -115,12 +115,13 @@ export class TripDynamoRepo implements ITripRepo {
         return (Items as Trip[]) ?? [];
     }
 
-    async listTripsByDate(orgId: string, from: string, to: string): Promise<Trip[]> {
+    async listTripsByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Trip[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.TRIPS,
             IndexName: 'DateIndex',
             KeyConditionExpression: 'orgId = :orgId AND dateSk BETWEEN :from AND :to',
-            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿` },
+            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :businessProfileId' } : {}),
+            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿`, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
         });
         return (Items as Trip[]) ?? [];
     }

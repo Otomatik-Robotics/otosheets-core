@@ -210,9 +210,9 @@ export class ClientPgRepo implements IClientRepo {
             .where(and(eq(clients.orgId, orgId), eq(clients.clientId, clientId)));
     }
 
-    async getTopByUsage(orgId: string, limit = 3): Promise<Client[]> {
+    async getTopByUsage(orgId: string, limit = 3, businessProfileId?: string): Promise<Client[]> {
         const rows = await this.db.select().from(clients)
-            .where(eq(clients.orgId, orgId))
+            .where(and(eq(clients.orgId, orgId), businessProfileId ? eq(clients.businessProfileId, businessProfileId) : undefined))
             .orderBy(sql`${clients.paymentLinkUsageCount} DESC NULLS LAST`)
             .limit(limit);
         const contacts = await this.contactsByClient(rows.map((r: any) => r.clientId));

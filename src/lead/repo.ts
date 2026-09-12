@@ -35,11 +35,11 @@ export interface ILeadRepo {
     getLead(orgId: string, userId: string, leadId: string): Promise<Lead | null>;
     findLeadByIdInOrg(orgId: string, leadId: string): Promise<{ lead: Lead; ownerId: string } | null>;
     listUserLeads(orgId: string, userId: string): Promise<Lead[]>;
-    listAllOrgLeads(orgId: string): Promise<Lead[]>;
+    listAllOrgLeads(orgId: string, businessProfileId?: string): Promise<Lead[]>;
     listOrgLeadsPaginated(params: LeadPageParams): Promise<PaginatedResult<Lead>>;
     findActiveLeadBySenderId(orgId: string, senderId: string): Promise<Lead | null>;
     countOrgLeads(orgId: string): Promise<number>;
-    listRecentLeads(orgId: string, since: string): Promise<Lead[]>;
+    listRecentLeads(orgId: string, since: string, businessProfileId?: string): Promise<Lead[]>;
     findLeadsByPipelineId(orgId: string, pipelineId: string): Promise<Lead[]>;
     listLeadsByStage(orgId: string, stage: string): Promise<Lead[]>;
     createLead(orgId: string, userId: string, leadId: string, data: Record<string, any>): Promise<void>;
@@ -82,11 +82,12 @@ export class LeadDynamoRepo implements ILeadRepo {
         return (Items as Lead[]) ?? [];
     }
 
-    async listAllOrgLeads(orgId: string): Promise<Lead[]> {
+    async listAllOrgLeads(orgId: string, businessProfileId?: string): Promise<Lead[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.LEADS,
             KeyConditionExpression: 'orgId = :orgId',
-            ExpressionAttributeValues: { ':orgId': orgId },
+            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :businessProfileId' } : {}),
+            ExpressionAttributeValues: { ':orgId': orgId, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
         });
         return (Items as Lead[]) ?? [];
     }
@@ -178,12 +179,13 @@ export class LeadDynamoRepo implements ILeadRepo {
         return Count ?? 0;
     }
 
-    async listRecentLeads(orgId: string, since: string): Promise<Lead[]> {
+    async listRecentLeads(orgId: string, since: string, businessProfileId?: string): Promise<Lead[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.LEADS,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId AND createdAt >= :since',
-            ExpressionAttributeValues: { ':orgId': orgId, ':since': since },
+            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :businessProfileId' } : {}),
+            ExpressionAttributeValues: { ':orgId': orgId, ':since': since, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
             ScanIndexForward: false,
         });
         return (Items as Lead[]) ?? [];

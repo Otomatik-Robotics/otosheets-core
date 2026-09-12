@@ -32,11 +32,11 @@ export class RoutingLeadRepo implements ILeadRepo {
     async getLead(o: string, u: string, id: string) { const r = await resolveRoute(DOMAIN); return this.read('getLead', () => this.pick(r).getLead(o, u, id), () => this.pg.getLead(o, u, id), r); }
     async findLeadByIdInOrg(o: string, id: string) { const r = await resolveRoute(DOMAIN); return this.read('findLeadByIdInOrg', () => this.pick(r).findLeadByIdInOrg(o, id), () => this.pg.findLeadByIdInOrg(o, id), r); }
     async listUserLeads(o: string, u: string) { const r = await resolveRoute(DOMAIN); return this.read('listUserLeads', () => this.pick(r).listUserLeads(o, u), () => this.pg.listUserLeads(o, u), r); }
-    async listAllOrgLeads(o: string) { const r = await resolveRoute(DOMAIN); return this.read('listAllOrgLeads', () => this.pick(r).listAllOrgLeads(o), () => this.pg.listAllOrgLeads(o), r); }
+    async listAllOrgLeads(o: string, p?: string) { const r = await resolveRoute(DOMAIN); return this.read('listAllOrgLeads', () => this.pick(r).listAllOrgLeads(o, p), () => this.pg.listAllOrgLeads(o, p), r); }
     async listOrgLeadsPaginated(p: PagParams): Promise<PaginatedResult<Lead>> { return this.pick(await resolveRoute(DOMAIN)).listOrgLeadsPaginated(p); }
     async findActiveLeadBySenderId(o: string, s: string) { const r = await resolveRoute(DOMAIN); return this.read('findActiveLeadBySenderId', () => this.pick(r).findActiveLeadBySenderId(o, s), () => this.pg.findActiveLeadBySenderId(o, s), r); }
     async countOrgLeads(o: string) { const r = await resolveRoute(DOMAIN); return this.read('countOrgLeads', () => this.pick(r).countOrgLeads(o), () => this.pg.countOrgLeads(o), r); }
-    async listRecentLeads(o: string, s: string) { const r = await resolveRoute(DOMAIN); return this.read('listRecentLeads', () => this.pick(r).listRecentLeads(o, s), () => this.pg.listRecentLeads(o, s), r); }
+    async listRecentLeads(o: string, s: string, p?: string) { const r = await resolveRoute(DOMAIN); return this.read('listRecentLeads', () => this.pick(r).listRecentLeads(o, s, p), () => this.pg.listRecentLeads(o, s, p), r); }
     async findLeadsByPipelineId(o: string, p: string) { const r = await resolveRoute(DOMAIN); return this.read('findLeadsByPipelineId', () => this.pick(r).findLeadsByPipelineId(o, p), () => this.pg.findLeadsByPipelineId(o, p), r); }
     async listLeadsByStage(o: string, s: string) { const r = await resolveRoute(DOMAIN); return this.read('listLeadsByStage', () => this.pick(r).listLeadsByStage(o, s), () => this.pg.listLeadsByStage(o, s), r); }
     async createLead(o: string, u: string, id: string, d: Record<string, any>) { const r = await resolveRoute(DOMAIN); await this.pick(r).createLead(o, u, id, d); await this.mirrorEntity(r, o, u, id, 'createLead'); }

@@ -29,7 +29,7 @@ export interface IClientRepo {
     batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]>;
     deleteClient(orgId: string, clientId: string): Promise<void>;
     incrementPaymentLinkUsage(orgId: string, clientId: string): Promise<void>;
-    getTopByUsage(orgId: string, limit?: number): Promise<Client[]>;
+    getTopByUsage(orgId: string, limit?: number, businessProfileId?: string): Promise<Client[]>;
     /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
     upsertClient(client: Client): Promise<void>;
 }
@@ -220,15 +220,19 @@ export class ClientDynamoRepo implements IClientRepo {
         });
     }
 
-    async getTopByUsage(orgId: string, limit = 3): Promise<Client[]> {
+    async getTopByUsage(orgId: string, limit = 3, businessProfileId?: string): Promise<Client[]> {
+        // A Limit on a filtered query counts pre-filter rows, so read a wider
+        // page when scoping and trim; the index is small per org.
         const result = await this.ddb.query({
             TableName: Tables.CLIENTS,
             IndexName: 'UsageCountIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            ExpressionAttributeValues: { ':orgId': orgId },
+            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :businessProfileId' } : {}),
+            ExpressionAttributeValues: { ':orgId': orgId, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
             ScanIndexForward: false,
-            Limit: limit,
+            Limit: businessProfileId ? Math.max(limit * 10, 50) : limit,
         });
+        if (businessProfileId) return ((result.Items as Client[]) ?? []).slice(0, limit);
         return (result.Items as Client[]) ?? [];
     }
 }

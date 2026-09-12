@@ -38,10 +38,11 @@ export interface IInvoiceRepo {
     findInvoiceByIdInOrg(orgId: string, invoiceId: string): Promise<{ invoice: Invoice; ownerId: string } | null>;
     listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>>;
     listUserInvoices(orgId: string, userId: string): Promise<Invoice[]>;
-    listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]>;
+    /** Every read below takes an optional business profile; a profile-scoped caller MUST pass it or it sees the whole org. */
+    listInvoicesByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Invoice[]>;
     listAllOrgInvoices(orgId: string): Promise<Invoice[]>;
-    listDraftInvoices(orgId: string): Promise<Invoice[]>;
-    listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]>;
+    listDraftInvoices(orgId: string, businessProfileId?: string): Promise<Invoice[]>;
+    listOverdueInvoices(orgId: string, beforeDate: string, businessProfileId?: string): Promise<Invoice[]>;
     /** Live KPI-band aggregate (outstanding / overdue / awaiting / draft) for one org. */
     getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary>;
     getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals>;
@@ -51,6 +52,10 @@ export interface IInvoiceRepo {
     /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
     upsertInvoice(invoice: Invoice): Promise<void>;
 }
+
+/** Appends the business-profile predicate to a FilterExpression when a profile is given. */
+const profileFilter = (businessProfileId?: string) => (businessProfileId ? ' AND businessProfileId = :businessProfileId' : '');
+const profileValue = (businessProfileId?: string) => (businessProfileId ? { ':businessProfileId': businessProfileId } : {});
 
 export class InvoiceDynamoRepo implements IInvoiceRepo {
     constructor(private ddb: IDdb) {}
@@ -215,14 +220,14 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return (Items as Invoice[]) ?? [];
     }
 
-    async listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]> {
+    async listInvoicesByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            FilterExpression: '#date >= :from AND #date <= :to',
+            FilterExpression: '#date >= :from AND #date <= :to' + profileFilter(businessProfileId),
             ExpressionAttributeNames: { '#date': 'date' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': to },
+            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': to, ...profileValue(businessProfileId) },
         });
         return (Items as Invoice[]) ?? [];
     }
@@ -236,26 +241,26 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return (Items as Invoice[]) ?? [];
     }
 
-    async listDraftInvoices(orgId: string): Promise<Invoice[]> {
+    async listDraftInvoices(orgId: string, businessProfileId?: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            FilterExpression: '#status = :draft AND (attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false)',
+            FilterExpression: '#status = :draft AND (attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false)' + profileFilter(businessProfileId),
             ExpressionAttributeNames: { '#status': 'status', '#isPaymentLink': 'isPaymentLink' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':draft': 'DRAFT', ':false': false },
+            ExpressionAttributeValues: { ':orgId': orgId, ':draft': 'DRAFT', ':false': false, ...profileValue(businessProfileId) },
         });
         return (Items as Invoice[]) ?? [];
     }
 
-    async listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]> {
+    async listOverdueInvoices(orgId: string, beforeDate: string, businessProfileId?: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'DueDateIndex',
             KeyConditionExpression: 'orgId = :orgId AND dueDateSk < :before',
-            FilterExpression: '#status IN (:sent, :partial, :overdue)',
+            FilterExpression: '#status IN (:sent, :partial, :overdue)' + profileFilter(businessProfileId),
             ExpressionAttributeNames: { '#status': 'status' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE' },
+            ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE', ...profileValue(businessProfileId) },
         });
         return (Items as Invoice[]) ?? [];
     }

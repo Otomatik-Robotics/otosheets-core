@@ -9,8 +9,8 @@ export interface ITimeEntryRepo {
     getTimeEntry(orgId: string, userId: string, timeEntryId: string): Promise<TimeEntry | null>;
     findTimeEntryByIdInOrg(orgId: string, timeEntryId: string): Promise<{ timeEntry: TimeEntry; ownerId: string } | null>;
     listAllOrgTimeEntries(orgId: string): Promise<TimeEntry[]>;
-    listTimeEntries(orgId: string, userId: string, opts?: { uninvoiced?: boolean }): Promise<TimeEntry[]>;
-    listOrgTimeEntriesPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string; }): Promise<PaginatedResult<TimeEntry>>;
+    listTimeEntries(orgId: string, userId: string, opts?: { uninvoiced?: boolean; businessProfileId?: string }): Promise<TimeEntry[]>;
+    listOrgTimeEntriesPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string; }): Promise<PaginatedResult<TimeEntry>>;
     createTimeEntry(orgId: string, userId: string, timeEntryId: string, data: Record<string, any>): Promise<void>;
     updateTimeEntry(orgId: string, userId: string, timeEntryId: string, updates: Record<string, any>): Promise<void>;
     deleteTimeEntry(orgId: string, userId: string, timeEntryId: string): Promise<void>;
@@ -53,6 +53,7 @@ export class TimeEntryDynamoRepo implements ITimeEntryRepo {
 
     async listOrgTimeEntriesPaginated(params: {
         orgId: string;
+        businessProfileId?: string;
         limit?: number;
         exclusiveStartKey?: Record<string, any>;
         clientId?: string;
@@ -61,10 +62,11 @@ export class TimeEntryDynamoRepo implements ITimeEntryRepo {
         uninvoiced?: boolean;
         search?: string;
     }): Promise<PaginatedResult<TimeEntry>> {
-        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced, search } = params;
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced, search } = params;
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
+        if (businessProfileId) { filterParts.push('businessProfileId = :businessProfileId'); values[':businessProfileId'] = businessProfileId; }
 
         if (clientId) {
             filterParts.push('#clientId = :clientId');
@@ -109,15 +111,16 @@ export class TimeEntryDynamoRepo implements ITimeEntryRepo {
         };
     }
 
-    async listTimeEntries(orgId: string, userId: string, opts?: { uninvoiced?: boolean }): Promise<TimeEntry[]> {
+    async listTimeEntries(orgId: string, userId: string, opts?: { uninvoiced?: boolean; businessProfileId?: string }): Promise<TimeEntry[]> {
         const params: any = {
             TableName: Tables.TIME_ENTRIES,
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
             ExpressionAttributeValues: { ':orgId': orgId, ':prefix': `${userId}#` },
         };
-        if (opts?.uninvoiced) {
-            params.FilterExpression = 'attribute_not_exists(invoicedAt)';
-        }
+        const filters: string[] = [];
+        if (opts?.uninvoiced) filters.push('attribute_not_exists(invoicedAt)');
+        if (opts?.businessProfileId) { filters.push('businessProfileId = :businessProfileId'); params.ExpressionAttributeValues[':businessProfileId'] = opts.businessProfileId; }
+        if (filters.length) params.FilterExpression = filters.join(' AND ');
         const { Items } = await this.ddb.query(params);
         return (Items as TimeEntry[]) ?? [];
     }

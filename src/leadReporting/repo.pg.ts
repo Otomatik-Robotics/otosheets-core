@@ -49,17 +49,17 @@ export class LeadReportingPgRepo {
      * Counting client-side is not an option: the list is paginated, so a
      * group-by over a page only ever sees a page.
      */
-    async countByPipeline(orgId: string, stage: string): Promise<PipelineStageCount[]> {
+    async countByPipeline(orgId: string, stage: string, businessProfileId?: string): Promise<PipelineStageCount[]> {
         const rows = await this.db
             .select({ pipelineId: leads.pipelineId, n: sql<number>`count(*)::int` })
             .from(leads)
-            .where(and(eq(leads.orgId, orgId), eq(leads.stage, stage)))
+            .where(and(eq(leads.orgId, orgId), eq(leads.stage, stage), businessProfileId ? eq(leads.businessProfileId, businessProfileId) : undefined))
             .groupBy(leads.pipelineId);
         return rows.map(r => ({ pipelineId: r.pipelineId ?? null, count: r.n ?? 0 }));
     }
 
     /** Leads that have not moved stage in `days`, longest-sitting first. */
-    async listStale(orgId: string, days: number, limit = 200): Promise<StaleLead[]> {
+    async listStale(orgId: string, days: number, limit = 200, businessProfileId?: string): Promise<StaleLead[]> {
         const rows = await this.db
             .select({
                 row: leads,
@@ -69,6 +69,7 @@ export class LeadReportingPgRepo {
             .from(leads)
             .where(and(
                 eq(leads.orgId, orgId),
+                businessProfileId ? eq(leads.businessProfileId, businessProfileId) : undefined,
                 notInArray(leads.stage, TERMINAL_STAGES),
                 sql`${IN_STAGE_SINCE} < now() - make_interval(days => ${days})`,
             ))

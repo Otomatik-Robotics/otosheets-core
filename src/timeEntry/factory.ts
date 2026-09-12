@@ -8,7 +8,7 @@ import { TimeEntryDynamoRepo, type ITimeEntryRepo } from './repo';
 import { TimeEntryPgRepo } from './repo.pg';
 
 const DOMAIN = 'ops' as const, ENTITY = 'timeEntry';
-type PP = { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string };
+type PP = { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string };
 
 export class RoutingTimeEntryRepo implements ITimeEntryRepo {
     constructor(private dynamo: ITimeEntryRepo, private pg: ITimeEntryRepo) {}

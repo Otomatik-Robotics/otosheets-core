@@ -19,14 +19,16 @@ export class TimeEntryPgRepo implements ITimeEntryRepo {
     async getTimeEntry(o: string, _u: string, id: string) { const r = await this.db.select().from(timeEntries).where(and(eq(timeEntries.orgId, o), eq(timeEntries.timeEntryId, id))).limit(1); return r[0] ? toDto(r[0]) : null; }
     async findTimeEntryByIdInOrg(o: string, id: string) { const r = await this.db.select().from(timeEntries).where(and(eq(timeEntries.orgId, o), eq(timeEntries.timeEntryId, id))).limit(1); return r[0] ? { timeEntry: toDto(r[0]), ownerId: (r[0] as any).ownerId } : null; }
     async listAllOrgTimeEntries(o: string) { return (await this.db.select().from(timeEntries).where(eq(timeEntries.orgId, o))).map(toDto); }
-    async listTimeEntries(o: string, userId: string, opts?: { uninvoiced?: boolean }) {
+    async listTimeEntries(o: string, userId: string, opts?: { uninvoiced?: boolean; businessProfileId?: string }) {
         const conds: any[] = [eq(timeEntries.orgId, o), eq(timeEntries.ownerId, userId)];
         if (opts?.uninvoiced) conds.push(isNull(timeEntries.invoicedAt));
+        if (opts?.businessProfileId) conds.push(eq(timeEntries.businessProfileId, opts.businessProfileId));
         return (await this.db.select().from(timeEntries).where(and(...conds))).map(toDto);
     }
-    async listOrgTimeEntriesPaginated(params: { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string; }): Promise<PaginatedResult<TimeEntry>> {
-        const { orgId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced, search } = params;
+    async listOrgTimeEntriesPaginated(params: { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; clientId?: string; from?: string; to?: string; uninvoiced?: boolean; search?: string; }): Promise<PaginatedResult<TimeEntry>> {
+        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, clientId, from, to, uninvoiced, search } = params;
         const conds: any[] = [eq(timeEntries.orgId, orgId)];
+        if (businessProfileId) conds.push(eq(timeEntries.businessProfileId, businessProfileId));
         if (clientId) conds.push(eq(timeEntries.clientId, clientId));
         if (from) conds.push(gte(timeEntries.date, from));
         if (to) conds.push(lte(timeEntries.date, to));
