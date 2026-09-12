@@ -156,6 +156,14 @@ export interface CreateTemplateInput {
     kind: string;
     bodyMarkdown?: string | null;
     s3Key?: string | null;
+    /**
+     * What the template was drafted from. Creation-time only: updateTemplate
+     * deliberately does not accept them, since the wording was drafted from
+     * these answers and rewriting one without the other leaves them disagreeing.
+     */
+    answers?: Record<string, unknown> | null;
+    jurisdiction?: string | null;
+    effectiveDate?: string | null;
 }
 
 export interface TemplateRoleInput {
@@ -1061,11 +1069,19 @@ export class EnvelopePgRepo {
      * guesses cannot each read the same low count.
      */
     async registerFailedCodeAttempt(recipientId: string, maxAttempts: number, lockedUntil: string): Promise<{ attempts: number; locked: boolean }> {
+        const now = new Date().toISOString();
+        // A lock that has already passed starts the count again at this
+        // attempt. Without that, the counter carries over and the recipient is
+        // for ever one wrong code from another full lockout, which is not the
+        // window the lockout promised. Still one statement: every expression
+        // reads the row as it was, so parallel guesses cannot share a count.
+        const lockExpired = sql`(${envelopeRecipients.lockedUntil} IS NOT NULL AND ${envelopeRecipients.lockedUntil} < ${now})`;
+        const nextAttempts = sql`CASE WHEN ${lockExpired} THEN 1 ELSE ${envelopeRecipients.failedAttempts} + 1 END`;
         const rows = await (this.db as any).update(envelopeRecipients)
             .set({
-                failedAttempts: sql`${envelopeRecipients.failedAttempts} + 1`,
-                lockedUntil: sql`CASE WHEN ${envelopeRecipients.failedAttempts} + 1 >= ${maxAttempts} THEN ${lockedUntil} ELSE ${envelopeRecipients.lockedUntil} END`,
-                updatedAt: new Date().toISOString(),
+                failedAttempts: nextAttempts,
+                lockedUntil: sql`CASE WHEN ${nextAttempts} >= ${maxAttempts} THEN ${lockedUntil} WHEN ${lockExpired} THEN NULL ELSE ${envelopeRecipients.lockedUntil} END`,
+                updatedAt: now,
             })
             .where(eq(envelopeRecipients.recipientId, recipientId))
             .returning({ attempts: envelopeRecipients.failedAttempts, lockedUntil: envelopeRecipients.lockedUntil });
@@ -1274,6 +1290,9 @@ export class EnvelopePgRepo {
             kind: input.kind,
             bodyMarkdown: input.bodyMarkdown ?? null,
             s3Key: input.s3Key ?? null,
+            answers: input.answers ?? null,
+            jurisdiction: input.jurisdiction ?? null,
+            effectiveDate: input.effectiveDate ?? null,
             createdAt: now,
             updatedAt: now,
         }).onConflictDoNothing({ target: envelopeTemplates.templateId })
@@ -1611,6 +1630,12 @@ export class EnvelopePgRepo {
             versionId: input.versionId,
             bodyMarkdown: template.bodyMarkdown ?? null,
             s3Key: template.s3Key ?? null,
+            // Copied, like the wording: the document was drafted under these
+            // answers and this jurisdiction, and it keeps them even if the
+            // template is later replaced.
+            answers: template.answers ?? null,
+            jurisdiction: template.jurisdiction ?? null,
+            effectiveDate: template.effectiveDate ?? null,
         });
 
         // Fill the roles with people, then re-point the template's fields at

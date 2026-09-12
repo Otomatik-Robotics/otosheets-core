@@ -700,6 +700,32 @@ describe('recipients and delivery', () => {
         expect(cleared.failedAttempts).toBe(0);
         expect(cleared.lockedUntil).toBeNull();
     });
+
+    it('restarts the count once a lockout has passed, rather than staying one wrong code from the next', async () => {
+        const { envelopeId } = await makeEnvelope();
+        const rid = id('rcp');
+        await repo.addRecipient({ recipientId: rid, envelopeId, role: 'signer', email: 'a@x.com' });
+
+        // Five wrong codes under a lock that expired in the past.
+        const pastLock = '2000-01-01T00:00:00.000Z';
+        for (let i = 0; i < 5; i++) await repo.registerFailedCodeAttempt(rid, 5, pastLock);
+        expect((await repo.getRecipient(rid)).failedAttempts).toBe(5);
+        expect((await repo.getRecipient(rid)).lockedUntil).toBe(pastLock);
+
+        // The window is over: the next wrong code is attempt 1 of a new window, not a fresh lockout.
+        const futureLock = '2099-01-01T00:00:00.000Z';
+        const next = await repo.registerFailedCodeAttempt(rid, 5, futureLock);
+        expect(next).toEqual({ attempts: 1, locked: false });
+        const after = await repo.getRecipient(rid);
+        expect(after.failedAttempts).toBe(1);
+        expect(after.lockedUntil).toBeNull();
+
+        // An unexpired lock still counts on from where it was.
+        for (let i = 0; i < 4; i++) await repo.registerFailedCodeAttempt(rid, 5, futureLock);
+        expect((await repo.getRecipient(rid)).lockedUntil).toBe(futureLock);
+        const still = await repo.registerFailedCodeAttempt(rid, 5, futureLock);
+        expect(still).toEqual({ attempts: 6, locked: true });
+    });
 });
 
 describe('authoring', () => {
@@ -849,6 +875,70 @@ describe('reusable documents', () => {
         expect((await repo.listTemplates('org_1')).items.map((t: any) => t.templateId)).not.toContain(templateId);
         expect((await repo.listTemplates('org_1', { includeArchived: true })).items.map((t: any) => t.templateId)).toContain(templateId);
         expect(await repo.getTemplate(templateId)).toBeTruthy();
+    });
+
+    it('keeps what the template was drafted from', async () => {
+        const templateId = id('tpl');
+        const answers = { counterpartyType: 'company', term: '2 years', mutual: true };
+        await repo.createTemplate({
+            templateId, orgId: 'org_1', createdBy: 'user_1', name: 'Mutual NDA', kind: 'nda',
+            bodyMarkdown: '## NDA {{sig:counterparty}}',
+            answers, jurisdiction: 'VIC', effectiveDate: '2026-09-01',
+        });
+        const stored = await repo.getTemplate(templateId);
+        expect(stored.answers).toEqual(answers);
+        expect(stored.jurisdiction).toBe('VIC');
+        expect(stored.effectiveDate).toBe('2026-09-01');
+
+        // A template that was never drafted reads as null, not as an empty object.
+        const uploaded = id('tpl');
+        await repo.createTemplate({ templateId: uploaded, orgId: 'org_1', createdBy: 'user_1', name: 'Uploaded', kind: 'proposal', s3Key: 'k' });
+        const bare = await repo.getTemplate(uploaded);
+        expect(bare.answers).toBeNull();
+        expect(bare.jurisdiction).toBeNull();
+        expect(bare.effectiveDate).toBeNull();
+    });
+
+    it('copies the drafting facts onto a document made from the template', async () => {
+        const templateId = id('tpl');
+        const answers = { counterpartyType: 'sole_trader', term: '12 months' };
+        await repo.createTemplate({
+            templateId, orgId: 'org_1', createdBy: 'user_1', name: 'NDA', kind: 'nda',
+            bodyMarkdown: '## NDA {{sig:counterparty}}',
+            answers, jurisdiction: 'NSW', effectiveDate: '2026-10-15',
+        });
+        const made = await repo.createFromTemplate({
+            envelopeId: id('env'), versionId: id('ver'), templateId, orgId: 'org_1', createdBy: 'user_1',
+        });
+        expect(made.answers).toEqual(answers);
+        expect(made.jurisdiction).toBe('NSW');
+        expect(made.effectiveDate).toBe('2026-10-15');
+
+        const fetched = await repo.get(made.envelopeId);
+        expect(fetched?.answers).toEqual(answers);
+        expect(fetched?.jurisdiction).toBe('NSW');
+        expect(fetched?.effectiveDate).toBe('2026-10-15');
+    });
+
+    it('replays a createFromTemplate with the same envelopeId as the existing document, unchanged', async () => {
+        const templateId = id('tpl');
+        await repo.createTemplate({
+            templateId, orgId: 'org_1', createdBy: 'user_1', name: 'NDA', kind: 'nda',
+            bodyMarkdown: '## NDA {{sig:counterparty}}',
+            answers: { term: '1 year' }, jurisdiction: 'QLD', effectiveDate: '2026-01-01',
+        });
+        const envelopeId = id('env');
+        const first = await repo.createFromTemplate({
+            envelopeId, versionId: id('ver'), templateId, orgId: 'org_1', createdBy: 'user_1', title: 'NDA for Ellis',
+        });
+        const again = await repo.createFromTemplate({
+            envelopeId, versionId: id('ver'), templateId, orgId: 'org_1', createdBy: 'user_1', title: 'A different title',
+        });
+        expect(again).toEqual(first);
+        expect(again.title).toBe('NDA for Ellis');
+        expect(again.jurisdiction).toBe('QLD');
+        expect((await repo.listVersions(envelopeId)).length).toBe(1);
+        expect((await repo.getTemplate(templateId)).timesUsed).toBe(1);
     });
 });
 

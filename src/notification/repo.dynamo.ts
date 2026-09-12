@@ -8,9 +8,10 @@ export class NotificationDynamoRepo implements INotificationRepo {
     withScope(orgId: string, businessProfileId: string): NotificationDynamoRepo {
         return new NotificationDynamoRepo(this.ddb, notificationScope(orgId, businessProfileId, this.scope));
     }
-    private scopeCondition() { return this.scope ? ' AND #org = :org AND #profile = :profile' : ''; }
+    // Unstamped rows predate profile scoping and belong to the recipient; see notificationOwned.
+    private scopeCondition() { return this.scope ? ' AND (attribute_not_exists(#org) OR #org = :null OR (#org = :org AND #profile = :profile))' : ''; }
     private scopeNames(): Record<string, string> { return this.scope ? { '#org': 'organizationId', '#profile': 'businessProfileId' } : {}; }
-    private scopeValues(): Record<string, string> { return this.scope ? { ':org': this.scope.orgId, ':profile': this.scope.businessProfileId } : {}; }
+    private scopeValues(): Record<string, string | null> { return this.scope ? { ':org': this.scope.orgId, ':profile': this.scope.businessProfileId, ':null': null } : {}; }
 
     async getNotification(userId: string, notificationId: string): Promise<Notification | null> {
         notificationKey(userId, notificationId);
