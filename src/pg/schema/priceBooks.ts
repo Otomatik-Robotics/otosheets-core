@@ -25,7 +25,6 @@ import { orgs } from './identity';
 export const priceBooks = pgTable('price_books', {
     priceBookId: text('price_book_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),
     name: text('name').notNull(),
     type: text('type').notNull().default('standard').$type<'standard' | 'catalog'>(),
     isDefault: boolean('is_default').notNull().default(false),

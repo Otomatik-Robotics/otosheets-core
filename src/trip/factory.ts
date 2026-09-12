@@ -8,7 +8,7 @@ import { TripDynamoRepo, type ITripRepo } from './repo';
 import { TripPgRepo } from './repo.pg';
 
 const DOMAIN = 'ops' as const, ENTITY = 'trip';
-type PP = { orgId: string; businessProfileId?: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string };
+type PP = { orgId: string; limit?: number; exclusiveStartKey?: Record<string, any>; search?: string; purpose?: string; dateFrom?: string; dateTo?: string };
 
 export class RoutingTripRepo implements ITripRepo {
     constructor(private dynamo: ITripRepo, private pg: ITripRepo) {}
@@ -20,7 +20,7 @@ export class RoutingTripRepo implements ITripRepo {
     async findTripByIdInOrg(o: string, id: string) { const r = await resolveRoute(DOMAIN); return this.rd('findTripByIdInOrg', () => this.pick(r).findTripByIdInOrg(o, id), () => this.pg.findTripByIdInOrg(o, id), r); }
     async listAllOrgTrips(o: string) { const r = await resolveRoute(DOMAIN); return this.rd('listAllOrgTrips', () => this.pick(r).listAllOrgTrips(o), () => this.pg.listAllOrgTrips(o), r); }
     async listUserTrips(o: string, u: string) { const r = await resolveRoute(DOMAIN); return this.rd('listUserTrips', () => this.pick(r).listUserTrips(o, u), () => this.pg.listUserTrips(o, u), r); }
-    async listTripsByDate(o: string, f: string, t: string, p?: string) { const r = await resolveRoute(DOMAIN); return this.rd('listTripsByDate', () => this.pick(r).listTripsByDate(o, f, t, p), () => this.pg.listTripsByDate(o, f, t, p), r); }
+    async listTripsByDate(o: string, f: string, t: string) { const r = await resolveRoute(DOMAIN); return this.rd('listTripsByDate', () => this.pick(r).listTripsByDate(o, f, t), () => this.pg.listTripsByDate(o, f, t), r); }
     async listOrgTripsPaginated(p: PP): Promise<PaginatedResult<Trip>> { return this.pick(await resolveRoute(DOMAIN)).listOrgTripsPaginated(p); }
     async createTrip(o: string, u: string, id: string, d: Record<string, any>) { const r = await resolveRoute(DOMAIN); await this.pick(r).createTrip(o, u, id, d); await this.mE(r, o, u, id, 'createTrip'); }
     async deleteTrip(o: string, u: string, id: string) { const r = await resolveRoute(DOMAIN); await this.pick(r).deleteTrip(o, u, id); const m = this.mirrorOf(r); if (m) await mirrorWrite({ domain: DOMAIN, entity: ENTITY, op: 'deleteTrip', key: { orgId: o, userId: u, tripId: id } }, () => m.deleteTrip(o, u, id)); }

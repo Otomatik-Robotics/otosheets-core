@@ -47,10 +47,10 @@ export class RoutingClientRepo implements IClientRepo {
         // read with a Dynamo cursor is not a like-for-like comparison.
         return this.pick(route).listClientsPaginated(params);
     }
-    async findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null> {
+    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).findClientByEmail(orgId, email, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'findClientByEmail' }, result, () => this.pg.findClientByEmail(orgId, email, businessProfileId));
+        const result = await this.pick(route).findClientByEmail(orgId, email);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'findClientByEmail' }, result, () => this.pg.findClientByEmail(orgId, email));
         return result;
     }
     async countClients(orgId: string): Promise<number> {
@@ -65,16 +65,16 @@ export class RoutingClientRepo implements IClientRepo {
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listClientEmails' }, result, () => this.pg.listClientEmails(orgId));
         return result;
     }
-    async batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]> {
+    async batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).batchGetClients(orgId, clientIds, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'batchGetClients' }, result, () => this.pg.batchGetClients(orgId, clientIds, businessProfileId));
+        const result = await this.pick(route).batchGetClients(orgId, clientIds);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'batchGetClients' }, result, () => this.pg.batchGetClients(orgId, clientIds));
         return result;
     }
-    async getTopByUsage(orgId: string, limit?: number, businessProfileId?: string): Promise<Client[]> {
+    async getTopByUsage(orgId: string, limit?: number): Promise<Client[]> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).getTopByUsage(orgId, limit, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getTopByUsage' }, result, () => this.pg.getTopByUsage(orgId, limit, businessProfileId));
+        const result = await this.pick(route).getTopByUsage(orgId, limit);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getTopByUsage' }, result, () => this.pg.getTopByUsage(orgId, limit));
         return result;
     }
 

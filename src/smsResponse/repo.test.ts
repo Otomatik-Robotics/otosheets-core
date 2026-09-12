@@ -4,37 +4,45 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { readFileSync } from 'node:fs';
 import { SmsResponseRepo } from './repo';
 import { InboundEmailRepo } from '../inboundEmail/repo';
+import { splitStatements } from '../pg/migrate';
 let pg: PGlite, repo: SmsResponseRepo;
-const scope = { orgId: 'org', businessProfileId: 'profile' };
+const scope = { orgId: 'org' };
+const other = { orgId: 'other-org' };
+// The email and SMS tables as 0056/0057/0059 made them, re-keyed on the
+// organisation by 0071's statements for those tables (orgs itself is stubbed).
+async function emailAndSmsTables() {
+    for (const file of ['0056_inbound_email.sql', '0057_invoice_reply_links.sql', '0059_sms_response_links.sql']) await pg.exec(readFileSync(`drizzle/${file}`, 'utf8'));
+    for (const statement of splitStatements(readFileSync('drizzle/0071_identity_on_orgs.sql', 'utf8'))) if (!/\borgs\b/.test(statement)) await pg.exec(statement);
+}
 const context = { source: 'test', originId: 'message', recipient: { kind: 'lead' as const, id: 'lead', ownerId: 'owner' }, invoiceId: 'invoice' };
 beforeEach(async () => {
     pg = new PGlite();
-    await pg.exec(readFileSync('drizzle/0059_sms_response_links.sql', 'utf8'));
-    await pg.exec(`CREATE TABLE invoices(invoice_id text,org_id text,business_profile_id text,client_id text);
-      INSERT INTO invoices VALUES('invoice','org','profile','client');
-      CREATE TABLE leads (lead_id text,org_id text,business_profile_id text,owner_id text,client_phone text);
-      CREATE TABLE clients (client_id text,org_id text,business_profile_id text,created_by text,phone text,archived boolean);
+    await emailAndSmsTables();
+    await pg.exec(`CREATE TABLE invoices(invoice_id text,org_id text,client_id text);
+      INSERT INTO invoices VALUES('invoice','org','client');
+      CREATE TABLE leads (lead_id text,org_id text,owner_id text,client_phone text);
+      CREATE TABLE clients (client_id text,org_id text,created_by text,phone text,archived boolean);
       CREATE TABLE client_contacts(contact_id text,client_id text,phone text);
-      CREATE TABLE bookings(booking_id text,org_id text,business_profile_id text,owner_id text,client_phone text);
-      INSERT INTO leads VALUES ('lead','org','profile','owner','0422 819 869'),('other','org','other-profile','other','0422 819 869');`);
+      CREATE TABLE bookings(booking_id text,org_id text,owner_id text,client_phone text);
+      INSERT INTO leads VALUES ('lead','org','owner','0422 819 869'),('other','other-org','other','0422 819 869');`);
     repo = new SmsResponseRepo(drizzle(pg) as any);
 });
 afterEach(async () => pg.close());
 describe('SMS public replies', () => {
-    it('normalizes phones only inside the intended profile and record', async () => {
+    it('normalizes phones only inside the intended organisation and record', async () => {
         expect(await repo.findRecipient(scope, '+61422819869')).toEqual(context.recipient);
         expect(await repo.findRecipient(scope, '+61422819869', { kind: 'lead', id: 'other' })).toBeNull();
         const { token } = await repo.create(scope, context, '+61422819869');
         expect((await repo.submit(token, '0422 819 869', 'request1234567890', 'Reply')).status).toBe('accepted');
         expect(await repo.isInvoicePaused(scope, 'invoice')).toBe(true);
-        expect(await repo.isInvoicePaused({ ...scope, businessProfileId: 'other-profile' }, 'invoice')).toBe(false);
+        expect(await repo.isInvoicePaused(other, 'invoice')).toBe(false);
     });
     it('rejects forged, expired, revoked and failed-delivery links', async () => {
         expect(await repo.resolve('a'.repeat(32))).toBeNull();
         const old = await repo.create(scope, { ...context, originId: 'expired' }, '+61422819869', new Date('2020-01-01'));
         expect(await repo.resolve(old.token)).toBeNull();
         const link = await repo.create(scope, context, '+61422819869');
-        await repo.revoke({ ...scope, businessProfileId: 'wrong' }, link.tokenHash);
+        await repo.revoke(other, link.tokenHash);
         expect(await repo.resolve(link.token)).not.toBeNull();
         await repo.revoke(scope, link.tokenHash);
         expect(await repo.resolve(link.token)).toBeNull();
@@ -49,7 +57,7 @@ describe('SMS public replies', () => {
         expect((await repo.submit(token, '+61422819869', 'request1234567891', 'Changed')).status).toBe('unavailable');
         expect(await repo.listPending()).toHaveLength(1);
         expect((await repo.listReplies(scope)).items[0].responseText).toBe('Original');
-        expect((await repo.listReplies({ ...scope, businessProfileId: 'other-profile' })).items).toEqual([]);
+        expect((await repo.listReplies(other)).items).toEqual([]);
     });
     it('limits guesses and never pauses an invoice for a mismatch', async () => {
         const now = new Date();
@@ -60,11 +68,11 @@ describe('SMS public replies', () => {
     });
     it('rejects a moved/deleted recipient even when the old phone is known', async () => {
         const { token } = await repo.create(scope, context, '+61422819869');
-        await pg.exec("UPDATE leads SET business_profile_id='moved' WHERE lead_id='lead'");
+        await pg.exec("UPDATE leads SET org_id='moved' WHERE lead_id='lead'");
         expect((await repo.submit(token, '+61422819869', 'request1234567890', 'Reply')).status).toBe('invalid');
     });
     it('does not guess between duplicate records', async () => {
-        await pg.exec("INSERT INTO leads VALUES('duplicate','org','profile','owner','+61422819869')");
+        await pg.exec("INSERT INTO leads VALUES('duplicate','org','owner','+61422819869')");
         expect(await repo.findRecipient(scope, '+61422819869')).toBeNull();
         expect(await repo.findRecipient(scope, '+61422819869', context.recipient)).toEqual(context.recipient);
     });
@@ -85,25 +93,21 @@ it('leases serialize overlapping processors and permit recovery after expiry', a
 });
 
 it('SMS reply pauses the same email delivery arbitration without SES message fabrication', async () => {
-    await pg.exec(readFileSync('drizzle/0056_inbound_email.sql', 'utf8'));
-    await pg.exec(readFileSync('drizzle/0057_invoice_reply_links.sql', 'utf8'));
     const email = new InboundEmailRepo(drizzle(pg) as any);
     await email.ensureConversation(scope, { conversationId: 'email', invoiceId: 'invoice', customerEmail: 'customer@example.com' }, 'in.example.com');
     const link = await repo.create(scope, context, '+61422819869');
     await repo.submit(link.token, '+61422819869', 'request1234567890', 'Please review');
     expect(await email.claimDelivery(scope, 'email', 'later-reminder')).toBe('paused');
     expect(await email.claimInvoiceDelivery(scope, 'invoice', 'later-text')).toBe('paused');
-    expect(await email.isInvoicePaused({ ...scope, businessProfileId: 'other' }, 'invoice')).toBe(false);
+    expect(await email.isInvoicePaused(other, 'invoice')).toBe(false);
     expect((await email.listMessages(scope)).items).toEqual([]);
 });
 
-it('rejects an originating invoice outside the recipient profile', async () => {
+it('rejects an originating invoice outside the recipient organisation', async () => {
     await expect(repo.create(scope, { ...context, invoiceId: 'foreign' }, '+61422819869')).rejects.toThrow('Invoice outside');
 });
 
 it('generic invoice delivery claims deduplicate without SES conversations', async () => {
-    await pg.exec(readFileSync('drizzle/0056_inbound_email.sql', 'utf8'));
-    await pg.exec(readFileSync('drizzle/0057_invoice_reply_links.sql', 'utf8'));
     const email = new InboundEmailRepo(drizzle(pg) as any);
     expect(await email.claimInvoiceDelivery(scope, 'invoice', 'first')).toBe('claimed');
     expect(await email.claimInvoiceDelivery(scope, 'invoice', 'first')).toBe('duplicate');

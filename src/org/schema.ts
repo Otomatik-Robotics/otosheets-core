@@ -34,8 +34,6 @@ export const OrgStoredSchema = z.object({
     bookingSettings: z.any().nullish(),
     tradeSettings: z.any().nullish(),
     autoReconcile: AutoReconcileSettingsSchema.nullish(),
-    /** Active business profile (FK → business_profiles). Every consumer resolves through this. */
-    businessProfileId: z.string().nullish(),
     // ─── Per-org studio entitlement ──────────────────────────────
     /**
      * Studio ids this org is entitled to (e.g. `['ops.money', 'ledger']`) — the

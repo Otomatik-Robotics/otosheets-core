@@ -52,10 +52,10 @@ export class RoutingInvoiceRepo implements IInvoiceRepo {
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listUserInvoices' }, result, () => this.pg.listUserInvoices(orgId, userId));
         return result;
     }
-    async listInvoicesByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Invoice[]> {
+    async listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).listInvoicesByDate(orgId, from, to, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listInvoicesByDate' }, result, () => this.pg.listInvoicesByDate(orgId, from, to, businessProfileId));
+        const result = await this.pick(route).listInvoicesByDate(orgId, from, to);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listInvoicesByDate' }, result, () => this.pg.listInvoicesByDate(orgId, from, to));
         return result;
     }
     async listAllOrgInvoices(orgId: string): Promise<Invoice[]> {
@@ -64,22 +64,22 @@ export class RoutingInvoiceRepo implements IInvoiceRepo {
         if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listAllOrgInvoices' }, result, () => this.pg.listAllOrgInvoices(orgId));
         return result;
     }
-    async listDraftInvoices(orgId: string, businessProfileId?: string): Promise<Invoice[]> {
+    async listDraftInvoices(orgId: string): Promise<Invoice[]> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).listDraftInvoices(orgId, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listDraftInvoices' }, result, () => this.pg.listDraftInvoices(orgId, businessProfileId));
+        const result = await this.pick(route).listDraftInvoices(orgId);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listDraftInvoices' }, result, () => this.pg.listDraftInvoices(orgId));
         return result;
     }
-    async listOverdueInvoices(orgId: string, beforeDate: string, businessProfileId?: string): Promise<Invoice[]> {
+    async listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).listOverdueInvoices(orgId, beforeDate, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listOverdueInvoices' }, result, () => this.pg.listOverdueInvoices(orgId, beforeDate, businessProfileId));
+        const result = await this.pick(route).listOverdueInvoices(orgId, beforeDate);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'listOverdueInvoices' }, result, () => this.pg.listOverdueInvoices(orgId, beforeDate));
         return result;
     }
-    async getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary> {
+    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
         const route = await resolveRoute(DOMAIN);
-        const result = await this.pick(route).getInvoiceSummary(orgId, businessProfileId);
-        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceSummary' }, result, () => this.pg.getInvoiceSummary(orgId, businessProfileId));
+        const result = await this.pick(route).getInvoiceSummary(orgId);
+        if (route.shadow) await shadowRead({ domain: DOMAIN, entity: ENTITY, op: 'getInvoiceSummary' }, result, () => this.pg.getInvoiceSummary(orgId));
         return result;
     }
 

@@ -178,8 +178,8 @@ describe('PriceBooksPgRepo', () => {
 
         it('creates one for an org that post-dates the migration', async () => {
             await q(`INSERT INTO orgs (org_id, name) VALUES ('org_new', 'New Co') ON CONFLICT DO NOTHING`);
-            const book = await repo.ensureDefaultBook('org_new', 'bp_1');
-            expect(book).toMatchObject({ priceBookId: 'pb_std_org_new', name: 'Standard', type: 'standard', isDefault: true, businessProfileId: 'bp_1' });
+            const book = await repo.ensureDefaultBook('org_new');
+            expect(book).toMatchObject({ priceBookId: 'pb_std_org_new', name: 'Standard', type: 'standard', isDefault: true });
             await repo.ensureDefaultBook('org_new');
             const rows = await q(`SELECT count(*)::int AS c FROM price_books WHERE org_id = 'org_new'`);
             expect(rows[0].c).toBe(1);

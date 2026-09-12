@@ -40,7 +40,6 @@ export type ReceiptBase = z.infer<typeof ReceiptBaseSchema>;
 
 export const ReceiptStoredSchema = ReceiptBaseSchema.extend({
     orgId: z.string(),
-    businessProfileId: z.string().nullish(),   // profile scope
     sk: z.string(),
     createdBy: z.string(),
     dateSk: z.string().nullish(),

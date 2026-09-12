@@ -6,11 +6,11 @@ import { INotificationRepo, NotificationListOptions, NotificationPage, notificat
 
 export class NotificationPgRepo implements INotificationRepo {
     constructor(private injected?: PgDb, private readonly scope?: NotificationScope) {}
-    withScope(orgId: string, businessProfileId: string): NotificationPgRepo {
-        return new NotificationPgRepo(this.injected, notificationScope(orgId, businessProfileId, this.scope));
+    withScope(orgId: string): NotificationPgRepo {
+        return new NotificationPgRepo(this.injected, notificationScope(orgId, this.scope));
     }
-    // Unstamped rows predate profile scoping and belong to the recipient; see notificationOwned.
-    private owned() { return this.scope ? sql`(${notifications.record}->>'organizationId' IS NULL OR (${notifications.record}->>'organizationId' = ${this.scope.orgId} AND ${notifications.record}->>'businessProfileId' = ${this.scope.businessProfileId}))` : sql`true`; }
+    // Unstamped rows predate organisation scoping and belong to the recipient; see notificationOwned.
+    private owned() { return this.scope ? sql`(${notifications.record}->>'organizationId' IS NULL OR ${notifications.record}->>'organizationId' = ${this.scope.orgId})` : sql`true`; }
     private get db(): PgDb { return this.injected ?? getPg(); }
     private active() { return or(isNull(notifications.ttl), gt(notifications.ttl, Math.floor(Date.now() / 1000))); }
     private record(row: typeof notifications.$inferSelect): Notification {

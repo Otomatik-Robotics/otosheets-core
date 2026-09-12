@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export const EmailScopeSchema = z.object({ orgId: z.string().min(1), businessProfileId: z.string().min(1) });
+export const EmailScopeSchema = z.object({ orgId: z.string().min(1) });
 export type EmailScope = z.infer<typeof EmailScopeSchema>;
 export const InboundMessageContentSchema = z.object({
     sender: z.string().max(320), recipients: z.array(z.string().max(320)).max(100),

@@ -103,7 +103,6 @@ export const FormBrandSchema = z.object({
 export interface FormDef {
     formId: string;
     orgId: string;
-    businessProfileId?: string | null;
     createdBy: string;
     name: string;
     /** Public URL segment — unique per org: /f/{orgSlug}/{formSlug}. */
@@ -123,7 +122,6 @@ export interface FormDef {
 export const FormDefSchema = z.object({
     formId: z.string(),
     orgId: z.string(),
-    businessProfileId: z.string().nullish(),
     createdBy: z.string(),
     name: z.string().min(1).max(120),
     slug: z.string().min(1).max(60),

@@ -20,13 +20,13 @@ export class ConversationRepo {
         return (Items as Conversation[]) ?? [];
     }
 
-    async listConversationsPage(userId: string, scope: { organizationId: string; businessProfileId: string; limit?: number; nextToken?: string }): Promise<{ items: Conversation[]; nextToken?: string }> {
-        if (!scope.organizationId || !scope.businessProfileId) throw new Error('Conversation scope is required');
+    async listConversationsPage(userId: string, scope: { organizationId: string; limit?: number; nextToken?: string }): Promise<{ items: Conversation[]; nextToken?: string }> {
+        if (!scope.organizationId) throw new Error('Conversation scope is required');
         let key: Record<string, any> | undefined;
         if (scope.nextToken) {
             try {
                 const token = JSON.parse(Buffer.from(scope.nextToken, 'base64url').toString());
-                if (token.organizationId !== scope.organizationId || token.businessProfileId !== scope.businessProfileId || token.key?.userId !== userId || typeof token.key?.conversationId !== 'string') throw new Error();
+                if (token.organizationId !== scope.organizationId || token.key?.userId !== userId || typeof token.key?.conversationId !== 'string') throw new Error();
                 key = token.key;
             } catch { throw new Error('Invalid conversation nextToken'); }
         }
@@ -35,13 +35,13 @@ export class ConversationRepo {
         const page = await this.ddb.query({
             TableName: Tables.CONVERSATIONS,
             KeyConditionExpression: 'userId = :userId',
-            FilterExpression: 'organizationId = :orgId AND businessProfileId = :profile AND (attribute_not_exists(#source) OR (NOT begins_with(#source, :meta) AND #source <> :visitor))',
+            FilterExpression: 'organizationId = :orgId AND (attribute_not_exists(#source) OR (NOT begins_with(#source, :meta) AND #source <> :visitor))',
             ExpressionAttributeNames: { '#source': 'source', '#title': 'title' },
-            ExpressionAttributeValues: { ':userId': userId, ':orgId': scope.organizationId, ':profile': scope.businessProfileId, ':meta': 'meta_', ':visitor': 'website_agent' },
-            ProjectionExpression: 'conversationId, #title, messageCount, createdAt, updatedAt, organizationId, businessProfileId',
+            ExpressionAttributeValues: { ':userId': userId, ':orgId': scope.organizationId, ':meta': 'meta_', ':visitor': 'website_agent' },
+            ProjectionExpression: 'conversationId, #title, messageCount, createdAt, updatedAt, organizationId',
             ScanIndexForward: false, Limit: limit, ExclusiveStartKey: key,
         });
-        return { items: (page.Items ?? []) as Conversation[], ...(page.LastEvaluatedKey ? { nextToken: Buffer.from(JSON.stringify({ organizationId: scope.organizationId, businessProfileId: scope.businessProfileId, key: page.LastEvaluatedKey })).toString('base64url') } : {}) };
+        return { items: (page.Items ?? []) as Conversation[], ...(page.LastEvaluatedKey ? { nextToken: Buffer.from(JSON.stringify({ organizationId: scope.organizationId, key: page.LastEvaluatedKey })).toString('base64url') } : {}) };
     }
 
     async createConversation(userId: string, conversationId: string, data: Record<string, any>): Promise<void> {

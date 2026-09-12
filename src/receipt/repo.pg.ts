@@ -24,8 +24,6 @@ function round2(n: number): number {
 /** Shared filter set for the Expenses list + summary (excludes DUPLICATE/ARCHIVED). */
 export interface ReceiptListFilters {
     orgId: string;
-    /** Optional business-profile scope (multi-profile isolation). */
-    businessProfileId?: string;
     /** Case-insensitive match on vendor name OR description. */
     search?: string;
     category?: string;
@@ -81,25 +79,15 @@ export interface ReceiptSummary {
 }
 
 export class ReceiptPgRepo implements IReceiptRepo {
-    constructor(private injected?: PgDb, private scope?: Readonly<{ orgId: string; businessProfileId: string }>) {}
-
-    /** Bind every query, aggregate and mutation to an already validated tenant. */
-    withScope(orgId: string, businessProfileId: string): ReceiptPgRepo {
-        if (!orgId.trim() || !businessProfileId.trim()) throw new Error('Receipt scope is required');
-        if (this.scope && (this.scope.orgId !== orgId || this.scope.businessProfileId !== businessProfileId)) throw new Error('Receipt scope cannot change');
-        return new ReceiptPgRepo(this.injected, Object.freeze({ orgId, businessProfileId }));
-    }
+    constructor(private injected?: PgDb) {}
 
     private orgScope(orgId: string) {
-        if (this.scope && this.scope.orgId !== orgId) throw new Error('Receipt organisation mismatch');
-        return and(eq(receipts.orgId, orgId), this.scope ? eq(receipts.businessProfileId, this.scope.businessProfileId) : undefined)!;
+        return eq(receipts.orgId, orgId);
     }
 
     private scopedData(orgId: string, data: Record<string, any>) {
-        this.orgScope(orgId);
         if (data.orgId !== undefined && data.orgId !== orgId) throw new Error('Receipt organisation mismatch');
-        if (this.scope && data.businessProfileId !== undefined && data.businessProfileId !== this.scope.businessProfileId) throw new Error('Receipt profile mismatch');
-        return this.scope ? { ...data, businessProfileId: this.scope.businessProfileId } : data;
+        return data;
     }
     private get db(): PgDb { return this.injected ?? getPg(); }
 
@@ -115,7 +103,7 @@ export class ReceiptPgRepo implements IReceiptRepo {
     async createReceipt(o: string, u: string, id: string, data: Record<string, any>) { await this.db.insert(receipts).values({ ...dtoToRow(this.scopedData(o, data), NUM, STRIP), orgId: o, receiptId: id, ownerId: u, createdBy: u, createdAt: new Date() } as any); }
     async updateReceipt(o: string, _u: string, id: string, upd: Record<string, any>) { await this.db.update(receipts).set(dtoToRow(this.scopedData(o, upd), NUM, [...STRIP, 'orgId', 'receiptId', 'ownerId', 'createdBy']) as any).where(and(this.orgScope(o), eq(receipts.receiptId, id))); }
     async deleteReceipt(o: string, _u: string, id: string) { await this.db.delete(receipts).where(and(this.orgScope(o), eq(receipts.receiptId, id))); }
-    async upsertReceipt(receipt: Receipt) { if (this.scope) throw new Error('Scoped receipt repositories cannot import records'); const row = { ...dtoToRow(receipt as Record<string, any>, NUM, STRIP), ownerId: ownerFromSk(receipt as any) }; await this.db.insert(receipts).values(row as any).onConflictDoUpdate({ target: receipts.receiptId, set: row as any }); }
+    async upsertReceipt(receipt: Receipt) { const row = { ...dtoToRow(receipt as Record<string, any>, NUM, STRIP), ownerId: ownerFromSk(receipt as any) }; await this.db.insert(receipts).values(row as any).onConflictDoUpdate({ target: receipts.receiptId, set: row as any }); }
 
     // ── Review + asset signals (0046). Each is a single conditional UPDATE … RETURNING:
     //    true only when this call changed the row, so every caller is retry-safe. ──
@@ -237,7 +225,6 @@ export class ReceiptPgRepo implements IReceiptRepo {
             notInArray(receipts.status, ['DUPLICATE', 'ARCHIVED']),
         ];
         if (requireDate) conds.push(sql`${receipts.date} IS NOT NULL`);
-        if (f.businessProfileId) conds.push(eq(receipts.businessProfileId, f.businessProfileId));
         if (f.search) {
             const like = `%${f.search}%`;
             conds.push(or(sql`${receipts.vendorName} ILIKE ${like}`, sql`${receipts.description} ILIKE ${like}`));

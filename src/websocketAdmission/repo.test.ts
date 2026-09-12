@@ -34,7 +34,7 @@ function fixture() {
     } as unknown as IDdb;
     return { repo: new WebsocketAdmissionRepo(ddb, 'connections', 'env:api', () => now), ddb, rows, writes, advance: (seconds: number) => { now += seconds; } };
 }
-const business: WebsocketIdentity = { userId: 'user', kind: 'business', orgId: 'org', businessProfileId: 'A' };
+const business: WebsocketIdentity = { userId: 'user', kind: 'business', orgId: 'org' };
 
 describe('WebSocket admission', () => {
     it('stores only a hashed ticket and admits one concurrent consumer with canonical identity', async () => {
@@ -72,20 +72,20 @@ describe('WebSocket admission', () => {
         expect(await repo.connect(second.ticket, 'retry', async () => true)).toMatchObject(business);
     });
 
-    it('never returns legacy, expired, account-only, foreign-profile or foreign-audience connections for business fanout', async () => {
+    it('never returns legacy, expired, account-only, foreign-org or foreign-audience connections for business fanout', async () => {
         const { repo, rows, advance } = fixture();
         const first = await repo.issue(business);
         await repo.connect(first.ticket, 'own', async () => true);
-        const other = await repo.issue({ ...business, businessProfileId: 'B' });
+        const other = await repo.issue({ ...business, orgId: 'org-b' });
         await repo.connect(other.ticket, 'other', async () => true);
         const account = await repo.issue({ userId: 'user', kind: 'account' });
         await repo.connect(account.ticket, 'account', async () => true);
         rows.set('user|legacy', { userId: 'user', connectionId: 'legacy', ...business });
         rows.set('user|audience', { ...rows.get('user|own'), connectionId: 'audience', audience: 'other' });
-        expect((await repo.listBusinessConnections('user', 'org', 'A')).map(row => row.connectionId)).toEqual(['own']);
+        expect((await repo.listBusinessConnections('user', 'org')).map(row => row.connectionId)).toEqual(['own']);
         expect(await repo.getConnection('legacy')).toBeNull();
         advance(300);
-        expect(await repo.listBusinessConnections('user', 'org', 'A')).toEqual([]);
+        expect(await repo.listBusinessConnections('user', 'org')).toEqual([]);
         expect(await repo.getConnection('own')).toBeNull();
     });
 });

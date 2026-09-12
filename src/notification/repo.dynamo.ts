@@ -5,13 +5,13 @@ import { INotificationRepo, NotificationListOptions, NotificationPage, notificat
 
 export class NotificationDynamoRepo implements INotificationRepo {
     constructor(private ddb: IDdb, private readonly scope?: NotificationScope) {}
-    withScope(orgId: string, businessProfileId: string): NotificationDynamoRepo {
-        return new NotificationDynamoRepo(this.ddb, notificationScope(orgId, businessProfileId, this.scope));
+    withScope(orgId: string): NotificationDynamoRepo {
+        return new NotificationDynamoRepo(this.ddb, notificationScope(orgId, this.scope));
     }
-    // Unstamped rows predate profile scoping and belong to the recipient; see notificationOwned.
-    private scopeCondition() { return this.scope ? ' AND (attribute_not_exists(#org) OR #org = :null OR (#org = :org AND #profile = :profile))' : ''; }
-    private scopeNames(): Record<string, string> { return this.scope ? { '#org': 'organizationId', '#profile': 'businessProfileId' } : {}; }
-    private scopeValues(): Record<string, string | null> { return this.scope ? { ':org': this.scope.orgId, ':profile': this.scope.businessProfileId, ':null': null } : {}; }
+    // Unstamped rows predate organisation scoping and belong to the recipient; see notificationOwned.
+    private scopeCondition() { return this.scope ? ' AND (attribute_not_exists(#org) OR #org = :null OR #org = :org)' : ''; }
+    private scopeNames(): Record<string, string> { return this.scope ? { '#org': 'organizationId' } : {}; }
+    private scopeValues(): Record<string, string | null> { return this.scope ? { ':org': this.scope.orgId, ':null': null } : {}; }
 
     async getNotification(userId: string, notificationId: string): Promise<Notification | null> {
         notificationKey(userId, notificationId);

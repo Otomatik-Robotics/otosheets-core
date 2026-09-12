@@ -73,9 +73,8 @@ export class LeadPgRepo implements ILeadRepo {
         return rows.map(toDto);
     }
     async listOrgLeadsPaginated(params: LeadPageParams): Promise<PaginatedResult<Lead>> {
-        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, stage, source, search } = params;
+        const { orgId, limit = 20, exclusiveStartKey, stage, source, search } = params;
         const conds: any[] = [eq(leads.orgId, orgId)];
-        if (businessProfileId) conds.push(eq(leads.businessProfileId, businessProfileId));
         if (stage) conds.push(eq(leads.stage, stage));
         if (source) conds.push(eq(leads.source, source));
         const pipelineCond = pipelineMembership(params);

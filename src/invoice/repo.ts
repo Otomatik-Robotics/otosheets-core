@@ -8,7 +8,6 @@ import { PaginatedResult } from '../types';
 export interface ListInvoicesPaginatedParams {
     orgId: string;
     /** When set, scope the list to this business profile (multi-profile isolation). */
-    businessProfileId?: string;
     limit?: number;
     exclusiveStartKey?: Record<string, any>;
     status?: string;
@@ -39,12 +38,12 @@ export interface IInvoiceRepo {
     listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>>;
     listUserInvoices(orgId: string, userId: string): Promise<Invoice[]>;
     /** Every read below takes an optional business profile; a profile-scoped caller MUST pass it or it sees the whole org. */
-    listInvoicesByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Invoice[]>;
+    listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]>;
     listAllOrgInvoices(orgId: string): Promise<Invoice[]>;
-    listDraftInvoices(orgId: string, businessProfileId?: string): Promise<Invoice[]>;
-    listOverdueInvoices(orgId: string, beforeDate: string, businessProfileId?: string): Promise<Invoice[]>;
+    listDraftInvoices(orgId: string): Promise<Invoice[]>;
+    listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]>;
     /** Live KPI-band aggregate (outstanding / overdue / awaiting / draft) for one org. */
-    getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary>;
+    getInvoiceSummary(orgId: string): Promise<InvoiceSummary>;
     getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals>;
     createInvoice(orgId: string, userId: string, invoiceId: string, data: Record<string, any>): Promise<void>;
     updateInvoice(orgId: string, userId: string, invoiceId: string, updates: Record<string, any>): Promise<void>;
@@ -54,8 +53,6 @@ export interface IInvoiceRepo {
 }
 
 /** Appends the business-profile predicate to a FilterExpression when a profile is given. */
-const profileFilter = (businessProfileId?: string) => (businessProfileId ? ' AND businessProfileId = :businessProfileId' : '');
-const profileValue = (businessProfileId?: string) => (businessProfileId ? { ':businessProfileId': businessProfileId } : {});
 
 export class InvoiceDynamoRepo implements IInvoiceRepo {
     constructor(private ddb: IDdb) {}
@@ -95,16 +92,11 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         names: Record<string, string>;
         values: Record<string, any>;
     } {
-        const { orgId, businessProfileId, overdueBefore, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
+        const { orgId, overdueBefore, status, isQuote, isRecurring, isPaymentLink, clientId, search, dueDateFrom, dueDateTo, dateFrom, dateTo } = params;
 
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
-        if (businessProfileId) {
-            filterParts.push('#businessProfileId = :businessProfileId');
-            names['#businessProfileId'] = 'businessProfileId';
-            values[':businessProfileId'] = businessProfileId;
-        }
         if (overdueBefore) {
             filterParts.push('#dueDate < :overdueBefore AND #overdueStatus IN (:sentStatus, :partialStatus, :overdueStatus)');
             names['#dueDate'] = 'dueDate';
@@ -220,14 +212,14 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return (Items as Invoice[]) ?? [];
     }
 
-    async listInvoicesByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Invoice[]> {
+    async listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            FilterExpression: '#date >= :from AND #date <= :to' + profileFilter(businessProfileId),
+            FilterExpression: '#date >= :from AND #date <= :to',
             ExpressionAttributeNames: { '#date': 'date' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': to, ...profileValue(businessProfileId) },
+            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': to },
         });
         return (Items as Invoice[]) ?? [];
     }
@@ -241,26 +233,26 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return (Items as Invoice[]) ?? [];
     }
 
-    async listDraftInvoices(orgId: string, businessProfileId?: string): Promise<Invoice[]> {
+    async listDraftInvoices(orgId: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'CreatedAtIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            FilterExpression: '#status = :draft AND (attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false)' + profileFilter(businessProfileId),
+            FilterExpression: '#status = :draft AND (attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false)',
             ExpressionAttributeNames: { '#status': 'status', '#isPaymentLink': 'isPaymentLink' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':draft': 'DRAFT', ':false': false, ...profileValue(businessProfileId) },
+            ExpressionAttributeValues: { ':orgId': orgId, ':draft': 'DRAFT', ':false': false },
         });
         return (Items as Invoice[]) ?? [];
     }
 
-    async listOverdueInvoices(orgId: string, beforeDate: string, businessProfileId?: string): Promise<Invoice[]> {
+    async listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.INVOICES,
             IndexName: 'DueDateIndex',
             KeyConditionExpression: 'orgId = :orgId AND dueDateSk < :before',
-            FilterExpression: '#status IN (:sent, :partial, :overdue)' + profileFilter(businessProfileId),
+            FilterExpression: '#status IN (:sent, :partial, :overdue)',
             ExpressionAttributeNames: { '#status': 'status' },
-            ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE', ...profileValue(businessProfileId) },
+            ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE' },
         });
         return (Items as Invoice[]) ?? [];
     }
@@ -299,7 +291,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         return composeInvoiceTotals([...buckets.values()]);
     }
 
-    async getInvoiceSummary(orgId: string, businessProfileId?: string): Promise<InvoiceSummary> {
+    async getInvoiceSummary(orgId: string): Promise<InvoiceSummary> {
         // Fallback path for orgs still on the Dynamo route. Bounded per-org read
         // (paginated fully), bucketed by (status, past-due), then folded through
         // the shared compose fn. Postgres does this in one GROUP BY instead.
@@ -313,10 +305,9 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
                 KeyConditionExpression: 'orgId = :orgId',
                 FilterExpression:
                     '(attribute_not_exists(#isPaymentLink) OR #isPaymentLink = :false) ' +
-                    'AND (attribute_not_exists(#isQuote) OR #isQuote = :false)' +
-                    (businessProfileId ? ' AND #businessProfileId = :businessProfileId' : ''),
-                ExpressionAttributeNames: { '#isPaymentLink': 'isPaymentLink', '#isQuote': 'isQuote', ...(businessProfileId ? { '#businessProfileId': 'businessProfileId' } : {}) },
-                ExpressionAttributeValues: { ':orgId': orgId, ':false': false, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
+                    'AND (attribute_not_exists(#isQuote) OR #isQuote = :false)',
+                ExpressionAttributeNames: { '#isPaymentLink': 'isPaymentLink', '#isQuote': 'isQuote' },
+                ExpressionAttributeValues: { ':orgId': orgId, ':false': false },
                 ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
             });
             for (const item of (res.Items as Invoice[]) ?? []) {

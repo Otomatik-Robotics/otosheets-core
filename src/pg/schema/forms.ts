@@ -16,7 +16,6 @@ import { orgs } from './identity';
 export const forms = pgTable('forms', {
     formId: text('form_id').primaryKey(),          // client-minted ULID — retry-safe create
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),
     createdBy: text('created_by').notNull(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),                  // unique per org — the public URL segment

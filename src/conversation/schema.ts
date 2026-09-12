@@ -13,7 +13,6 @@ export type ConversationBase = z.infer<typeof ConversationBaseSchema>;
 export const ConversationStoredSchema = ConversationBaseSchema.extend({
     userId: z.string(),
     organizationId: z.string().nullish(),
-    businessProfileId: z.string().nullish(),
 });
 export type Conversation = z.infer<typeof ConversationStoredSchema>;
 

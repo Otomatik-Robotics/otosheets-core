@@ -58,7 +58,6 @@ export type PipelineBase = z.infer<typeof PipelineBaseSchema>;
 
 export const PipelineStoredSchema = PipelineBaseSchema.extend({
     orgId: z.string(),
-    businessProfileId: z.string().nullish(),   // profile scope
     createdBy: z.string(),
 });
 export type Pipeline = z.infer<typeof PipelineStoredSchema>;

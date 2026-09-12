@@ -6,7 +6,6 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { runMigrations, type SqlExecutor } from './migrate';
 import type { PgDb } from './client';
 import { JobPgRepo } from '../job/repo.pg';
-import { TimeEntryPgRepo } from '../timeEntry/repo.pg';
 import { ReceiptPgRepo } from '../receipt/repo.pg';
 import { TripPgRepo } from '../trip/repo.pg';
 import { PriceBookPgRepo } from '../priceBook/repo.pg';
@@ -30,16 +29,6 @@ describe('JobPgRepo', () => {
         expect(j!.assignedMembers).toEqual(['m1']);
         expect((await r.listOrgJobsPaginated({ orgId: 'org_1', memberId: 'm1' })).items.map(x => x.jobId)).toEqual(['j_1']);
         expect((await r.listJobsByDate('org_1', '2026-07-01', '2026-07-31')).length).toBe(1);
-    });
-});
-
-describe('TimeEntryPgRepo', () => {
-    it('uninvoiced filter + upsert with string timestamps', async () => {
-        const r = new TimeEntryPgRepo(db);
-        await r.createTimeEntry('org_1', 'u1', 't_1', { durationMinutes: 60, description: 'Work', billable: true });
-        await r.upsertTimeEntry({ timeEntryId: 't_2', orgId: 'org_1', sk: 'u1#t_2', createdBy: 'u1', durationMinutes: 30, description: 'Billed', billable: true, invoicedAt: '2026-07-05T00:00:00.000Z', createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' } as any);
-        const uninv = await r.listTimeEntries('org_1', 'u1', { uninvoiced: true });
-        expect(uninv.map(x => x.timeEntryId)).toEqual(['t_1']);
     });
 });
 

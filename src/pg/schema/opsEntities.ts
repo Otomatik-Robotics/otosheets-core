@@ -13,7 +13,6 @@ import { clients } from './billingCore';
 export const jobs = pgTable('jobs', {
     jobId: text('job_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),
     createdBy: text('created_by').notNull(),
     clientId: text('client_id').references(() => clients.clientId, { onDelete: 'set null' }),
@@ -45,8 +44,6 @@ export const jobs = pgTable('jobs', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('jobs_org_created_idx').on(t.orgId, t.createdAt.desc()),
-    index('jobs_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
-    index('jobs_profile_status_idx').on(t.businessProfileId, t.status, t.scheduledDate),
     index('jobs_org_status_idx').on(t.orgId, t.status, t.scheduledDate),
     index('jobs_client_idx').on(t.clientId),
     index('jobs_org_sched_idx').on(t.orgId, t.scheduledDate),
@@ -55,7 +52,6 @@ export const jobs = pgTable('jobs', {
 export const timeEntries = pgTable('time_entries', {
     timeEntryId: text('time_entry_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),
     createdBy: text('created_by').notNull(),
     clientId: text('client_id'),
@@ -81,7 +77,6 @@ export const timeEntries = pgTable('time_entries', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('time_entries_org_created_idx').on(t.orgId, t.createdAt.desc()),
-    index('time_entries_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
     index('time_entries_job_idx').on(t.jobId),
     index('time_entries_owner_idx').on(t.orgId, t.ownerId),
 ]);
@@ -89,7 +84,6 @@ export const timeEntries = pgTable('time_entries', {
 export const priceBookItems = pgTable('price_book_items', {
     itemId: text('item_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     name: text('name'),
     description: text('description'),
     unitPrice: numeric('unit_price', { precision: 12, scale: 2 }),
@@ -102,7 +96,6 @@ export const priceBookItems = pgTable('price_book_items', {
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('price_book_org_idx').on(t.orgId),
-    index('price_book_profile_idx').on(t.businessProfileId),
     // 0037 — the target for price_book_entries' composite (org_id, item_id) FK, so a
     // cross-tenant entry is structurally impossible rather than merely unlikely.
     unique('price_book_items_org_item_key').on(t.orgId, t.itemId),
@@ -111,7 +104,6 @@ export const priceBookItems = pgTable('price_book_items', {
 export const receipts = pgTable('receipts', {
     receiptId: text('receipt_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),
     createdBy: text('created_by').notNull(),
     s3Key: text('s3_key'),
@@ -153,7 +145,6 @@ export const receipts = pgTable('receipts', {
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('receipts_org_created_idx').on(t.orgId, t.createdAt.desc()),
-    index('receipts_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
     index('receipts_org_category_idx').on(t.orgId, t.category),
     index('receipts_content_hash_idx').on(t.orgId, t.contentHash),
     index('receipts_org_asset_candidates_idx').on(t.orgId).where(sql`asset_id IS NULL AND asset_declined_at IS NULL`),
@@ -162,7 +153,6 @@ export const receipts = pgTable('receipts', {
 export const trips = pgTable('trips', {
     tripId: text('trip_id').primaryKey(),
     orgId: text('org_id').notNull().references(() => orgs.orgId, { onDelete: 'cascade' }),
-    businessProfileId: text('business_profile_id'),   // profile scope; NOT NULL after backfill (0015)
     ownerId: text('owner_id').notNull(),
     createdBy: text('created_by').notNull(),
     startTime: text('start_time'),
@@ -178,6 +168,5 @@ export const trips = pgTable('trips', {
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (t) => [
     index('trips_org_created_idx').on(t.orgId, t.createdAt.desc()),
-    index('trips_profile_created_idx').on(t.businessProfileId, t.createdAt.desc()),
     index('trips_org_date_idx').on(t.orgId, t.date),
 ]);

@@ -5,7 +5,7 @@ import { Booking } from './schema';
 import { PaginatedResult } from '../types';
 
 export interface BookingListParams {
-    orgId: string; businessProfileId?: string; limit?: number;
+    orgId: string; limit?: number;
     exclusiveStartKey?: Record<string, any>; status?: string; from?: string; to?: string;
 }
 
@@ -15,7 +15,7 @@ export interface IBookingRepo {
     findBookingByIdInOrg(orgId: string, bookingId: string): Promise<{ booking: Booking; ownerId: string } | null>;
     listAllOrgBookings(orgId: string): Promise<Booking[]>;
     listOrgBookingsPaginated(params: BookingListParams): Promise<PaginatedResult<Booking>>;
-    listBookingsByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Booking[]>;
+    listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]>;
     /** All bookings linked to one lead — the lead timeline's booking source. */
     listBookingsByLead(orgId: string, leadId: string): Promise<Booking[]>;
     createBooking(orgId: string, userId: string, bookingId: string, data: Record<string, any>): Promise<void>;
@@ -59,12 +59,12 @@ export class BookingDynamoRepo implements IBookingRepo {
     }
 
     async listOrgBookingsPaginated(params: BookingListParams): Promise<PaginatedResult<Booking>> {
-        const { orgId, businessProfileId, limit = 20, exclusiveStartKey, status, from, to } = params;
+        const { orgId, limit = 20, exclusiveStartKey, status, from, to } = params;
         const filterParts: string[] = [];
         const names: Record<string, string> = {};
         const values: Record<string, any> = { ':orgId': orgId };
 
-        for (const [field, value, operator] of [['businessProfileId', businessProfileId, '='], ['date', from, '>='], ['date', to, '<=']] as const) {
+        for (const [field, value, operator] of [['date', from, '>='], ['date', to, '<=']] as const) {
             if (!value) continue;
             const key = field === 'date' ? (operator === '>=' ? 'from' : 'to') : field;
             filterParts.push(`#${field} ${operator} :${key}`);
@@ -99,13 +99,12 @@ export class BookingDynamoRepo implements IBookingRepo {
         await this.ddb.delete(Tables.BOOKINGS, { orgId, sk: sk(userId, bookingId) });
     }
 
-    async listBookingsByDate(orgId: string, from: string, to: string, businessProfileId?: string): Promise<Booking[]> {
+    async listBookingsByDate(orgId: string, from: string, to: string): Promise<Booking[]> {
         const { Items } = await this.ddb.query({
             TableName: Tables.BOOKINGS,
             IndexName: 'DateIndex',
             KeyConditionExpression: 'orgId = :orgId AND dateSk BETWEEN :from AND :to',
-            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿`, ...(businessProfileId ? { ':profile': businessProfileId } : {}) },
-            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :profile' } : {}),
+            ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': `${to}￿` },
         });
         return (Items as Booking[]) ?? [];
     }

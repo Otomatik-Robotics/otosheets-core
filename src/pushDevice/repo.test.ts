@@ -32,9 +32,9 @@ function fixture() {
     } as unknown as IDdb;
     return { repo: new PushDeviceRepo(ddb, 'devices', () => now), rows, ddb, advance: (seconds: number) => { now += seconds; } };
 }
-const a = { orgId: 'org', businessProfileId: 'a' }, b = { orgId: 'org', businessProfileId: 'b' };
+const a = { orgId: 'org-a' }, b = { orgId: 'org-b' };
 describe('push device binding generation', () => {
-    it('only delivers the current profile and hashes the raw token at rest', async () => {
+    it('only delivers the current organisation and hashes the raw token at rest', async () => {
         const { repo, rows } = fixture();
         await repo.register('user', 'secret-token', 'ios', 'endpoint', a, 1);
         expect(await repo.list('user', a)).toHaveLength(1); expect(await repo.list('user', b)).toEqual([]);
@@ -48,7 +48,7 @@ describe('push device binding generation', () => {
         await expect(repo.beginRegistration('old-user', 'token', a, 1)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
         expect(await repo.list('new-user', b)).toHaveLength(1);
     });
-    it('rejects a paused provider completion after a newer profile reservation', async () => {
+    it('rejects a paused provider completion after a newer organisation reservation', async () => {
         const { repo } = fixture();
         const old = await repo.beginRegistration('user', 'token', a, 1);
         await repo.register('user', 'token', 'ios', 'endpoint', b, 2);
@@ -65,7 +65,7 @@ describe('push device binding generation', () => {
         await expect(repo.completeRegistration({ ...old, expiresAt: 160 }, 'ios', 'endpoint')).rejects.toMatchObject({ name: 'TransactionCanceledException' });
         expect(await repo.list('user', a)).toEqual([]);
     });
-    it('preserves a newer user/profile against stale unregister and cleanup', async () => {
+    it('preserves a newer user/organisation against stale unregister and cleanup', async () => {
         const { repo } = fixture();
         await repo.register('old', 'token', 'ios', 'endpoint', a, 1);
         const old = (await repo.list('old', a))[0];
@@ -80,7 +80,7 @@ describe('push device binding generation', () => {
     });
     it('rejects expired provider completion and excludes legacy rows', async () => {
         const { repo, rows, advance } = fixture();
-        rows.set('user|legacy', { userId: 'user', token: 'legacy', organizationId: 'org', businessProfileId: 'a', endpointArn: 'legacy' });
+        rows.set('user|legacy', { userId: 'user', token: 'legacy', organizationId: 'org-a', endpointArn: 'legacy' });
         const lease = await repo.beginRegistration('user', 'token', a, 1); advance(61);
         await expect(repo.completeRegistration(lease, 'ios', 'endpoint')).rejects.toMatchObject({ name: 'TransactionCanceledException' });
         expect(await repo.list('user', a)).toEqual([]);

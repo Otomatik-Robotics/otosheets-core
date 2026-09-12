@@ -14,8 +14,8 @@ export class NotificationRepo implements INotificationRepo {
         this.dynamo = new NotificationDynamoRepo(ddb, scope);
         this.pg = new NotificationPgRepo(undefined, scope);
     }
-    withScope(orgId: string, businessProfileId: string): NotificationRepo {
-        return new NotificationRepo(this.ddb, notificationScope(orgId, businessProfileId, this.scope));
+    withScope(orgId: string): NotificationRepo {
+        return new NotificationRepo(this.ddb, notificationScope(orgId, this.scope));
     }
     private async repo(): Promise<INotificationRepo> { return await notificationStorageMode() === 'pg' ? this.pg : this.dynamo; }
     async getNotification(userId: string, notificationId: string): Promise<Notification | null> {

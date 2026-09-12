@@ -26,7 +26,6 @@ export type PriceBookType = 'standard' | 'catalog';
 export interface PriceBook {
     priceBookId: string;
     orgId: string;
-    businessProfileId: string | null;
     name: string;
     type: PriceBookType;
     /** The org's fall-through book. Exactly one per org; immutable; undeletable. */
@@ -80,7 +79,6 @@ export const PriceBookTypeSchema = z.enum(['standard', 'catalog']);
 export const PriceBookSchema = z.object({
     priceBookId: z.string(),
     orgId: z.string(),
-    businessProfileId: z.string().nullable(),
     name: z.string(),
     type: PriceBookTypeSchema,
     isDefault: z.boolean(),

@@ -6,7 +6,7 @@ import { leads, bookings } from '../pg/schema/leadsPipelines';
 import { clients, clientContacts, invoices } from '../pg/schema/billingCore';
 import { SmsResponseScopeSchema, SmsResponseContextSchema, type SmsResponseScope, type SmsResponseContext, type SmsRecipient } from './schema';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const scoped = (scope: SmsResponseScope) => { SmsResponseScopeSchema.parse(scope); return and(eq(links.orgId, scope.orgId), eq(links.businessProfileId, scope.businessProfileId)); };
+const scoped = (scope: SmsResponseScope) => { SmsResponseScopeSchema.parse(scope); return eq(links.orgId, scope.orgId); };
 const phone = (value: string) => { const p = value.replace(/[\s()-]/g, ''); return p.startsWith('04') ? `+61${p.slice(1)}` : p.startsWith('61') ? `+${p}` : p; };
 export type SmsResponseLink = typeof links.$inferSelect;
 /** Operational state is Postgres-only. Tokens contain no recipient information. */
@@ -14,22 +14,22 @@ export class SmsResponseRepo {
     constructor(private readonly injectedDb?: PgDb) {}
     private db() { return this.injectedDb ?? getPg(); }
     private tx() { return this.injectedDb ?? getPgTx(); }
-    /** Resolve only within the explicit profile. Ambiguous recipients need an explicit record reference. */
+    /** Resolve only within the organisation. Ambiguous recipients need an explicit record reference. */
     async findRecipient(scope: SmsResponseScope, normalizedPhone: string, hint?: { kind: SmsRecipient['kind']; id: string }): Promise<SmsRecipient | null> {
         SmsResponseScopeSchema.parse(scope);
         if (!/^\+[1-9]\d{7,14}$/.test(normalizedPhone)) return null;
         const matches = (column: any) => sql`(case when regexp_replace(coalesce(${column}, ''), '[[:space:]()-]', '', 'g') like '04%' then '+61' || substring(regexp_replace(${column}, '[[:space:]()-]', '', 'g') from 2) when regexp_replace(coalesce(${column}, ''), '[[:space:]()-]', '', 'g') like '61%' then '+' || regexp_replace(${column}, '[[:space:]()-]', '', 'g') else regexp_replace(coalesce(${column}, ''), '[[:space:]()-]', '', 'g') end) = ${normalizedPhone}`;
         const result: SmsRecipient[] = [];
         if (!hint || hint.kind === 'lead') {
-            const rows = await this.db().select({ id: leads.leadId, ownerId: leads.ownerId }).from(leads).where(and(eq(leads.orgId, scope.orgId), eq(leads.businessProfileId, scope.businessProfileId), matches(leads.clientPhone), hint ? eq(leads.leadId, hint.id) : undefined)).limit(2);
+            const rows = await this.db().select({ id: leads.leadId, ownerId: leads.ownerId }).from(leads).where(and(eq(leads.orgId, scope.orgId), matches(leads.clientPhone), hint ? eq(leads.leadId, hint.id) : undefined)).limit(2);
             result.push(...rows.map(r => ({ ...r, kind: 'lead' as const })));
         }
         if (!hint || hint.kind === 'client') {
-            const rows = await this.db().selectDistinct({ id: clients.clientId, ownerId: clients.createdBy }).from(clients).leftJoin(clientContacts, eq(clientContacts.clientId, clients.clientId)).where(and(eq(clients.orgId, scope.orgId), eq(clients.businessProfileId, scope.businessProfileId), or(eq(clients.archived, false), isNull(clients.archived)), or(matches(clients.phone), matches(clientContacts.phone)), hint ? eq(clients.clientId, hint.id) : undefined)).limit(2);
+            const rows = await this.db().selectDistinct({ id: clients.clientId, ownerId: clients.createdBy }).from(clients).leftJoin(clientContacts, eq(clientContacts.clientId, clients.clientId)).where(and(eq(clients.orgId, scope.orgId), or(eq(clients.archived, false), isNull(clients.archived)), or(matches(clients.phone), matches(clientContacts.phone)), hint ? eq(clients.clientId, hint.id) : undefined)).limit(2);
             result.push(...rows.map(r => ({ ...r, kind: 'client' as const })));
         }
         if (!hint || hint.kind === 'booking') {
-            const rows = await this.db().select({ id: bookings.bookingId, ownerId: bookings.ownerId }).from(bookings).where(and(eq(bookings.orgId, scope.orgId), eq(bookings.businessProfileId, scope.businessProfileId), matches(bookings.clientPhone), hint ? eq(bookings.bookingId, hint.id) : undefined)).limit(2);
+            const rows = await this.db().select({ id: bookings.bookingId, ownerId: bookings.ownerId }).from(bookings).where(and(eq(bookings.orgId, scope.orgId), matches(bookings.clientPhone), hint ? eq(bookings.bookingId, hint.id) : undefined)).limit(2);
             result.push(...rows.map(r => ({ ...r, kind: 'booking' as const })));
         }
         return result.length === 1 ? result[0] : null;
@@ -39,7 +39,7 @@ export class SmsResponseRepo {
         const recipient = await this.findRecipient(scope, normalizedPhone, context.recipient);
         if (!recipient || recipient.ownerId !== context.recipient.ownerId) throw new Error('Recipient unavailable');
         if (context.invoiceId) {
-            const invoice = (await this.db().select({ clientId: invoices.clientId }).from(invoices).where(and(eq(invoices.orgId, scope.orgId), eq(invoices.businessProfileId, scope.businessProfileId), eq(invoices.invoiceId, context.invoiceId))).limit(1))[0];
+            const invoice = (await this.db().select({ clientId: invoices.clientId }).from(invoices).where(and(eq(invoices.orgId, scope.orgId), eq(invoices.invoiceId, context.invoiceId))).limit(1))[0];
             if (!invoice || (context.recipient.kind === 'client' && invoice.clientId !== context.recipient.id)) throw new Error('Invoice outside recipient context');
         }
         const token = randomBytes(24).toString('base64url'), tokenHash = hash(token);
@@ -69,7 +69,7 @@ export class SmsResponseRepo {
         if (!candidate) return { status: 'unavailable' as const };
         return this.tx().transaction(async tx => {
             const invoiceId = candidate.context.invoiceId;
-            if (invoiceId) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify([candidate.orgId, candidate.businessProfileId, invoiceId])}, 0))`);
+            if (invoiceId) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify([candidate.orgId, invoiceId])}, 0))`);
             const row = (await tx.select().from(links).where(eq(links.tokenHash, candidate.tokenHash)).for('update'))[0];
             if (!row || row.revokedAt || row.expiresAt <= now.toISOString() || row.deliveryState === 'failed') return { status: 'unavailable' as const };
             const normalized = phone(enteredPhone);
@@ -104,7 +104,7 @@ export class SmsResponseRepo {
         let after;
         if (options.nextToken) {
             const c = JSON.parse(Buffer.from(options.nextToken, 'base64').toString());
-            if (c.orgId !== scope.orgId || c.businessProfileId !== scope.businessProfileId || c.ownerId !== options.ownerId || typeof c.receivedAt !== 'string' || typeof c.tokenHash !== 'string') throw new Error('Invalid nextToken');
+            if (c.orgId !== scope.orgId || c.ownerId !== options.ownerId || typeof c.receivedAt !== 'string' || typeof c.tokenHash !== 'string') throw new Error('Invalid nextToken');
             after = or(lt(links.receivedAt, c.receivedAt), and(eq(links.receivedAt, c.receivedAt), lt(links.tokenHash, c.tokenHash)));
         }
         const rows = await this.db().select().from(links).where(and(scoped(scope), isNotNull(links.receivedAt), options.ownerId ? sql`${links.context}->'recipient'->>'ownerId' = ${options.ownerId}` : undefined, after)).orderBy(desc(links.receivedAt), desc(links.tokenHash)).limit(limit + 1);

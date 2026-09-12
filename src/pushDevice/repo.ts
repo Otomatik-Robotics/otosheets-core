@@ -4,10 +4,10 @@ import { notificationScope, type NotificationScope } from '../notification/contr
 
 export interface ScopedPushDevice {
     userId: string; token: string; platform: 'ios' | 'android'; endpointArn: string;
-    organizationId: string; businessProfileId: string; bindingVersion: string; generation: number;
+    organizationId: string; bindingVersion: string; generation: number;
 }
 export interface PushRegistrationLease {
-    userId: string; token: string; organizationId: string; businessProfileId: string;
+    userId: string; token: string; organizationId: string;
     bindingVersion: string; generation: number; expiresAt: number;
 }
 
@@ -22,7 +22,7 @@ export class PushDeviceRepo {
         return { deviceToken: `v2#${hash}`, binding: { userId: `push-token#${hash}`, token: 'binding' } };
     }
     private validate(userId: string, scope: NotificationScope, generation: number) {
-        notificationScope(scope.orgId, scope.businessProfileId);
+        notificationScope(scope.orgId);
         if (!userId || userId.startsWith('push-token#') || !Number.isSafeInteger(generation) || generation < 1) throw new Error('Invalid push device generation');
     }
     private bindingKey(token: string) {
@@ -34,9 +34,9 @@ export class PushDeviceRepo {
         this.validate(userId, scope, generation);
         const keys = this.keys(token);
         const lease: PushRegistrationLease = { userId, token: keys.deviceToken, organizationId: scope.orgId,
-            businessProfileId: scope.businessProfileId, bindingVersion: randomUUID(), generation, expiresAt: this.now() + 60 };
+            bindingVersion: randomUUID(), generation, expiresAt: this.now() + 60 };
         await this.ddb.transactWrite([{ Put: { TableName: this.table,
-            Item: { ...keys.binding, principalId: userId, organizationId: scope.orgId, businessProfileId: scope.businessProfileId,
+            Item: { ...keys.binding, principalId: userId, organizationId: scope.orgId,
                 bindingVersion: lease.bindingVersion, generation, highWater: generation, expiresAt: lease.expiresAt, state: 'pending' },
             ConditionExpression: 'attribute_not_exists(highWater) OR highWater < :generation',
             ExpressionAttributeValues: { ':generation': generation } } }]);
@@ -49,7 +49,7 @@ export class PushDeviceRepo {
         await this.ddb.transactWrite([
             { Put: { TableName: this.table,
                 Item: { ...this.bindingKey(lease.token), principalId: lease.userId, organizationId: lease.organizationId,
-                    businessProfileId: lease.businessProfileId, bindingVersion: lease.bindingVersion, generation: lease.generation, highWater: lease.generation,
+                    bindingVersion: lease.bindingVersion, generation: lease.generation, highWater: lease.generation,
                     expiresAt: lease.expiresAt, state: 'active', endpointArn },
                 ConditionExpression: 'bindingVersion = :version AND highWater = :generation AND generation = :generation AND expiresAt > :now',
                 ExpressionAttributeValues: { ':version': lease.bindingVersion, ':generation': lease.generation, ':now': this.now() } } },
@@ -61,19 +61,19 @@ export class PushDeviceRepo {
         await this.completeRegistration(lease, platform, endpointArn);
     }
     async list(userId: string, scope: NotificationScope): Promise<ScopedPushDevice[]> {
-        notificationScope(scope.orgId, scope.businessProfileId);
+        notificationScope(scope.orgId);
         const devices: ScopedPushDevice[] = [];
         let after: Record<string, any> | undefined;
         do {
             const page = await this.ddb.query({ TableName: this.table, KeyConditionExpression: 'userId = :user',
-                FilterExpression: 'organizationId = :org AND businessProfileId = :profile AND attribute_exists(generation)',
-                ExpressionAttributeValues: { ':user': userId, ':org': scope.orgId, ':profile': scope.businessProfileId },
+                FilterExpression: 'organizationId = :org AND attribute_exists(generation)',
+                ExpressionAttributeValues: { ':user': userId, ':org': scope.orgId },
                 Limit: 100, ...(after ? { ExclusiveStartKey: after } : {}) });
             for (const item of page.Items ?? []) {
-                if (item.userId !== userId || item.organizationId !== scope.orgId || item.businessProfileId !== scope.businessProfileId
+                if (item.userId !== userId || item.organizationId !== scope.orgId
                     || typeof item.token !== 'string' || !/^v2#[a-f0-9]{64}$/.test(item.token) || !item.bindingVersion || !Number.isSafeInteger(item.generation)) continue;
                 const { Item: binding } = await this.ddb.getItem(this.table, this.bindingKey(item.token), { ConsistentRead: true });
-                if (binding?.state === 'active' && binding.principalId === userId && binding.organizationId === scope.orgId && binding.businessProfileId === scope.businessProfileId
+                if (binding?.state === 'active' && binding.principalId === userId && binding.organizationId === scope.orgId
                     && binding.bindingVersion === item.bindingVersion && binding.generation === item.generation && binding.endpointArn === item.endpointArn) devices.push(item as ScopedPushDevice);
             }
             after = page.LastEvaluatedKey;
@@ -86,11 +86,11 @@ export class PushDeviceRepo {
         for (let attempt = 0; attempt < 5; attempt++) {
             const { Item: current } = await this.ddb.getItem(this.table, keys.binding, { ConsistentRead: true });
             if ((current?.highWater ?? 0) > generation) return;
-            const owned = current?.principalId === userId && current.organizationId === scope.orgId && current.businessProfileId === scope.businessProfileId;
+            const owned = current?.principalId === userId && current.organizationId === scope.orgId;
             if (current?.highWater === generation && (!owned || current.state === 'revoked')) return;
             // A foreign active binding stays active, but cannot erase this newer device-intent barrier.
             const next = current && !owned ? { ...current, highWater: generation } : {
-                ...keys.binding, principalId: userId, organizationId: scope.orgId, businessProfileId: scope.businessProfileId,
+                ...keys.binding, principalId: userId, organizationId: scope.orgId,
                 generation, highWater: generation, bindingVersion: randomUUID(), state: 'revoked',
             };
             try {
@@ -106,7 +106,7 @@ export class PushDeviceRepo {
         const key = this.bindingKey(device.token);
         const { Item: current } = await this.ddb.getItem(this.table, key, { ConsistentRead: true });
         if (current?.bindingVersion !== device.bindingVersion || current.principalId !== device.userId
-            || current.organizationId !== device.organizationId || current.businessProfileId !== device.businessProfileId) return;
+            || current.organizationId !== device.organizationId) return;
         try {
             await this.ddb.transactWrite([{ Put: { TableName: this.table,
                 Item: { ...current, bindingVersion: randomUUID(), state: 'revoked' },

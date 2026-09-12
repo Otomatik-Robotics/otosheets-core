@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { IDdb } from '../ddbPort';
 
 export type WebsocketIdentity = { userId: string } & (
-    { kind: 'business'; orgId: string; businessProfileId: string } | { kind: 'account' }
+    { kind: 'business'; orgId: string } | { kind: 'account' }
 );
 export type VerifiedWebsocketConnection = WebsocketIdentity & {
     connectionId: string; audience: string; admissionVersion: 1; expiresAt: number;
@@ -17,10 +17,9 @@ export class WebsocketAdmissionRepo {
     }
     private identity(value: Record<string, any>): WebsocketIdentity | null {
         if (typeof value.userId !== 'string' || !value.userId || value.userId.startsWith('ws-ticket#')) return null;
-        if (value.kind === 'account' && value.orgId == null && value.businessProfileId == null) return { userId: value.userId, kind: 'account' };
-        if (value.kind === 'business' && typeof value.orgId === 'string' && value.orgId.trim()
-            && typeof value.businessProfileId === 'string' && value.businessProfileId.trim()) {
-            return { userId: value.userId, kind: 'business', orgId: value.orgId, businessProfileId: value.businessProfileId };
+        if (value.kind === 'account' && value.orgId == null) return { userId: value.userId, kind: 'account' };
+        if (value.kind === 'business' && typeof value.orgId === 'string' && value.orgId.trim()) {
+            return { userId: value.userId, kind: 'business', orgId: value.orgId };
         }
         return null;
     }
@@ -70,20 +69,20 @@ export class WebsocketAdmissionRepo {
         const { Item } = await this.ddb.getItem(this.table, { userId: result.Items[0].userId, connectionId }, { ConsistentRead: true });
         return this.verified(Item);
     }
-    async listBusinessConnections(userId: string, orgId: string, businessProfileId: string): Promise<VerifiedWebsocketConnection[]> {
-        if (!userId || !orgId || !businessProfileId) throw new Error('WebSocket business scope is required');
+    async listBusinessConnections(userId: string, orgId: string): Promise<VerifiedWebsocketConnection[]> {
+        if (!userId || !orgId) throw new Error('WebSocket business scope is required');
         const connections: VerifiedWebsocketConnection[] = [];
         let after: Record<string, any> | undefined;
         do {
             const page = await this.ddb.query({ TableName: this.table,
                 KeyConditionExpression: 'userId = :userId',
-                FilterExpression: 'admissionVersion = :version AND audience = :audience AND expiresAt > :now AND orgId = :org AND businessProfileId = :profile',
-                ExpressionAttributeValues: { ':userId': userId, ':version': 1, ':audience': this.audience, ':now': this.now(), ':org': orgId, ':profile': businessProfileId },
+                FilterExpression: 'admissionVersion = :version AND audience = :audience AND expiresAt > :now AND orgId = :org',
+                ExpressionAttributeValues: { ':userId': userId, ':version': 1, ':audience': this.audience, ':now': this.now(), ':org': orgId },
                 Limit: 100, ...(after ? { ExclusiveStartKey: after } : {}) });
             for (const candidate of page.Items ?? []) {
                 const { Item } = await this.ddb.getItem(this.table, { userId, connectionId: candidate.connectionId }, { ConsistentRead: true });
                 const connection = this.verified(Item);
-                if (connection?.kind === 'business' && connection.userId === userId && connection.orgId === orgId && connection.businessProfileId === businessProfileId) connections.push(connection);
+                if (connection?.kind === 'business' && connection.userId === userId && connection.orgId === orgId) connections.push(connection);
             }
             after = page.LastEvaluatedKey;
         } while (after);

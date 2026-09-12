@@ -6,7 +6,6 @@ import { PaginatedResult } from '../types';
 export interface ListClientsPaginatedParams {
     orgId: string;
     /** When set, scope the list to this business profile (multi-profile isolation). */
-    businessProfileId?: string;
     limit?: number;
     exclusiveStartKey?: Record<string, any>;
     search?: string;
@@ -21,15 +20,15 @@ export interface IClientRepo {
     getClient(orgId: string, clientId: string): Promise<Client | null>;
     listClients(orgId: string): Promise<Client[]>;
     listClientsPaginated(params: ListClientsPaginatedParams): Promise<PaginatedResult<Client>>;
-    findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null>;
+    findClientByEmail(orgId: string, email: string): Promise<Client | null>;
     countClients(orgId: string): Promise<number>;
     listClientEmails(orgId: string): Promise<Array<{ clientId: string; email: string; name: string }>>;
     createClient(orgId: string, clientId: string, data: Record<string, any>): Promise<void>;
     updateClient(orgId: string, clientId: string, updates: Record<string, any>): Promise<void>;
-    batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]>;
+    batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]>;
     deleteClient(orgId: string, clientId: string): Promise<void>;
     incrementPaymentLinkUsage(orgId: string, clientId: string): Promise<void>;
-    getTopByUsage(orgId: string, limit?: number, businessProfileId?: string): Promise<Client[]>;
+    getTopByUsage(orgId: string, limit?: number): Promise<Client[]>;
     /** Full-entity mirror upsert used by the dual-write router (plan §6.1). */
     upsertClient(client: Client): Promise<void>;
 }
@@ -120,16 +119,16 @@ export class ClientDynamoRepo implements IClientRepo {
         };
     }
 
-    async findClientByEmail(orgId: string, email: string, businessProfileId?: string): Promise<Client | null> {
+    async findClientByEmail(orgId: string, email: string): Promise<Client | null> {
         let exclusiveStartKey: Record<string, any> | undefined;
         do {
             const result = await this.ddb.query({
                 TableName: Tables.CLIENTS,
                 IndexName: 'CreatedAtIndex',
                 KeyConditionExpression: 'orgId = :orgId',
-                FilterExpression: '#email = :email' + (businessProfileId ? ' AND #profile = :profile' : ''),
-                ExpressionAttributeNames: { '#email': 'email', ...(businessProfileId ? { '#profile': 'businessProfileId' } : {}) },
-                ExpressionAttributeValues: { ':orgId': orgId, ':email': email.toLowerCase(), ...(businessProfileId ? { ':profile': businessProfileId } : {}) },
+                FilterExpression: '#email = :email',
+                ExpressionAttributeNames: { '#email': 'email' },
+                ExpressionAttributeValues: { ':orgId': orgId, ':email': email.toLowerCase() },
                 Limit: 100,
                 ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
             });
@@ -191,7 +190,7 @@ export class ClientDynamoRepo implements IClientRepo {
         });
     }
 
-    async batchGetClients(orgId: string, clientIds: string[], businessProfileId?: string): Promise<Client[]> {
+    async batchGetClients(orgId: string, clientIds: string[]): Promise<Client[]> {
         if (clientIds.length === 0) return [];
         const chunks: string[][] = [];
         for (let i = 0; i < clientIds.length; i += 100) {
@@ -203,7 +202,7 @@ export class ClientDynamoRepo implements IClientRepo {
                 [Tables.CLIENTS]: { Keys: chunk.map(id => ({ orgId, clientId: id })) },
             });
             if (Responses?.[Tables.CLIENTS]) {
-                results.push(...(Responses[Tables.CLIENTS] as Client[]).filter(client => businessProfileId === undefined || client.businessProfileId === businessProfileId));
+                results.push(...(Responses[Tables.CLIENTS] as Client[]));
             }
         }
         return results;
@@ -220,19 +219,17 @@ export class ClientDynamoRepo implements IClientRepo {
         });
     }
 
-    async getTopByUsage(orgId: string, limit = 3, businessProfileId?: string): Promise<Client[]> {
+    async getTopByUsage(orgId: string, limit = 3): Promise<Client[]> {
         // A Limit on a filtered query counts pre-filter rows, so read a wider
         // page when scoping and trim; the index is small per org.
         const result = await this.ddb.query({
             TableName: Tables.CLIENTS,
             IndexName: 'UsageCountIndex',
             KeyConditionExpression: 'orgId = :orgId',
-            ...(businessProfileId ? { FilterExpression: 'businessProfileId = :businessProfileId' } : {}),
-            ExpressionAttributeValues: { ':orgId': orgId, ...(businessProfileId ? { ':businessProfileId': businessProfileId } : {}) },
+            ExpressionAttributeValues: { ':orgId': orgId },
             ScanIndexForward: false,
-            Limit: businessProfileId ? Math.max(limit * 10, 50) : limit,
+            Limit: limit,
         });
-        if (businessProfileId) return ((result.Items as Client[]) ?? []).slice(0, limit);
         return (result.Items as Client[]) ?? [];
     }
 }

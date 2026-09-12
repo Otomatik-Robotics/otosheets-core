@@ -89,10 +89,55 @@ export const orgs = pgTable('orgs', {
     tradeSettings: jsonb('trade_settings'),
     // Auto-reconciliation opt-in — { enabled: boolean }. NULL = disabled (0032).
     autoReconcile: jsonb('auto_reconcile'),
-    // Active business profile — points at the business_profiles row every consumer
-    // resolves through. Plain column (no hard FK) to avoid the orgs↔business_profiles
-    // insert-order cycle; integrity is app-level. See businessProfile.ts.
-    businessProfileId: text('business_profile_id'),
+
+    // ─── The business identity (0071): one organisation, one business ────
+    // The facts that used to live on a business_profiles row. legalName,
+    // tradeName, abn, gstRegistered, taxRate and brandColor above are part of
+    // it too. Read through IdentityRepo / resolveOrgIdentity.
+    businessName: text('business_name'),
+    acn: text('acn'),
+    entityType: text('entity_type'),
+    taxLabel: text('tax_label'),
+    phone: text('phone'),
+    businessEmail: text('business_email'),
+    website: text('website'),
+    address: text('address'),
+    suburb: text('suburb'),
+    state: text('state'),
+    postcode: text('postcode'),
+    bankDetails: text('bank_details'),
+    representativeFirstName: text('representative_first_name'),
+    representativeLastName: text('representative_last_name'),
+    representativeEmail: text('representative_email'),
+    representativePhone: text('representative_phone'),
+    representativeAddress: text('representative_address'),
+    representativeSuburb: text('representative_suburb'),
+    representativeState: text('representative_state'),
+    representativePostcode: text('representative_postcode'),
+    mcc: text('mcc'),
+    statementDescriptor: text('statement_descriptor'),
+    // CIPHERTEXT ONLY, by contract: the backend encrypts before any write and
+    // clears it once forwarded to Stripe; the stamp remains.
+    connectSensitive: text('connect_sensitive'),
+    connectSensitiveForwardedAt: timestamp('connect_sensitive_forwarded_at', { withTimezone: true, mode: 'date' }),
+    logoKey: text('logo_key'),
+    accentColor: text('accent_color'),
+    template: text('template'),
+    footerText: text('footer_text'),
+    paymentInstructions: text('payment_instructions'),
+    industry: text('industry'),
+    businessSize: text('business_size'),
+    operatingHours: jsonb('operating_hours'),
+    about: text('about'),
+    serviceAreas: jsonb('service_areas'),
+    targetCustomers: jsonb('target_customers'),
+    uniqueSellingPoints: jsonb('unique_selling_points'),
+    commonQuestions: jsonb('common_questions'),
+    chatbotTone: text('chatbot_tone'),
+    chatbotInstructions: text('chatbot_instructions'),
+    googleReviewUrl: text('google_review_url'),
+    setupCompletedAt: timestamp('setup_completed_at', { withTimezone: true, mode: 'date' }),
+    setupModalSeenAt: timestamp('setup_modal_seen_at', { withTimezone: true, mode: 'date' }),
     // Per-org studio entitlement — JSON array of studio ids, e.g. ["ops.money"].
     // jsonb (not text[]) matches this schema's existing convention: every
     // array/object attribute here is jsonb, there is no text[] anywhere.

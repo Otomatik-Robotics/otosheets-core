@@ -1,28 +1,25 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
+import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { drizzle } from 'drizzle-orm/pglite';
-import { readFileSync } from 'node:fs';
 import { InboundEmailRepo } from './repo';
 import type { PgDb } from '../pg/client';
 import type { InboundMessageContent } from './schema';
+import { runMigrations } from '../pg/migrate';
 let pg: PGlite;
 let repo: InboundEmailRepo;
-const a = { orgId: 'org', businessProfileId: 'a' };
-const b = { orgId: 'org', businessProfileId: 'b' };
+const a = { orgId: 'org-a' };
+const b = { orgId: 'org-b' };
 const domain = 'inbound.example.com';
 const content: InboundMessageContent = { sender: 'customer@example.com', recipients: [], subject: 'Reply', body: 'Please stop', rawKey: 'raw/test', references: [], kind: 'human', attachments: [] };
 beforeAll(async () => {
-    pg = new PGlite();
-    const migration = readFileSync('drizzle/0056_inbound_email.sql', 'utf8');
-    await pg.exec(migration);
-    await pg.exec(migration);
-    await pg.exec(readFileSync('drizzle/0057_invoice_reply_links.sql', 'utf8'));
-    await pg.exec(readFileSync('drizzle/0059_sms_response_links.sql', 'utf8'));
+    pg = new PGlite({ extensions: { pg_trgm } });
+    await runMigrations({ exec: async (statement: string) => ({ rows: (await pg.query(statement)).rows as any[] }) });
     repo = new InboundEmailRepo(drizzle(pg) as unknown as PgDb);
 });
 afterAll(async () => { await pg.close(); });
-describe('profile-owned email repository', () => {
-    it('creates opaque, stable, different addresses for profiles sharing an org', async () => {
+describe('organisation-owned email repository', () => {
+    it('creates one opaque, stable address per organisation', async () => {
         const [first, duplicate, other] = await Promise.all([repo.ensureMailbox(a, domain), repo.ensureMailbox(a, domain), repo.ensureMailbox(b, domain)]);
         expect(first.address).toBe(duplicate.address);
         expect(other.address).not.toBe(first.address);
@@ -35,7 +32,7 @@ describe('profile-owned email repository', () => {
         expect(await repo.resolveRecipient(row.replyAddress)).toMatchObject({ ...a, conversationId: 'invoice-1' });
         expect(await repo.getConversation(b, row.conversationId)).toBeNull();
         await expect(repo.ensureConversation(a, { conversationId: 'invoice-1', invoiceId: 'inv-2', customerEmail: content.sender }, domain)).rejects.toThrow('identity conflict');
-        await expect(repo.recordMessage(b, { messageId: 'cross', conversationId: row.conversationId, receivedAt: '2026-09-08', content })).rejects.toThrow('outside profile');
+        await expect(repo.recordMessage(b, { messageId: 'cross', conversationId: row.conversationId, receivedAt: '2026-09-08', content })).rejects.toThrow('outside organisation');
     });
     it('pauses on human reply, deduplicates delivery, and never resumes after later automatic mail', async () => {
         const input = { messageId: 'reply-1', conversationId: 'invoice-1', receivedAt: '2026-09-08T01:00:00Z', content };
@@ -82,9 +79,9 @@ describe('profile-owned email repository', () => {
         await repo.registerChaseAction(a, 'call-1', 'inv-1');
         expect(await repo.getChaseAction(a.orgId, 'call-1')).toMatchObject(a);
         expect(await repo.getChaseAction('another-org', 'call-1')).toBeNull();
-        await expect(repo.registerChaseAction(b, 'call-1', 'inv-1')).rejects.toThrow('identity conflict');
+        await expect(repo.registerChaseAction(a, 'call-1', 'inv-2')).rejects.toThrow('identity conflict');
     });
-    it('paginates in Postgres and refuses a cursor from another profile', async () => {
+    it('paginates in Postgres and refuses a cursor from another organisation', async () => {
         const first = await repo.listMessages(a, { limit: 2 });
         expect(first.items).toHaveLength(2);
         expect(first.nextToken).toBeTruthy();

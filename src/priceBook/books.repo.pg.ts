@@ -235,14 +235,13 @@ export class PriceBooksPgRepo {
      * default structurally impossible even under a concurrent call. Orgs created
      * after 0037 ran get their book here rather than from a backfill.
      */
-    async ensureDefaultBook(orgId: string, businessProfileId?: string | null): Promise<PriceBook> {
+    async ensureDefaultBook(orgId: string): Promise<PriceBook> {
         const priceBookId = `pb_std_${orgId}`;
         // No conflict target: pk, the (org_id, price_book_id) key, the name index
         // and the one-default-per-org index are all legitimate "already there".
         await this.db.insert(priceBooks).values({
             priceBookId,
             orgId,
-            businessProfileId: businessProfileId ?? null,
             name: 'Standard',
             type: 'standard',
             isDefault: true,
@@ -269,13 +268,12 @@ export class PriceBooksPgRepo {
      */
     async createBook(input: {
         orgId: string; priceBookId: string; name: string; type: PriceBookType;
-        businessProfileId?: string | null; description?: string | null;
+        description?: string | null;
     }): Promise<PriceBook> {
         try {
             await this.db.insert(priceBooks).values({
                 priceBookId: input.priceBookId,
                 orgId: input.orgId,
-                businessProfileId: input.businessProfileId ?? null,
                 name: input.name,
                 type: input.type,
                 isDefault: false,

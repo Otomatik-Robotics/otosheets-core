@@ -23,12 +23,10 @@ export * as pgSchema from './pg/schema';
 // Entity modules — each exports Repo class + Zod schema + inferred type
 export * from './user';
 export * from './org';
-export * from './businessProfile';
+export * from './identity';
 export * from './membership';
 export * from './team';
 export * from './integration';
-export * from './accountingSync';
-export * from './accountantReporting';
 export * from './invoice';
 export * from './invoicePayment';
 export * from './client';
@@ -38,16 +36,8 @@ export * from './address';
 export * from './callTrigger';
 export * from './job';
 export * from './booking';
-export * from './timeEntry';
 export * from './receipt';
 export * from './trip';
-export * from './statement';
-export * from './statementTransaction';
-export * from './bankAccount';
-export * from './bankTransaction';
-export * from './ledgerMatch';
-export * from './merchantCategory';
-export * from './payerAlias';
 export * from './lead';
 export * from './pipeline';
 export * from './pipelineInsights';
@@ -56,35 +46,13 @@ export * from './voiceAgent';
 export * from './voiceCredit';
 export * from './conversation';
 export * from './compliance';
-export * from './onboardingWorkflow';
-export * from './welcomeEmail';
-export * from './onboardingRun';
 export * from './notification';
-export * from './orgChannel';
-export * from './document';
-export * from './availabilityRule';
-export * from './timeOff';
-export * from './rotation';
-export * from './rosterEntry';
 export * from './usage';
 export * from './limits';
 export * from './priceBook';
 export * from './site';
-export * from './launchRun';
-export * from './socialPost';
-export * from './product';
-export * from './order';
-export * from './domainPurchase';
-export * from './analytics';
-export * from './adCampaign';
 export * from './form';
-export * from './envelope';
-export * from './asset';
-export * from './basPeriod';
-export * from './basReporting';
-export * from './incomeReporting';
 
-export * from "./workflowRuntime";
 
 export * from "./smsDelivery";
 export * from './inboundEmail';
@@ -95,10 +63,6 @@ export * from './websocketAdmission';
 
 export * from './pushDevice';
 
-export * from './advisorAudit';
 
-export * from './signatureRequest';
 
-export * from './profileChecklist';
 
-export * from './documentRequest';
