@@ -9,12 +9,16 @@ export type EmailScope = z.infer<typeof EmailScopeSchema>;
 export const EmailTriageSchema = z.object({
     verdict: z.enum(['job', 'not_job']),
     reason: z.string().max(300),
+    /** The person's name as they signed or introduced themselves, when the header gave none. */
+    name: z.string().max(200).optional(),
     by: z.enum(['rule', 'model', 'owner']),
     at: z.string(),
 });
 export type EmailTriage = z.infer<typeof EmailTriageSchema>;
 export const InboundMessageContentSchema = z.object({
     sender: z.string().max(320), recipients: z.array(z.string().max(320)).max(100),
+    /** From display name, else the name they signed with; empty when neither exists. */
+    senderName: z.string().max(200).optional(),
     subject: z.string().max(1000), body: z.string().max(100000),
     /** Sanitised HTML of the same visible reply (allow-listed tags, no images, no styles); absent for text-only mail. */
     bodyHtml: z.string().max(200000).optional(),
