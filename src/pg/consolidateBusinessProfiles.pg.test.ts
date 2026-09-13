@@ -16,6 +16,13 @@ let executor: SqlExecutor;
 
 const FILE = '0070_consolidate_business_profiles.sql';
 
+/** Apply every migration up to and including `file` on an empty database (later ones would remove what this test seeds). */
+async function runMigrationsThrough(file: string) {
+    const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'core-migrations-'));
+    for (const name of fs.readdirSync(migrationsDir()).filter(n => n.endsWith('.sql') && n <= file)) fs.copyFileSync(path.join(migrationsDir(), name), path.join(dir, name));
+    return runMigrations(executor, dir);
+}
+
 async function rerun0070() {
     const source = fs.readFileSync(path.join(migrationsDir(), FILE), 'utf-8');
     for (const statement of splitStatements(source)) await executor.exec(statement);
@@ -30,7 +37,7 @@ beforeAll(async () => {
         },
     };
     // Apply everything up to and including 0070 on an empty database first.
-    const ran = await runMigrations(executor);
+    const ran = await runMigrationsThrough(FILE);
     expect(ran).toContain(FILE);
 
     // Then the shape the migration exists for: one org, two profiles, work
