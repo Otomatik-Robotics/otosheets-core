@@ -27,7 +27,6 @@ export const Tables = {
     get CALL_RECORDS() { return process.env.CALL_RECORDS_TABLE!; },
     get USAGE() { return process.env.USAGE_TABLE!; },
     get PRICE_BOOK() { return process.env.PRICE_BOOK_TABLE!; },
-    get SITES() { return process.env.SITES_TABLE!; },
     get LAUNCH_RUNS() { return process.env.LAUNCH_RUNS_TABLE!; },
     get SOCIAL_POSTS() { return process.env.SOCIAL_POSTS_TABLE!; },
     get DOMAIN_PURCHASES() { return process.env.DOMAIN_PURCHASES_TABLE!; },
