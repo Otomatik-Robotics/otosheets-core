@@ -4,6 +4,8 @@ export type EmailScope = z.infer<typeof EmailScopeSchema>;
 export const InboundMessageContentSchema = z.object({
     sender: z.string().max(320), recipients: z.array(z.string().max(320)).max(100),
     subject: z.string().max(1000), body: z.string().max(100000),
+    /** Sanitised HTML of the same visible reply (allow-listed tags, no images, no styles); absent for text-only mail. */
+    bodyHtml: z.string().max(200000).optional(),
     rawKey: z.string().max(1024), internetMessageId: z.string().max(1000).optional(),
     references: z.array(z.string().max(1000)).max(100),
     kind: z.enum(['human', 'automatic', 'bounce', 'verification', 'loop', 'rejected']),
