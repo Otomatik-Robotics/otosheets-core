@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { and, eq, desc, lt, or, isNotNull, inArray, sql } from 'drizzle-orm';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
 import { inboundMailboxes, emailConversations, inboundMessages, emailDeliveryClaims, emailConversationInvoices, invoiceChaseActions } from '../pg/schema/inboundEmail';
-import { EmailScopeSchema, InboundMessageContentSchema, type EmailScope, type InboundMessageContent } from './schema';
+import { EmailScopeSchema, InboundMessageContentSchema, type EmailScope, type InboundMessageContent, type EmailTriage } from './schema';
 
 const scoped = (table: { orgId: any }, scope: EmailScope) => {
     EmailScopeSchema.parse(scope);
@@ -97,6 +97,18 @@ export class InboundEmailRepo {
     }
     async getMessage(scope: EmailScope, messageId: string) {
         return (await this.db().select().from(inboundMessages).where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId))).limit(1))[0] ?? null;
+    }
+    /** The most recent triage verdict on a thread, so follow-ups inherit it without a model call. */
+    async latestTriage(scope: EmailScope, conversationId: string): Promise<EmailTriage | null> {
+        const row = (await this.db().select({ content: inboundMessages.content }).from(inboundMessages)
+            .where(and(scoped(inboundMessages, scope), eq(inboundMessages.conversationId, conversationId), sql`${inboundMessages.content} ? 'triage'`))
+            .orderBy(desc(inboundMessages.receivedAt)).limit(1))[0];
+        return row?.content.triage ?? null;
+    }
+    async setTriage(scope: EmailScope, messageId: string, triage: EmailTriage) {
+        await this.db().update(inboundMessages)
+            .set({ content: sql`${inboundMessages.content} || ${JSON.stringify({ triage })}::jsonb` })
+            .where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId)));
     }
     async markPublished(scope: EmailScope, messageId: string) {
         await this.db().update(inboundMessages).set({ publishedAt: new Date().toISOString() }).where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId)));

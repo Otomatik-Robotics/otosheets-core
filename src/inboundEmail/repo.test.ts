@@ -61,6 +61,17 @@ describe('organisation-owned email repository', () => {
         }
         expect(await repo.claimDelivery(a, 'auto', 'automatic-safe')).toBe('claimed');
     });
+    it('records a triage verdict on a message and reads the latest one back for its thread', async () => {
+        await repo.ensureConversation(a, { conversationId: 'triage', customerEmail: content.sender }, domain);
+        await repo.recordMessage(a, { messageId: 't1', conversationId: 'triage', receivedAt: '2026-09-08T04:00:00Z', content });
+        await repo.recordMessage(a, { messageId: 't2', conversationId: 'triage', receivedAt: '2026-09-08T05:00:00Z', content });
+        expect(await repo.latestTriage(a, 'triage')).toBeNull();
+        await repo.setTriage(a, 't1', { verdict: 'not_job', reason: 'newsletter', by: 'model', at: '2026-09-08T04:00:01Z' });
+        await repo.setTriage(a, 't2', { verdict: 'job', reason: 'owner said so', by: 'owner', at: '2026-09-08T05:00:01Z' });
+        expect(await repo.latestTriage(a, 'triage')).toMatchObject({ verdict: 'job', by: 'owner' });
+        expect((await repo.getMessage(a, 't1'))?.content).toMatchObject({ body: 'Please stop', triage: { verdict: 'not_job' } });
+        expect(await repo.latestTriage(b, 'triage')).toBeNull();
+    });
     it('correlates supporting reply headers only within the envelope tenant', async () => {
         await repo.completeDelivery(a, 'automatic-safe', 'ses-provider-id');
         expect(await repo.conversationFromReferences(a, ['<ses-provider-id@email.amazonses.com>'])).toMatchObject({ conversationId: 'auto' });
