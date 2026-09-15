@@ -77,6 +77,30 @@ describe('organisation-owned email repository', () => {
         expect(await repo.conversationFromReferences(a, ['<ses-provider-id@email.amazonses.com>'])).toMatchObject({ conversationId: 'auto' });
         expect(await repo.conversationFromReferences(b, ['<ses-provider-id@email.amazonses.com>'])).toBeNull();
     });
+    it('applies filtered email selection before pagination and binds cursors to the organisation and filter', async () => {
+        const scope = { orgId: 'filtered-org' };
+        await repo.ensureConversation(scope, { conversationId: 'filtered-thread', customerEmail: content.sender }, domain);
+        for (let i = 0; i < 25; i++) {
+            await repo.recordMessage(scope, { messageId: `filtered-${String(i).padStart(2, '0')}`, conversationId: 'filtered-thread', receivedAt: '2026-09-13T00:00:00Z', content: { ...content, triage: { verdict: i < 3 ? 'not_job' : 'job', reason: 'test', by: 'model', at: '2026-09-13T00:00:01Z' } } });
+        }
+        const first = await repo.listMessages(scope, { verdict: 'not_job', limit: 2 });
+        expect(first.total).toBe(3);
+        expect(first.items.map(message => message.messageId)).toEqual(['filtered-02', 'filtered-01']);
+        const second = await repo.listMessages(scope, { verdict: 'not_job', limit: 2, nextToken: first.nextToken! });
+        expect(second.items.map(message => message.messageId)).toEqual(['filtered-00']);
+        expect(second.nextToken).toBeNull();
+        await expect(repo.listMessages(b, { verdict: 'not_job', nextToken: first.nextToken! })).rejects.toThrow('Invalid nextToken');
+        await expect(repo.listMessages(scope, { nextToken: first.nextToken! })).rejects.toThrow('Invalid nextToken');
+        await expect(repo.listMessages(scope, { verdict: 'job', nextToken: first.nextToken! })).rejects.toThrow('Invalid nextToken');
+        await expect(repo.listMessages(scope, { nextToken: 'broken' })).rejects.toThrow('Invalid nextToken');
+        expect((await repo.listMessages(b, { verdict: 'not_job' })).total).toBe(0);
+        await repo.setTriage(scope, 'filtered-01', { verdict: 'job', reason: 'owner decision', by: 'owner', at: '2026-09-15T00:00:00Z' });
+        expect((await repo.listMessages(scope, { verdict: 'not_job' })).total).toBe(2);
+    });
+    it('uses a new owner verdict on an older message for subsequent replies', async () => {
+        await repo.setTriage(a, 't1', { verdict: 'not_job', reason: 'owner decision', by: 'owner', at: '2026-09-15T00:00:00Z' });
+        expect(await repo.latestTriage(a, 'triage')).toMatchObject({ verdict: 'not_job', by: 'owner' });
+    });
     it('pauses every invoice covered by a statement, including separate reminder conversations', async () => {
         await repo.ensureConversation(a, { conversationId: 'statement', customerEmail: content.sender }, domain);
         await repo.linkInvoices(a, 'statement', ['statement-invoice-1', 'statement-invoice-2']);
