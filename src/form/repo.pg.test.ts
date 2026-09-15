@@ -80,6 +80,8 @@ describe('FormPgRepo', () => {
         const got = await repo.getSubmission('org_1', 's1');
         expect(got?.leadId).toBe('lead_1');
         expect(got?.answers.budget).toBe(18500);
+        expect((await repo.getSubmissionByLead('org_1', 'lead_1'))?.submissionId).toBe('s1');
+        expect(await repo.getSubmissionByLead('org_2', 'lead_1')).toBeNull();
         const counts = await repo.submissionCounts('org_1', ['f1', 'f9']);
         expect(counts).toEqual({ f1: 1 });
     });

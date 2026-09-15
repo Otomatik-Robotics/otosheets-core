@@ -46,3 +46,23 @@ describe('LeadRepo.deleteLead', () => {
         await expect(repo.deleteLead('org1', 'user1', 'missing')).resolves.toBeUndefined();
     });
 });
+
+describe('LeadRepo.createLead', () => {
+    it('rejects a replay without replacing the enquiry already edited by its owner', async () => {
+        const store = new Map<string, any>();
+        const port = {
+            async transactWrite(items: any[]) {
+                const put = items[0].Put;
+                expect(put.ConditionExpression).toBe('attribute_not_exists(sk)');
+                const key = `${put.Item.orgId}|${put.Item.sk}`;
+                if (store.has(key)) throw { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] };
+                store.set(key, put.Item);
+            },
+        } as unknown as IDdb;
+        const repo = new LeadDynamoRepo(port);
+        await repo.createLead('org1', 'owner', 'source1', { clientName: 'Alex', stage: 'CONTACTED' });
+        await expect(repo.createLead('org1', 'owner', 'source1', { clientName: 'Changed', stage: 'NEW' })).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+        expect(store.get(`org1|${sk('owner', 'source1')}`).clientName).toBe('Alex');
+        expect(store.get(`org1|${sk('owner', 'source1')}`).stage).toBe('CONTACTED');
+    });
+});
