@@ -113,9 +113,14 @@ export class InboundEmailRepo {
     async markPublished(scope: EmailScope, messageId: string) {
         await this.db().update(inboundMessages).set({ publishedAt: new Date().toISOString() }).where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId)));
     }
+    async ignoreMessage(scope: EmailScope, messageId: string) {
+        await this.db().update(inboundMessages)
+            .set({ content: sql`${inboundMessages.content} || ${JSON.stringify({ ignoredAt: new Date().toISOString() })}::jsonb` })
+            .where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId), sql`${inboundMessages.content}->'triage'->>'verdict' = 'not_job'`, sql`${inboundMessages.content}->>'ignoredAt' is null`));
+    }
     async listMessages(scope: EmailScope, options: { limit?: number; nextToken?: string; verdict?: EmailTriage['verdict'] } = {}) {
         const limit = Math.max(1, Math.min(100, options.limit ?? 20));
-        const filter = options.verdict ? and(sql`${inboundMessages.content}->>'kind' = 'human'`, sql`${inboundMessages.content}->'triage'->>'verdict' = ${options.verdict}`) : undefined;
+        const filter = options.verdict ? and(sql`${inboundMessages.content}->>'kind' = 'human'`, sql`${inboundMessages.content}->'triage'->>'verdict' = ${options.verdict}`, options.verdict === 'not_job' ? sql`${inboundMessages.content}->>'ignoredAt' is null` : undefined) : undefined;
         let after;
         if (options.nextToken) {
             let cursor;

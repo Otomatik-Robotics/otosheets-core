@@ -96,6 +96,21 @@ describe('organisation-owned email repository', () => {
         expect((await repo.listMessages(b, { verdict: 'not_job' })).total).toBe(0);
         await repo.setTriage(scope, 'filtered-01', { verdict: 'job', reason: 'owner decision', by: 'owner', at: '2026-09-15T00:00:00Z' });
         expect((await repo.listMessages(scope, { verdict: 'not_job' })).total).toBe(2);
+        await repo.ignoreMessage(b, 'filtered-02');
+        expect((await repo.listMessages(scope, { verdict: 'not_job' })).total).toBe(2);
+        const triage = await repo.latestTriage(scope, 'filtered-thread');
+        await repo.ignoreMessage(scope, 'filtered-02');
+        const ignored = await repo.getMessage(scope, 'filtered-02');
+        expect(ignored?.content.ignoredAt).toBeTruthy();
+        await repo.ignoreMessage(scope, 'filtered-02');
+        expect(await repo.getMessage(scope, 'filtered-02')).toEqual(ignored);
+        expect(await repo.latestTriage(scope, 'filtered-thread')).toEqual(triage);
+        const remaining = await repo.listMessages(scope, { verdict: 'not_job', limit: 1 });
+        expect(remaining.total).toBe(1);
+        expect(remaining.items.map(message => message.messageId)).toEqual(['filtered-00']);
+        expect(remaining.nextToken).toBeNull();
+        await repo.ignoreMessage(scope, 'filtered-01');
+        expect((await repo.getMessage(scope, 'filtered-01'))?.content.ignoredAt).toBeUndefined();
     });
     it('uses a new owner verdict on an older message for subsequent replies', async () => {
         await repo.setTriage(a, 't1', { verdict: 'not_job', reason: 'owner decision', by: 'owner', at: '2026-09-15T00:00:00Z' });

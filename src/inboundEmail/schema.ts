@@ -28,5 +28,7 @@ export const InboundMessageContentSchema = z.object({
     attachments: z.array(z.object({ attachmentId: z.string(), key: z.string(), filename: z.string().max(255), contentType: z.string().max(255), size: z.number().int().nonnegative() })).max(20),
     verificationUrl: z.string().url().optional(),
     triage: EmailTriageSchema.optional(),
+    /** Owner dismissed this message from the filtered review queue. */
+    ignoredAt: z.string().optional(),
 });
 export type InboundMessageContent = z.infer<typeof InboundMessageContentSchema>;
