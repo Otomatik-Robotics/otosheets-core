@@ -98,11 +98,11 @@ export class InboundEmailRepo {
     async getMessage(scope: EmailScope, messageId: string) {
         return (await this.db().select().from(inboundMessages).where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId))).limit(1))[0] ?? null;
     }
-    /** The most recent triage verdict on a thread, so follow-ups inherit it without a model call. */
+    /** The latest owner decision wins over inherited rules, including a reply racing recovery. */
     async latestTriage(scope: EmailScope, conversationId: string): Promise<EmailTriage | null> {
         const row = (await this.db().select({ content: inboundMessages.content }).from(inboundMessages)
             .where(and(scoped(inboundMessages, scope), eq(inboundMessages.conversationId, conversationId), sql`${inboundMessages.content} ? 'triage'`))
-            .orderBy(desc(sql`${inboundMessages.content}->'triage'->>'at'`), desc(inboundMessages.receivedAt), desc(inboundMessages.messageId)).limit(1))[0];
+            .orderBy(desc(sql`case when ${inboundMessages.content}->'triage'->>'by' = 'owner' then 1 else 0 end`), desc(sql`${inboundMessages.content}->'triage'->>'at'`), desc(inboundMessages.receivedAt), desc(inboundMessages.messageId)).limit(1))[0];
         return row?.content.triage ?? null;
     }
     async setTriage(scope: EmailScope, messageId: string, triage: EmailTriage) {

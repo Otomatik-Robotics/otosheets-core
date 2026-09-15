@@ -100,6 +100,8 @@ describe('organisation-owned email repository', () => {
     it('uses a new owner verdict on an older message for subsequent replies', async () => {
         await repo.setTriage(a, 't1', { verdict: 'not_job', reason: 'owner decision', by: 'owner', at: '2026-09-15T00:00:00Z' });
         expect(await repo.latestTriage(a, 'triage')).toMatchObject({ verdict: 'not_job', by: 'owner' });
+        await repo.recordMessage(a, { messageId: 't-racing', conversationId: 'triage', receivedAt: '2026-09-16T00:00:00Z', content: { ...content, triage: { verdict: 'job', reason: 'inherited a stale verdict', by: 'rule', at: '2026-09-16T00:00:01Z' } } });
+        expect(await repo.latestTriage(a, 'triage')).toMatchObject({ verdict: 'not_job', by: 'owner' });
     });
     it('pauses every invoice covered by a statement, including separate reminder conversations', async () => {
         await repo.ensureConversation(a, { conversationId: 'statement', customerEmail: content.sender }, domain);
