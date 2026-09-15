@@ -98,11 +98,11 @@ export class InboundEmailRepo {
     async getMessage(scope: EmailScope, messageId: string) {
         return (await this.db().select().from(inboundMessages).where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId))).limit(1))[0] ?? null;
     }
-    /** The most recent triage verdict on a thread, so follow-ups inherit it without a model call. */
+    /** The latest owner decision wins over inherited rules, including a reply racing recovery. */
     async latestTriage(scope: EmailScope, conversationId: string): Promise<EmailTriage | null> {
         const row = (await this.db().select({ content: inboundMessages.content }).from(inboundMessages)
             .where(and(scoped(inboundMessages, scope), eq(inboundMessages.conversationId, conversationId), sql`${inboundMessages.content} ? 'triage'`))
-            .orderBy(desc(inboundMessages.receivedAt)).limit(1))[0];
+            .orderBy(desc(sql`case when ${inboundMessages.content}->'triage'->>'by' = 'owner' then 1 else 0 end`), desc(sql`${inboundMessages.content}->'triage'->>'at'`), desc(inboundMessages.receivedAt), desc(inboundMessages.messageId)).limit(1))[0];
         return row?.content.triage ?? null;
     }
     async setTriage(scope: EmailScope, messageId: string, triage: EmailTriage) {
@@ -113,17 +113,25 @@ export class InboundEmailRepo {
     async markPublished(scope: EmailScope, messageId: string) {
         await this.db().update(inboundMessages).set({ publishedAt: new Date().toISOString() }).where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId)));
     }
-    async listMessages(scope: EmailScope, options: { limit?: number; nextToken?: string } = {}) {
+    async ignoreMessage(scope: EmailScope, messageId: string) {
+        await this.db().update(inboundMessages)
+            .set({ content: sql`${inboundMessages.content} || ${JSON.stringify({ ignoredAt: new Date().toISOString() })}::jsonb` })
+            .where(and(scoped(inboundMessages, scope), eq(inboundMessages.messageId, messageId), sql`${inboundMessages.content}->'triage'->>'verdict' = 'not_job'`, sql`${inboundMessages.content}->>'ignoredAt' is null`));
+    }
+    async listMessages(scope: EmailScope, options: { limit?: number; nextToken?: string; verdict?: EmailTriage['verdict'] } = {}) {
         const limit = Math.max(1, Math.min(100, options.limit ?? 20));
+        const filter = options.verdict ? and(sql`${inboundMessages.content}->>'kind' = 'human'`, sql`${inboundMessages.content}->'triage'->>'verdict' = ${options.verdict}`, options.verdict === 'not_job' ? sql`${inboundMessages.content}->>'ignoredAt' is null` : undefined) : undefined;
         let after;
         if (options.nextToken) {
-            const cursor = JSON.parse(Buffer.from(options.nextToken, 'base64').toString());
-            if (cursor.orgId !== scope.orgId || typeof cursor.receivedAt !== 'string' || typeof cursor.messageId !== 'string') throw new Error('Invalid nextToken');
+            let cursor;
+            try { cursor = JSON.parse(Buffer.from(options.nextToken, 'base64').toString()); } catch { throw new Error('Invalid nextToken'); }
+            if (!cursor || cursor.orgId !== scope.orgId || cursor.verdict !== options.verdict || typeof cursor.receivedAt !== 'string' || typeof cursor.messageId !== 'string') throw new Error('Invalid nextToken');
             after = or(lt(inboundMessages.receivedAt, cursor.receivedAt), and(eq(inboundMessages.receivedAt, cursor.receivedAt), lt(inboundMessages.messageId, cursor.messageId)));
         }
-        const rows = await this.db().select().from(inboundMessages).where(and(scoped(inboundMessages, scope), after)).orderBy(desc(inboundMessages.receivedAt), desc(inboundMessages.messageId)).limit(limit + 1);
+        const rows = await this.db().select().from(inboundMessages).where(and(scoped(inboundMessages, scope), filter, after)).orderBy(desc(inboundMessages.receivedAt), desc(inboundMessages.messageId)).limit(limit + 1);
         const items = rows.slice(0, limit), last = items[items.length - 1];
-        return { items, nextToken: rows.length > limit ? Buffer.from(JSON.stringify({ ...scope, receivedAt: last.receivedAt, messageId: last.messageId })).toString('base64') : null };
+        const total = options.verdict ? Number((await this.db().select({ count: sql<number>`count(*)` }).from(inboundMessages).where(and(scoped(inboundMessages, scope), filter)))[0].count) : undefined;
+        return { items, ...(total !== undefined ? { total } : {}), nextToken: rows.length > limit ? Buffer.from(JSON.stringify({ ...scope, verdict: options.verdict, receivedAt: last.receivedAt, messageId: last.messageId })).toString('base64') : null };
     }
     async isInvoicePaused(scope: EmailScope, invoiceId: string) {
         if (await new SmsResponseRepo(this.db()).isInvoicePaused(scope, invoiceId)) return true;

@@ -213,7 +213,7 @@ export class LeadDynamoRepo implements ILeadRepo {
     async createLead(orgId: string, userId: string, leadId: string, data: Record<string, any>): Promise<void> {
         const now = new Date().toISOString();
         const stage = data.stage ?? 'NEW';
-        await this.ddb.put(Tables.LEADS, {
+        await this.ddb.transactWrite([{ Put: { TableName: Tables.LEADS, Item: {
             orgId,
             sk: sk(userId, leadId),
             leadId,
@@ -224,7 +224,7 @@ export class LeadDynamoRepo implements ILeadRepo {
             orgStage: orgStageKey(orgId, stage),
             createdAt: now,
             updatedAt: now,
-        });
+        }, ConditionExpression: 'attribute_not_exists(sk)' } }]);
     }
 
     async updateLead(orgId: string, userId: string, leadId: string, updates: Record<string, any>): Promise<void> {

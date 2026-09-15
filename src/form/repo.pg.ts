@@ -195,6 +195,15 @@ export class FormPgRepo {
         return rows[0] ? subToDto(rows[0]) : null;
     }
 
+    /** The source submission behind an enquiry, always scoped to its organisation. */
+    async getSubmissionByLead(orgId: string, leadId: string): Promise<FormSubmission | null> {
+        const rows = await this.db.select().from(formSubmissions)
+            .where(and(eq(formSubmissions.orgId, orgId), eq(formSubmissions.leadId, leadId)))
+            .orderBy(desc(formSubmissions.createdAt), desc(formSubmissions.submissionId))
+            .limit(1);
+        return rows[0] ? subToDto(rows[0]) : null;
+    }
+
     /** Newest-first keyset pagination over one form's submissions. */
     async listSubmissions(
         orgId: string,
