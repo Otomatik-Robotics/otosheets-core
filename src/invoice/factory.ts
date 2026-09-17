@@ -7,6 +7,7 @@ import { Invoice } from './schema';
 import type { InvoiceSummary, InvoiceTotals } from './summary';
 import { InvoiceDynamoRepo, type IInvoiceRepo, type InvoiceTotalsFilter, type ListInvoicesPaginatedParams } from './repo';
 import { InvoicePgRepo } from './repo.pg';
+import type { PrivateInvoice, ConvertQuoteInput, QuoteConversionResult, PendingQuoteAcceptance } from './acceptance';
 
 const DOMAIN = 'billing-core' as const;
 const ENTITY = 'invoice';
@@ -24,10 +25,38 @@ export class RoutingInvoiceRepo implements IInvoiceRepo {
         const mirror = this.mirrorOf(route);
         if (!mirror) return;
         await mirrorWrite({ domain: DOMAIN, entity: ENTITY, op, key: { orgId, userId, invoiceId } }, async () => {
-            const fresh = await this.pick(route).getInvoice(orgId, userId, invoiceId);
+            const fresh = await this.pick(route).getInvoiceForMirror(orgId, userId, invoiceId);
             if (fresh) await mirror.upsertInvoice(fresh);
             else await mirror.deleteInvoice(orgId, userId, invoiceId);
         });
+    }
+
+    async getInvoiceForMirror(orgId: string, ownerId: string, invoiceId: string): Promise<PrivateInvoice | null> {
+        return this.pick(await resolveRoute(DOMAIN)).getInvoiceForMirror(orgId, ownerId, invoiceId);
+    }
+    async issueQuoteAcceptanceToken(orgId: string, ownerId: string, quoteId: string, tokenHash: string): Promise<void> {
+        const route = await resolveRoute(DOMAIN);
+        await this.pick(route).issueQuoteAcceptanceToken(orgId, ownerId, quoteId, tokenHash);
+        await this.mirrorEntity(route, orgId, ownerId, quoteId, 'issueQuoteAcceptanceToken');
+    }
+    async getQuoteForAcceptance(orgId: string, quoteId: string, tokenHash: string): Promise<PendingQuoteAcceptance | null> {
+        return this.pick(await resolveRoute(DOMAIN)).getQuoteForAcceptance(orgId, quoteId, tokenHash);
+    }
+    async convertQuote(input: ConvertQuoteInput): Promise<QuoteConversionResult> {
+        const route = await resolveRoute(DOMAIN);
+        const result = await this.pick(route).convertQuote(input);
+        await this.mirrorEntity(route, input.orgId, input.ownerId, input.quoteId, 'convertQuote');
+        await this.mirrorEntity(route, input.orgId, input.ownerId, result.invoice.invoiceId, 'convertQuote');
+        return result;
+    }
+    async listPendingQuoteAcceptances(limit = 20): Promise<PendingQuoteAcceptance[]> {
+        return this.pick(await resolveRoute(DOMAIN)).listPendingQuoteAcceptances(limit);
+    }
+    async markQuoteAcceptancePublished(orgId: string, ownerId: string, quoteId: string, eventId: string): Promise<boolean> {
+        const route = await resolveRoute(DOMAIN);
+        const first = await this.pick(route).markQuoteAcceptancePublished(orgId, ownerId, quoteId, eventId);
+        await this.mirrorEntity(route, orgId, ownerId, quoteId, 'markQuoteAcceptancePublished');
+        return first;
     }
 
     async getInvoice(orgId: string, userId: string, invoiceId: string): Promise<Invoice | null> {

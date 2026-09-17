@@ -17,7 +17,7 @@ function makeStubDdb() {
         },
         async update(_t: string, key: any, params: Record<string, any>) {
             const existing = store.get(keyOf(key));
-            if (params.ConditionExpression === 'attribute_exists(sk)' && !existing) {
+            if (params.ConditionExpression?.includes('attribute_exists(sk)') && !existing) {
                 const err = new Error('The conditional request failed');
                 (err as any).name = 'ConditionalCheckFailedException';
                 throw err;

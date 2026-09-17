@@ -3,3 +3,4 @@ export * from './summary';
 export * from './repo';
 export * from './repo.pg';
 export * from './factory';
+export * from './acceptance';

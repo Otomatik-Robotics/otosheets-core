@@ -36,8 +36,10 @@ beforeAll(async () => {
     ]) await pglite.query(statement);
     // 0071 already copied the profile; run it once more so the seeded profile lands on orgs.
     for (const statement of splitStatements(fs.readFileSync(path.join(migrationsDir(), '0071_identity_on_orgs.sql'), 'utf-8'))) await executor.exec(statement);
-    // Now the real runner applies what is left: 0072.
-    const ran = await runMigrations(executor);
+    // Keep this historical migration fixture at 0072; later additive migrations
+    // are verified by their own tests and must not alter this boundary assertion.
+    fs.copyFileSync(path.join(migrationsDir(), FILE), path.join(upTo0071, FILE));
+    const ran = await runMigrations(executor, upTo0071);
     expect(ran).toEqual([FILE]);
 });
 

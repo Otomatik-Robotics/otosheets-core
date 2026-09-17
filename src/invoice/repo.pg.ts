@@ -1,4 +1,4 @@
-import { and, eq, sql, desc, lt, or, inArray, gte, lte } from 'drizzle-orm';
+import { and, eq, sql, desc, lt, or, inArray, gte, lte, isNull, isNotNull, asc } from 'drizzle-orm';
 import { getPg, getPgTx, type PgDb } from '../pg/client';
 import { invoices, invoiceLineItems } from '../pg/schema/billingCore';
 import { keysetFromStartKey, keysetStartKey } from '../pg/cursor';
@@ -6,6 +6,8 @@ import { PaginatedResult } from '../types';
 import { Invoice } from './schema';
 import { composeInvoiceSummary, composeInvoiceTotals, type InvoiceSummary, type InvoiceSummaryBucket, type InvoiceTotals } from './summary';
 import type { IInvoiceRepo, InvoiceTotalsFilter, ListInvoicesPaginatedParams } from './repo';
+import { availableQuote, checkTokenHash, convertedInvoice, conversionUpdates, protectQuoteUpdates, invalidatesQuoteTokens, publicInvoice, validateConversion,
+    QuoteConversionConflictError, QuoteUnavailableError, type PrivateInvoice, type ConvertQuoteInput, type QuoteConversionResult, type PendingQuoteAcceptance } from './acceptance';
 
 // Money/number columns returned as strings by pg → numbers in the DTO.
 const NUMERIC_KEYS = ['subtotal', 'gstAmount', 'totalAmount', 'taxRate', 'paidAmount'];
@@ -32,10 +34,10 @@ function itemFromRow(r: LineItemRow) {
 }
 
 /** Row + its line items → the Dynamo-shaped Invoice DTO (reconstructs sk, dueDateSk, items, clientSnapshot). */
-function toInvoiceDto(row: any, items: LineItemRow[]): Invoice {
+function toInvoiceDto(row: any, items: LineItemRow[], includePrivate = false): PrivateInvoice {
     const dto: any = {};
     for (const [k, v] of Object.entries(row)) {
-        if (PG_ONLY.has(k) || v === null) continue;
+        if (PG_ONLY.has(k) || v === null || (k === 'quoteAcceptanceTokenHashes' && !includePrivate)) continue;
         if (v instanceof Date) dto[k] = v.toISOString();
         else if (NUMERIC_KEYS.includes(k) && typeof v === 'string') dto[k] = Number(v);
         else dto[k] = v;
@@ -112,6 +114,76 @@ export class InvoicePgRepo implements IInvoiceRepo {
             .where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, invoiceId))).limit(1);
         if (!rows[0]) return null;
         return (await this.hydrate(rows))[0];
+    }
+
+    async getInvoiceForMirror(orgId: string, ownerId: string, invoiceId: string): Promise<PrivateInvoice | null> {
+        const [row] = await this.db.select().from(invoices)
+            .where(and(eq(invoices.orgId, orgId), eq(invoices.ownerId, ownerId), eq(invoices.invoiceId, invoiceId))).limit(1);
+        if (!row) return null;
+        const items = await this.itemsByInvoice([invoiceId]);
+        return toInvoiceDto(row, items.get(invoiceId) ?? [], true);
+    }
+
+    async issueQuoteAcceptanceToken(orgId: string, ownerId: string, quoteId: string, tokenHash: string): Promise<void> {
+        checkTokenHash(tokenHash);
+        await this.tx.transaction(async tx => {
+            const [row] = await tx.select().from(invoices).where(and(eq(invoices.orgId, orgId), eq(invoices.ownerId, ownerId), eq(invoices.invoiceId, quoteId))).for('update');
+            if (!row?.isQuote || !['DRAFT', 'SENT'].includes(row.status ?? '') || row.convertedInvoiceId) throw new QuoteUnavailableError();
+            const hashes = row.quoteAcceptanceTokenHashes ?? [];
+            if (hashes.includes(tokenHash)) return;
+            await tx.update(invoices).set({ quoteAcceptanceTokenHashes: [...hashes, tokenHash], updatedAt: new Date() }).where(eq(invoices.invoiceId, quoteId));
+        });
+    }
+
+    async getQuoteForAcceptance(orgId: string, quoteId: string, tokenHash: string): Promise<PendingQuoteAcceptance | null> {
+        checkTokenHash(tokenHash);
+        const [row] = await this.db.select().from(invoices).where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, quoteId))).limit(1);
+        if (!row) return null;
+        const quote = toInvoiceDto(row, [], true);
+        if (!availableQuote(quote, tokenHash)) return null;
+        const items = await this.itemsByInvoice([quoteId]);
+        return { quote: toInvoiceDto(row, items.get(quoteId) ?? []), ownerId: row.ownerId };
+    }
+
+    async convertQuote(input: ConvertQuoteInput): Promise<QuoteConversionResult> {
+        return this.tx.transaction(async tx => {
+            const [row] = await tx.select().from(invoices).where(and(eq(invoices.orgId, input.orgId), eq(invoices.ownerId, input.ownerId), eq(invoices.invoiceId, input.quoteId))).for('update');
+            if (!row) throw new QuoteUnavailableError();
+            const lines = await tx.select().from(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, input.quoteId)).orderBy(invoiceLineItems.sortOrder);
+            const quote = toInvoiceDto(row, lines, true);
+            validateConversion(input, quote);
+            if (quote.status === 'CONVERTED') {
+                const [existing] = await tx.select().from(invoices).where(and(eq(invoices.orgId, input.orgId), eq(invoices.ownerId, input.ownerId), eq(invoices.invoiceId, quote.convertedInvoiceId!)));
+                if (!existing || existing.sourceQuoteId !== input.quoteId) throw new QuoteConversionConflictError('The converted invoice is unavailable.');
+                const existingLines = await tx.select().from(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, existing.invoiceId)).orderBy(invoiceLineItems.sortOrder);
+                return { quote: publicInvoice(quote), invoice: toInvoiceDto(existing, existingLines), alreadyConverted: true };
+            }
+            const invoice = convertedInvoice(quote, input), updates = conversionUpdates(input);
+            const inserted = await tx.insert(invoices).values(toInvoiceRow(invoice) as any).onConflictDoNothing().returning({ id: invoices.invoiceId });
+            if (!inserted.length) throw new QuoteConversionConflictError('The invoice identifier is already in use.');
+            const newLines = itemRows(input.invoiceId, invoice.items);
+            if (newLines.length) await tx.insert(invoiceLineItems).values(newLines);
+            const { ownerId: _owner, ...updateRow } = toInvoiceRow(updates);
+            await tx.update(invoices).set(updateRow).where(eq(invoices.invoiceId, input.quoteId));
+            return { quote: publicInvoice({ ...quote, ...updates }), invoice, alreadyConverted: false };
+        });
+    }
+
+    async listPendingQuoteAcceptances(limit = 20): Promise<PendingQuoteAcceptance[]> {
+        const rows = await this.db.select().from(invoices).where(and(isNotNull(invoices.quoteAcceptedAt), isNull(invoices.quoteAcceptancePublishedAt)))
+            .orderBy(asc(invoices.quoteAcceptedAt), asc(invoices.invoiceId)).limit(Math.max(1, Math.min(limit, 100)));
+        const hydrated = await this.hydrate(rows);
+        return hydrated.map((quote, index) => ({ quote, ownerId: rows[index].ownerId }));
+    }
+
+    async markQuoteAcceptancePublished(orgId: string, ownerId: string, quoteId: string, eventId: string): Promise<boolean> {
+        const match = and(eq(invoices.orgId, orgId), eq(invoices.ownerId, ownerId), eq(invoices.invoiceId, quoteId), eq(invoices.quoteAcceptedEventId, eventId), isNotNull(invoices.quoteAcceptedAt));
+        const rows = await this.db.update(invoices).set({ quoteAcceptancePublishedAt: new Date().toISOString(), updatedAt: new Date() })
+            .where(and(match, isNull(invoices.quoteAcceptancePublishedAt))).returning({ id: invoices.invoiceId });
+        if (rows.length) return true;
+        const [row] = await this.db.select({ published: invoices.quoteAcceptancePublishedAt }).from(invoices).where(match);
+        if (!row?.published) throw new QuoteUnavailableError();
+        return false;
     }
 
     async findInvoiceByIdInOrg(orgId: string, invoiceId: string): Promise<{ invoice: Invoice; ownerId: string } | null> {
@@ -290,10 +362,16 @@ export class InvoicePgRepo implements IInvoiceRepo {
     }
 
     async updateInvoice(orgId: string, userId: string, invoiceId: string, updates: Record<string, any>): Promise<void> {
+        protectQuoteUpdates(updates);
         const { items, ...rest } = updates;
         await (this.tx as any).transaction(async (tx: any) => {
+            const [existing] = await tx.select().from(invoices).where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, invoiceId))).for('update');
+            if (existing?.isQuote && (existing.status === 'CONVERTED' || existing.convertedInvoiceId)) throw new QuoteConversionConflictError('Cannot edit a converted quote.');
+            // An update has no owner input in its payload. Preserve the stored
+            // owner instead of toInvoiceRow's create-time empty fallback.
+            const { ownerId: _owner, ...patch } = toInvoiceRow(rest);
             const res = await tx.update(invoices)
-                .set({ ...toInvoiceRow(rest), updatedAt: new Date() })
+                .set({ ...patch, ...(invalidatesQuoteTokens(updates) ? { quoteAcceptanceTokenHashes: null } : {}), updatedAt: new Date() })
                 .where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, invoiceId)))
                 .returning({ id: invoices.invoiceId });
             // Parity with the Dynamo ConditionExpression: never upsert on update.
@@ -307,13 +385,19 @@ export class InvoicePgRepo implements IInvoiceRepo {
     }
 
     async deleteInvoice(orgId: string, _userId: string, invoiceId: string): Promise<void> {
-        await this.db.delete(invoices).where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, invoiceId)));
+        await this.tx.transaction(async tx => {
+            const [row] = await tx.select().from(invoices).where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, invoiceId))).for('update');
+            if (row?.isQuote && (row.convertedInvoiceId || ['ACCEPTED', 'CONVERTED'].includes(row.status ?? ''))) {
+                throw new QuoteConversionConflictError('Cannot delete an accepted or converted quote.');
+            }
+            await tx.delete(invoices).where(and(eq(invoices.orgId, orgId), eq(invoices.invoiceId, invoiceId)));
+        });
     }
 
     /** Full-entity mirror upsert — last-writer-wins on updatedAt (§6.1); replaces line items. */
     async upsertInvoice(invoice: Invoice): Promise<void> {
         const { items, ...rest } = invoice as Record<string, any>;
-        const row = toInvoiceRow(rest);
+        const row = { ...toInvoiceRow(rest), quoteAcceptanceTokenHashes: (invoice as PrivateInvoice).quoteAcceptanceTokenHashes ?? null };
         await (this.tx as any).transaction(async (tx: any) => {
             await tx.insert(invoices).values(row)
                 .onConflictDoUpdate({ target: invoices.invoiceId, set: row, setWhere: sql`${invoices.updatedAt} <= excluded.updated_at` });

@@ -4,6 +4,8 @@ import { sk, dueDateSk } from '../keys';
 import { Invoice } from './schema';
 import { composeInvoiceSummary, composeInvoiceTotals, type InvoiceSummary, type InvoiceSummaryBucket, type InvoiceTotals } from './summary';
 import { PaginatedResult } from '../types';
+import { publicInvoice, protectQuoteUpdates, invalidatesQuoteTokens, QuoteConversionConflictError, type ConvertQuoteInput, type QuoteConversionResult, type PendingQuoteAcceptance, type PrivateInvoice } from './acceptance';
+import * as acceptance from './acceptance.dynamo';
 
 export interface ListInvoicesPaginatedParams {
     orgId: string;
@@ -33,6 +35,13 @@ export type InvoiceTotalsFilter = Omit<ListInvoicesPaginatedParams, 'limit' | 'e
 
 /** Store-agnostic contract — implemented by InvoiceDynamoRepo and InvoicePgRepo; InvoiceRepo (factory.ts) routes. */
 export interface IInvoiceRepo {
+    /** Internal full-entity read for mirrored writes; token hashes must never reach an API response. */
+    getInvoiceForMirror(orgId: string, ownerId: string, invoiceId: string): Promise<PrivateInvoice | null>;
+    issueQuoteAcceptanceToken(orgId: string, ownerId: string, quoteId: string, tokenHash: string): Promise<void>;
+    getQuoteForAcceptance(orgId: string, quoteId: string, tokenHash: string): Promise<PendingQuoteAcceptance | null>;
+    convertQuote(input: ConvertQuoteInput): Promise<QuoteConversionResult>;
+    listPendingQuoteAcceptances(limit?: number): Promise<PendingQuoteAcceptance[]>;
+    markQuoteAcceptancePublished(orgId: string, ownerId: string, quoteId: string, eventId: string): Promise<boolean>;
     getInvoice(orgId: string, userId: string, invoiceId: string): Promise<Invoice | null>;
     findInvoiceByIdInOrg(orgId: string, invoiceId: string): Promise<{ invoice: Invoice; ownerId: string } | null>;
     listOrgInvoicesPaginated(params: ListInvoicesPaginatedParams): Promise<PaginatedResult<Invoice>>;
@@ -63,8 +72,18 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
 
     async getInvoice(orgId: string, userId: string, invoiceId: string): Promise<Invoice | null> {
         const { Item } = await this.ddb.getItem(Tables.INVOICES, { orgId, sk: sk(userId, invoiceId) });
-        return (Item as Invoice) ?? null;
+        return Item ? publicInvoice(Item as PrivateInvoice) : null;
     }
+
+    async getInvoiceForMirror(orgId: string, ownerId: string, invoiceId: string): Promise<PrivateInvoice | null> {
+        const { Item } = await this.ddb.getItem(Tables.INVOICES, { orgId, sk: sk(ownerId, invoiceId) }, { ConsistentRead: true });
+        return (Item as PrivateInvoice) ?? null;
+    }
+    issueQuoteAcceptanceToken(orgId: string, ownerId: string, quoteId: string, tokenHash: string): Promise<void> { return acceptance.issueToken(this.ddb, orgId, ownerId, quoteId, tokenHash); }
+    getQuoteForAcceptance(orgId: string, quoteId: string, tokenHash: string): Promise<PendingQuoteAcceptance | null> { return acceptance.resolveQuote(this, orgId, quoteId, tokenHash); }
+    convertQuote(input: ConvertQuoteInput): Promise<QuoteConversionResult> { return acceptance.convert(this.ddb, this, input); }
+    listPendingQuoteAcceptances(limit = 20): Promise<PendingQuoteAcceptance[]> { return acceptance.pending(this.ddb, limit); }
+    markQuoteAcceptancePublished(orgId: string, ownerId: string, quoteId: string, eventId: string): Promise<boolean> { return acceptance.published(this.ddb, orgId, ownerId, quoteId, eventId); }
 
     async findInvoiceByIdInOrg(orgId: string, invoiceId: string): Promise<{ invoice: Invoice; ownerId: string } | null> {
         const { Items } = await this.ddb.query({
@@ -79,7 +98,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         // The sort key (`userId#invoiceId`) is the source of truth for ownership;
         // createdBy can diverge from it and would make callers update the wrong key.
         const skOwner = (item as any).sk?.split('#')[0];
-        return { invoice: item, ownerId: skOwner || item.createdBy };
+        return { invoice: publicInvoice(item), ownerId: skOwner || item.createdBy };
     }
 
     /**
@@ -198,7 +217,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         });
 
         return {
-            items: (result.Items as Invoice[]) ?? [],
+            items: ((result.Items as Invoice[]) ?? []).map(publicInvoice),
             lastEvaluatedKey: result.LastEvaluatedKey,
         };
     }
@@ -209,7 +228,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             KeyConditionExpression: 'orgId = :orgId AND begins_with(sk, :prefix)',
             ExpressionAttributeValues: { ':orgId': orgId, ':prefix': `${userId}#` },
         });
-        return (Items as Invoice[]) ?? [];
+        return ((Items as Invoice[]) ?? []).map(publicInvoice);
     }
 
     async listInvoicesByDate(orgId: string, from: string, to: string): Promise<Invoice[]> {
@@ -221,7 +240,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             ExpressionAttributeNames: { '#date': 'date' },
             ExpressionAttributeValues: { ':orgId': orgId, ':from': from, ':to': to },
         });
-        return (Items as Invoice[]) ?? [];
+        return ((Items as Invoice[]) ?? []).map(publicInvoice);
     }
 
     async listAllOrgInvoices(orgId: string): Promise<Invoice[]> {
@@ -230,7 +249,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             KeyConditionExpression: 'orgId = :orgId',
             ExpressionAttributeValues: { ':orgId': orgId },
         });
-        return (Items as Invoice[]) ?? [];
+        return ((Items as Invoice[]) ?? []).map(publicInvoice);
     }
 
     async listDraftInvoices(orgId: string): Promise<Invoice[]> {
@@ -242,7 +261,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             ExpressionAttributeNames: { '#status': 'status', '#isPaymentLink': 'isPaymentLink' },
             ExpressionAttributeValues: { ':orgId': orgId, ':draft': 'DRAFT', ':false': false },
         });
-        return (Items as Invoice[]) ?? [];
+        return ((Items as Invoice[]) ?? []).map(publicInvoice);
     }
 
     async listOverdueInvoices(orgId: string, beforeDate: string): Promise<Invoice[]> {
@@ -254,7 +273,7 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
             ExpressionAttributeNames: { '#status': 'status' },
             ExpressionAttributeValues: { ':orgId': orgId, ':before': beforeDate, ':sent': 'SENT', ':partial': 'PARTIAL', ':overdue': 'OVERDUE' },
         });
-        return (Items as Invoice[]) ?? [];
+        return ((Items as Invoice[]) ?? []).map(publicInvoice);
     }
 
     async getInvoiceTotals(filter: InvoiceTotalsFilter): Promise<InvoiceTotals> {
@@ -340,9 +359,12 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
     }
 
     async updateInvoice(orgId: string, userId: string, invoiceId: string, updates: Record<string, any>): Promise<void> {
+        protectQuoteUpdates(updates);
         const sets: string[] = ['#updatedAt = :updatedAt'];
         const names: Record<string, string> = { '#updatedAt': 'updatedAt' };
         const values: Record<string, any> = { ':updatedAt': new Date().toISOString() };
+        Object.assign(names, { '#guardQuote': 'isQuote', '#guardStatus': 'status', '#guardConverted': 'convertedInvoiceId' });
+        Object.assign(values, { ':guardTrue': true, ':guardConverted': 'CONVERTED' });
 
         if (updates.dueDate) {
             updates.dueDateSk = dueDateSk(updates.dueDate, invoiceId);
@@ -355,16 +377,27 @@ export class InvoiceDynamoRepo implements IInvoiceRepo {
         }
 
         await this.ddb.update(Tables.INVOICES, { orgId, sk: sk(userId, invoiceId) }, {
-            UpdateExpression: `SET ${sets.join(', ')}`,
+            UpdateExpression: `SET ${sets.join(', ')}${invalidatesQuoteTokens(updates) ? ' REMOVE #privateTokens' : ''}`,
             // Updates must never upsert: a mismatched key would otherwise create a
             // sparse shadow record (no items) that getInvoice returns instead of the real one.
-            ConditionExpression: 'attribute_exists(sk)',
-            ExpressionAttributeNames: names,
+            ConditionExpression: 'attribute_exists(sk) AND (attribute_not_exists(#guardQuote) OR #guardQuote <> :guardTrue OR (#guardStatus <> :guardConverted AND attribute_not_exists(#guardConverted)))',
+            ExpressionAttributeNames: { ...names, ...(invalidatesQuoteTokens(updates) ? { '#privateTokens': 'quoteAcceptanceTokenHashes' } : {}) },
             ExpressionAttributeValues: values,
         });
     }
 
     async deleteInvoice(orgId: string, userId: string, invoiceId: string): Promise<void> {
-        await this.ddb.delete(Tables.INVOICES, { orgId, sk: sk(userId, invoiceId) });
+        try {
+            await this.ddb.transactWrite([{ Delete: { TableName: Tables.INVOICES, Key: { orgId, sk: sk(userId, invoiceId) },
+                ConditionExpression: 'attribute_not_exists(#isQuote) OR #isQuote <> :true OR (#status <> :converted AND #status <> :accepted AND attribute_not_exists(#convertedId))',
+                ExpressionAttributeNames: { '#isQuote': 'isQuote', '#status': 'status', '#convertedId': 'convertedInvoiceId' },
+                ExpressionAttributeValues: { ':true': true, ':converted': 'CONVERTED', ':accepted': 'ACCEPTED' },
+            } }]);
+        } catch (error: any) {
+            if (error?.name === 'TransactionCanceledException' && error.CancellationReasons?.some((reason: any) => reason.Code === 'ConditionalCheckFailed')) {
+                throw new QuoteConversionConflictError('Cannot delete an accepted or converted quote.');
+            }
+            throw error;
+        }
     }
 }
