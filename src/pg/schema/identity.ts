@@ -49,7 +49,6 @@ export const users = pgTable('users', {
     calendarConnections: jsonb('calendar_connections'),
     metaPages: jsonb('meta_pages'),
     tradeSettings: jsonb('trade_settings'),
-    emailConnections: jsonb('email_connections'),
     // Ad Studio platform connections — { meta?: {...}, google?: {...} } (0033).
     adsConnections: jsonb('ads_connections'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),

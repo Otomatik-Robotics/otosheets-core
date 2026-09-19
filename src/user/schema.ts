@@ -27,7 +27,6 @@ export const UserStoredSchema = z.object({
     calendarConnections: z.any().nullish(),
     metaPages: z.any().nullish(),
     tradeSettings: z.any().nullish(),
-    emailConnections: z.any().nullish(),
     adsConnections: z.any().nullish(),
     createdAt: z.string(),
     updatedAt: z.string(),
